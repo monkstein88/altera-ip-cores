@@ -13,79 +13,81 @@ Z1 d/home/monklp/Documents/REPOS/GITHUB/__monkstein88__/altera-ip-cores/altera_a
 vaxi_firewall_regs
 2../../rtl/axi_firewall_regs.v
 Z2 DXx6 sv_std 3 std 0 22 9oUSJO;AeEaW`l:M@^WG92
-Z3 !s110 1786213903
+Z3 !s110 1786221619
 !i10b 1
 !s100 J>R42<`9HiQSM=0mhQ]Zc1
 I9NWG[G;6gS;ZGDQXn]d>71
 S1
 R1
-Z4 w1786208337
+w1786208337
 8../../rtl/axi_firewall_regs.v
 F../../rtl/axi_firewall_regs.v
 !i122 0
 L0 15 357
-Z5 VDg1SIo80bB@j0V0VzS_@n1
-Z6 OL;L;2024.1;79
+Z4 VDg1SIo80bB@j0V0VzS_@n1
+Z5 OL;L;2024.1;79
 r1
 !s85 0
 31
-Z7 !s108 1786213903.000000
+Z6 !s108 1786221619.000000
 !s107 ../../rtl/axi_firewall_regs.v|
 !s90 -reportprogress|300|-sv|+acc|+cover=sbceft|../../rtl/axi_firewall_regs.v|
 !i113 0
-Z8 !s102 +cover=sbceft
-Z9 o-sv +acc +cover=sbceft -L mtiAvm -L mtiRnm -L mtiOvm -L mtiUvm -L mtiUPF -L infact
-Z10 tCvgOpt 0
+Z7 !s102 +cover=sbceft
+Z8 o-sv +acc +cover=sbceft -L mtiAvm -L mtiRnm -L mtiOvm -L mtiUvm -L mtiUPF -L infact
+Z9 tCvgOpt 0
 vaxi_firewall_sva
 2../../tb/axi_firewall_sva.sv
 R2
 R3
 !i10b 1
-!s100 @`KJR5A2eDeDNGn50:QHN1
-I?9Lc2?D[S4h;Y^2:O<ig@1
+!s100 =3>jAYM8zRo5fF[bJ;aE72
+I8CT?WKzzj5T24MoGf2^1Y3
 S1
 R1
-w1786212786
+w1786220801
 8../../tb/axi_firewall_sva.sv
 F../../tb/axi_firewall_sva.sv
 !i122 2
-L0 1 46
+L0 1 45
+R4
 R5
-R6
 r1
 !s85 0
 31
-R7
+R6
 !s107 ../../tb/axi_firewall_sva.sv|
-!s90 -reportprogress|300|-sv|+acc|../../tb/axi_firewall_sva.sv|
+!s90 -reportprogress|300|-sv|+acc|+cover=sbceft|../../tb/axi_firewall_sva.sv|
 !i113 0
-Z11 o-sv +acc -L mtiAvm -L mtiRnm -L mtiOvm -L mtiUvm -L mtiUPF -L infact
-R10
+R7
+R8
+R9
 vaxi_firewall_tb
 2../../tb/axi_firewall_tb.v
 R2
 R3
 !i10b 1
-!s100 8P?;83@>E;1ck:C_JBo5S0
-I^^`@g<^<N]:k6DLS_^3CI3
+!s100 b^PTS6]dP[C6fQ2Ukl@Zg3
+IigPBnO;zF7O_[nb;`c=Sf3
 S1
 R1
-R4
+w1786221601
 8../../tb/axi_firewall_tb.v
 F../../tb/axi_firewall_tb.v
 !i122 3
-L0 3 364
+L0 3 487
+R4
 R5
-R6
 r1
 !s85 0
 31
-R7
+R6
 !s107 ../../tb/axi_firewall_tb.v|
-!s90 -reportprogress|300|-sv|+acc|../../tb/axi_firewall_tb.v|
+!s90 -reportprogress|300|-sv|+acc|+cover=sbceft|../../tb/axi_firewall_tb.v|
 !i113 0
-R11
-R10
+R7
+R8
+R9
 vaxi_firewall_top
 2../../rtl/axi_firewall_top.v
 R2
@@ -100,21 +102,21 @@ w1786212634
 F../../rtl/axi_firewall_top.v
 !i122 1
 L0 40 407
+R4
 R5
-R6
 r1
 !s85 0
 31
-R7
+R6
 !s107 ../../rtl/axi_firewall_top.v|
 !s90 -reportprogress|300|-sv|+acc|+cover=sbceft|../../rtl/axi_firewall_top.v|
 !i113 0
+R7
 R8
 R9
-R10
 Ttb_opt
 R3
-V_BRh2@9aNYad[T45f6hoH1
+V`n@o3TLBG?KGhBmBAVz2o2
 04 15 4 work axi_firewall_tb fast 0
 !s102 -cover sbceft
 R0
@@ -122,6 +124,6 @@ R0
 !s12b OEM100
 !s124 OEM100
 o+acc -cover sbceft -assertdebug
-R10
+R9
 ntb_opt
 OL;O;2024.1;79

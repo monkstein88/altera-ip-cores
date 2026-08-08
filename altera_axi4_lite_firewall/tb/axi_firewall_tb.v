@@ -110,6 +110,24 @@ module axi_firewall_tb;
         .irq(irq)
     );
 
+
+    bind axi_firewall_top axi_firewall_sva #(
+        .ADDR_WIDTH(ADDR_WIDTH),
+        .DATA_WIDTH(DATA_WIDTH)
+    ) u_axi_firewall_sva (
+        .clk(clk),
+        .resetn(resetn),
+        .s_axi_awaddr(s_axi_awaddr),
+        .s_axi_awvalid(s_axi_awvalid),
+        .s_axi_awready(s_axi_awready),
+        .s_axi_bresp(s_axi_bresp),
+        .s_axi_bvalid(s_axi_bvalid),
+        .s_axi_bready(s_axi_bready),
+        .m_axi_awvalid(m_axi_awvalid),
+        .m_axi_awready(m_axi_awready),
+        .access_violation(fault_addr_violation | fault_perm_violation)
+    );
+
     // ------------------------------------------------------------------
     // Behavioral downstream slave: 16 words of memory, always-ready
     // unless `hang_next` is set, in which case it silently ignores the
@@ -236,13 +254,110 @@ module axi_firewall_tb;
         end
     endtask
 
-    // register offsets
+    // ==================================================================
+    // REGISTER OFFSETS (Moved above tasks so compiler sees them first)
+    // ==================================================================
     localparam OFF_CTRL   = 'h00, OFF_STATUS = 'h04, OFF_IRQEN = 'h08,
                OFF_TMOUT  = 'h0C, OFF_FADDR  = 'h10, OFF_FINFO = 'h14,
                OFF_INFO   = 'h18;
+               
     function [11:0] rule_off; input integer idx; input integer sub; begin
         rule_off = 'h40 + idx*16 + sub; end
     endfunction
+
+    // ==================================================================
+    // COVERAGE IMPROVEMENT TASKS
+    // ==================================================================
+
+    // Task 1: Sweep all register offsets including unmapped ones
+    task test_reg_sweep;
+        reg [31:0] read_data;
+        reg [CTRL_ADDR_WIDTH-1:0] addrs [0:7];
+        integer i;
+        begin
+            $display("\n--- Coverage Test 1: Register Map Sweep ---");
+            addrs[0] = OFF_CTRL;   // 0x00
+            addrs[1] = OFF_STATUS; // 0x04
+            addrs[2] = OFF_IRQEN;  // 0x08
+            addrs[3] = OFF_TMOUT;  // 0x0C
+            addrs[4] = OFF_FADDR;  // 0x10
+            addrs[5] = OFF_FINFO;  // 0x14
+            addrs[6] = OFF_INFO;   // 0x18
+            addrs[7] = 12'h01C;    // Unmapped offset (triggers default branch)
+
+            for (i = 0; i < 8; i = i + 1) begin
+                ctrl_write(addrs[i], 32'hA5A5_5A5A);
+                ctrl_read(addrs[i], read_data);
+            end
+        end
+    endtask
+
+    // Task 2: Assert and clear software manual isolation
+    task test_manual_isolation;
+        reg [31:0] read_data;
+        begin
+            $display("\n--- Coverage Test 2: Manual Isolation ---");
+            // Set Manual Isolate bit (Bit 2) + Enable bit (Bit 0) -> 32'b101 (0x5)
+            ctrl_write(OFF_CTRL, 32'b101);
+            ctrl_read(OFF_STATUS, read_data);
+            check_eq(read_data[3], 1'b1, "Manual Isolate -> STATUS.ISOLATED set");
+
+            // Clear manual isolate -> 32'b001 (0x1)
+            ctrl_write(OFF_CTRL, 32'b001);
+            ctrl_read(OFF_STATUS, read_data);
+            check_eq(read_data[3], 1'b0, "Clear Isolate -> STATUS.ISOLATED cleared");
+        end
+    endtask
+
+    // Task 3: Disable interrupts and trigger a fault to test masking logic
+    task test_irq_masking;
+        reg [31:0] read_data;
+        reg [1:0] dummy_resp;
+        begin
+            $display("\n--- Coverage Test 3: IRQ Masking ---");
+            // Mask all IRQs
+            ctrl_write(OFF_IRQEN, 32'h0000_0000);
+
+            // Cause an address violation on unmapped space
+            data_write(32'h0000_9000, 32'h1234_5678, dummy_resp);
+
+            // Verify top-level IRQ line stays LOW while status logs violation
+            check_eq(irq, 1'b0, "IRQ Masked -> top irq stays LOW");
+            ctrl_read(OFF_STATUS, read_data);
+            check_eq(read_data[0], 1'b1, "IRQ Masked -> ADDR_VIOLATION recorded");
+
+            // Re-enable IRQs and clear status
+            ctrl_write(OFF_IRQEN, 32'h0000_000F);
+            ctrl_write(OFF_STATUS, 32'h1);
+        end
+    endtask
+
+    // Task 4: Stagger AWVALID and WVALID on control bus
+    task ctrl_write_staggered;
+        input [CTRL_ADDR_WIDTH-1:0] addr;
+        input [31:0] data;
+        begin
+            $display("\n--- Coverage Test 4: Staggered AXI-Lite Channels ---");
+            @(posedge clk);
+            s_axi_ctrl_awaddr  <= addr;
+            s_axi_ctrl_awvalid <= 1'b1;
+            s_axi_ctrl_wvalid  <= 1'b0; // Delay write data
+
+            repeat (2) @(posedge clk);
+            s_axi_ctrl_wdata   <= data;
+            s_axi_ctrl_wstrb   <= 4'hF;
+            s_axi_ctrl_wvalid  <= 1'b1;
+            s_axi_ctrl_bready  <= 1'b1;
+
+            while (!(s_axi_ctrl_awready && s_axi_ctrl_wready)) @(posedge clk);
+            s_axi_ctrl_awvalid <= 1'b0;
+            s_axi_ctrl_wvalid  <= 1'b0;
+
+            while (!s_axi_ctrl_bvalid) @(posedge clk);
+            @(posedge clk);
+            s_axi_ctrl_bready  <= 1'b0;
+        end
+    endtask
 
     reg [31:0] rdata;
     reg [1:0]  resp;
@@ -345,6 +460,14 @@ module axi_firewall_tb;
         ctrl_write(OFF_CTRL, 32'b001); // re-enable
         data_write(32'h0000_5004, 32'h1234_5678, resp);
         check_eq(resp, 2'b11, "I: re-enabled, unmapped write -> DECERR again");
+
+        // ==================================================================
+        // EXECUTE COVERAGE TASKS
+        // ==================================================================
+        test_reg_sweep();
+        test_manual_isolation();
+        test_irq_masking();
+        ctrl_write_staggered(OFF_TMOUT, 32'd20);
 
         $display("=== RESULTS: %0d passed, %0d failed ===", pass_count, fail_count);
         if (fail_count != 0) begin
