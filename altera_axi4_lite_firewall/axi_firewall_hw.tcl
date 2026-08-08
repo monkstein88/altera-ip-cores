@@ -1,4 +1,4 @@
-package require -exact qsys 1.0
+package require -exact qsys 14.0
 
 # =============================================================================
 # axi_firewall_hw.tcl
@@ -25,14 +25,13 @@ package require -exact qsys 1.0
 #      guaranteed correct for your exact installed version.
 # =============================================================================
 
-set_module_property NAME axi_firewall
+set_module_property NAME altera_axi4_lite_firewall
 set_module_property DISPLAY_NAME "AXI4-Lite Firewall"
 set_module_property DESCRIPTION "Access-control + fault-isolation firewall for an AXI4-Lite slave, with a separate AXI4-Lite control/status port and an interrupt output."
 set_module_property VERSION 1.0
 set_module_property GROUP "Bridges and Adapters/Custom"
-set_module_property AUTHOR ""
-set_module_property TOP_LEVEL_HDL_FILE rtl/axi_firewall_top.v
-set_module_property TOP_LEVEL_MODULE axi_firewall_top
+set_module_property AUTHOR "monkstein88"
+#set_module_property TOP_LEVEL_HDL_MODULE axi_firewall_top
 set_module_property INSTANTIATE_IN_SYSTEM_MODULE true
 set_module_property EDITABLE false
 set_module_property ELABORATION_CALLBACK elaborate
@@ -105,25 +104,25 @@ add_interface_port reset resetn reset_n Input 1
 add_interface s_axi axi4lite end
 set_interface_property s_axi associatedClock clock
 set_interface_property s_axi associatedReset reset
-add_interface_port s_axi s_axi_awaddr  AWADDR  Input  ADDR_WIDTH
-add_interface_port s_axi s_axi_awprot  AWPROT  Input  3
-add_interface_port s_axi s_axi_awvalid AWVALID Input  1
-add_interface_port s_axi s_axi_awready AWREADY Output 1
-add_interface_port s_axi s_axi_wdata   WDATA   Input  DATA_WIDTH
-add_interface_port s_axi s_axi_wstrb   WSTRB   Input  DATA_WIDTH/8
-add_interface_port s_axi s_axi_wvalid  WVALID  Input  1
-add_interface_port s_axi s_axi_wready  WREADY  Output 1
-add_interface_port s_axi s_axi_bresp   BRESP   Output 2
-add_interface_port s_axi s_axi_bvalid  BVALID  Output 1
-add_interface_port s_axi s_axi_bready  BREADY  Input  1
-add_interface_port s_axi s_axi_araddr  ARADDR  Input  ADDR_WIDTH
-add_interface_port s_axi s_axi_arprot  ARPROT  Input  3
-add_interface_port s_axi s_axi_arvalid ARVALID Input  1
-add_interface_port s_axi s_axi_arready ARREADY Output 1
-add_interface_port s_axi s_axi_rdata   RDATA   Output DATA_WIDTH
-add_interface_port s_axi s_axi_rresp   RRESP   Output 2
-add_interface_port s_axi s_axi_rvalid  RVALID  Output 1
-add_interface_port s_axi s_axi_rready  RREADY  Input  1
+add_interface_port s_axi s_axi_awaddr  awaddr  Input  ADDR_WIDTH
+add_interface_port s_axi s_axi_awprot  awprot  Input  3
+add_interface_port s_axi s_axi_awvalid awvalid Input  1
+add_interface_port s_axi s_axi_awready awready Output 1
+add_interface_port s_axi s_axi_wdata   wdata   Input  DATA_WIDTH
+add_interface_port s_axi s_axi_wstrb   wstrb   Input  DATA_WIDTH/8
+add_interface_port s_axi s_axi_wvalid  wvalid  Input  1
+add_interface_port s_axi s_axi_wready  wready  Output 1
+add_interface_port s_axi s_axi_bresp   bresp   Output 2
+add_interface_port s_axi s_axi_bvalid  bvalid  Output 1
+add_interface_port s_axi s_axi_bready  bready  Input  1
+add_interface_port s_axi s_axi_araddr  araddr  Input  ADDR_WIDTH
+add_interface_port s_axi s_axi_arprot  arprot  Input  3
+add_interface_port s_axi s_axi_arvalid arvalid Input  1
+add_interface_port s_axi s_axi_arready arready Output 1
+add_interface_port s_axi s_axi_rdata   rdata   Output DATA_WIDTH
+add_interface_port s_axi s_axi_rresp   rresp   Output 2
+add_interface_port s_axi s_axi_rvalid  rvalid  Output 1
+add_interface_port s_axi s_axi_rready  rready  Input  1
 
 # -----------------------------------------------------------------------
 # m_axi - protected data-path master (toward the peripheral being guarded)
@@ -131,25 +130,25 @@ add_interface_port s_axi s_axi_rready  RREADY  Input  1
 add_interface m_axi axi4lite start
 set_interface_property m_axi associatedClock clock
 set_interface_property m_axi associatedReset reset
-add_interface_port m_axi m_axi_awaddr  AWADDR  Output ADDR_WIDTH
-add_interface_port m_axi m_axi_awprot  AWPROT  Output 3
-add_interface_port m_axi m_axi_awvalid AWVALID Output 1
-add_interface_port m_axi m_axi_awready AWREADY Input  1
-add_interface_port m_axi m_axi_wdata   WDATA   Output DATA_WIDTH
-add_interface_port m_axi m_axi_wstrb   WSTRB   Output DATA_WIDTH/8
-add_interface_port m_axi m_axi_wvalid  WVALID  Output 1
-add_interface_port m_axi m_axi_wready  WREADY  Input  1
-add_interface_port m_axi m_axi_bresp   BRESP   Input  2
-add_interface_port m_axi m_axi_bvalid  BVALID  Input  1
-add_interface_port m_axi m_axi_bready  BREADY  Output 1
-add_interface_port m_axi m_axi_araddr  ARADDR  Output ADDR_WIDTH
-add_interface_port m_axi m_axi_arprot  ARPROT  Output 3
-add_interface_port m_axi m_axi_arvalid ARVALID Output 1
-add_interface_port m_axi m_axi_arready ARREADY Input  1
-add_interface_port m_axi m_axi_rdata   RDATA   Input  DATA_WIDTH
-add_interface_port m_axi m_axi_rresp   RRESP   Input  2
-add_interface_port m_axi m_axi_rvalid  RVALID  Input  1
-add_interface_port m_axi m_axi_rready  RREADY  Output 1
+add_interface_port m_axi m_axi_awaddr  awaddr  Output ADDR_WIDTH
+add_interface_port m_axi m_axi_awprot  awprot  Output 3
+add_interface_port m_axi m_axi_awvalid awvalid Output 1
+add_interface_port m_axi m_axi_awready awready Input  1
+add_interface_port m_axi m_axi_wdata   wdata   Output DATA_WIDTH
+add_interface_port m_axi m_axi_wstrb   wstrb   Output DATA_WIDTH/8
+add_interface_port m_axi m_axi_wvalid  wvalid  Output 1
+add_interface_port m_axi m_axi_wready  wready  Input  1
+add_interface_port m_axi m_axi_bresp   bresp   Input  2
+add_interface_port m_axi m_axi_bvalid  bvalid  Input  1
+add_interface_port m_axi m_axi_bready  bready  Output 1
+add_interface_port m_axi m_axi_araddr  araddr  Output ADDR_WIDTH
+add_interface_port m_axi m_axi_arprot  arprot  Output 3
+add_interface_port m_axi m_axi_arvalid arvalid Output 1
+add_interface_port m_axi m_axi_arready arready Input  1
+add_interface_port m_axi m_axi_rdata   rdata   Input  DATA_WIDTH
+add_interface_port m_axi m_axi_rresp   rresp   Input  2
+add_interface_port m_axi m_axi_rvalid  rvalid  Input  1
+add_interface_port m_axi m_axi_rready  rready  Output 1
 
 # -----------------------------------------------------------------------
 # s_axi_ctrl - control/status slave (rule table, status, irq enable, ...)
@@ -157,25 +156,25 @@ add_interface_port m_axi m_axi_rready  RREADY  Output 1
 add_interface s_axi_ctrl axi4lite end
 set_interface_property s_axi_ctrl associatedClock clock
 set_interface_property s_axi_ctrl associatedReset reset
-add_interface_port s_axi_ctrl s_axi_ctrl_awaddr  AWADDR  Input  CTRL_ADDR_WIDTH
-add_interface_port s_axi_ctrl s_axi_ctrl_awprot  AWPROT  Input  3
-add_interface_port s_axi_ctrl s_axi_ctrl_awvalid AWVALID Input  1
-add_interface_port s_axi_ctrl s_axi_ctrl_awready AWREADY Output 1
-add_interface_port s_axi_ctrl s_axi_ctrl_wdata   WDATA   Input  32
-add_interface_port s_axi_ctrl s_axi_ctrl_wstrb   WSTRB   Input  4
-add_interface_port s_axi_ctrl s_axi_ctrl_wvalid  WVALID  Input  1
-add_interface_port s_axi_ctrl s_axi_ctrl_wready  WREADY  Output 1
-add_interface_port s_axi_ctrl s_axi_ctrl_bresp   BRESP   Output 2
-add_interface_port s_axi_ctrl s_axi_ctrl_bvalid  BVALID  Output 1
-add_interface_port s_axi_ctrl s_axi_ctrl_bready  BREADY  Input  1
-add_interface_port s_axi_ctrl s_axi_ctrl_araddr  ARADDR  Input  CTRL_ADDR_WIDTH
-add_interface_port s_axi_ctrl s_axi_ctrl_arprot  ARPROT  Input  3
-add_interface_port s_axi_ctrl s_axi_ctrl_arvalid ARVALID Input  1
-add_interface_port s_axi_ctrl s_axi_ctrl_arready ARREADY Output 1
-add_interface_port s_axi_ctrl s_axi_ctrl_rdata   RDATA   Output 32
-add_interface_port s_axi_ctrl s_axi_ctrl_rresp   RRESP   Output 2
-add_interface_port s_axi_ctrl s_axi_ctrl_rvalid  RVALID  Output 1
-add_interface_port s_axi_ctrl s_axi_ctrl_rready  RREADY  Input  1
+add_interface_port s_axi_ctrl s_axi_ctrl_awaddr  awaddr  Input  CTRL_ADDR_WIDTH
+add_interface_port s_axi_ctrl s_axi_ctrl_awprot  awprot  Input  3
+add_interface_port s_axi_ctrl s_axi_ctrl_awvalid awvalid Input  1
+add_interface_port s_axi_ctrl s_axi_ctrl_awready awready Output 1
+add_interface_port s_axi_ctrl s_axi_ctrl_wdata   wdata   Input  32
+add_interface_port s_axi_ctrl s_axi_ctrl_wstrb   wstrb   Input  4
+add_interface_port s_axi_ctrl s_axi_ctrl_wvalid  wvalid  Input  1
+add_interface_port s_axi_ctrl s_axi_ctrl_wready  wready  Output 1
+add_interface_port s_axi_ctrl s_axi_ctrl_bresp   bresp   Output 2
+add_interface_port s_axi_ctrl s_axi_ctrl_bvalid  bvalid  Output 1
+add_interface_port s_axi_ctrl s_axi_ctrl_bready  bready  Input  1
+add_interface_port s_axi_ctrl s_axi_ctrl_araddr  araddr  Input  CTRL_ADDR_WIDTH
+add_interface_port s_axi_ctrl s_axi_ctrl_arprot  arprot  Input  3
+add_interface_port s_axi_ctrl s_axi_ctrl_arvalid arvalid Input  1
+add_interface_port s_axi_ctrl s_axi_ctrl_arready arready Output 1
+add_interface_port s_axi_ctrl s_axi_ctrl_rdata   rdata   Output 32
+add_interface_port s_axi_ctrl s_axi_ctrl_rresp   rresp   Output 2
+add_interface_port s_axi_ctrl s_axi_ctrl_rvalid  rvalid  Output 1
+add_interface_port s_axi_ctrl s_axi_ctrl_rready  rready  Input  1
 
 # -----------------------------------------------------------------------
 # irq - level interrupt, stays asserted until the causing STATUS bit(s)
