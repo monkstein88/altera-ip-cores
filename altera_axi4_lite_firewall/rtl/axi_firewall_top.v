@@ -137,6 +137,9 @@ module axi_firewall_top #(
     reg  wr_fault_addr_violation, wr_fault_perm_violation, wr_fault_timeout;
     reg  rd_fault_addr_violation, rd_fault_perm_violation, rd_fault_timeout;
 
+    reg [ADDR_WIDTH-1:0]   captured_awaddr;
+    reg [ADDR_WIDTH-1:0] captured_araddr;
+
     wire fault_addr_violation = wr_fault_addr_violation | rd_fault_addr_violation;
     wire fault_perm_violation = wr_fault_perm_violation | rd_fault_perm_violation;
     wire fault_timeout        = wr_fault_timeout        | rd_fault_timeout;
@@ -200,7 +203,7 @@ module axi_firewall_top #(
     reg [1:0] wr_state;
 
     reg s_axi_awready_r, s_axi_wready_r;
-    reg [ADDR_WIDTH-1:0]   captured_awaddr;
+    //reg [ADDR_WIDTH-1:0]   captured_awaddr;
     reg [2:0]              captured_awprot;
     reg [DATA_WIDTH-1:0]   captured_wdata;
     reg [DATA_WIDTH/8-1:0] captured_wstrb;
@@ -331,7 +334,7 @@ module axi_firewall_top #(
     reg [1:0] rd_state;
 
     reg s_axi_arready_r;
-    reg [ADDR_WIDTH-1:0] captured_araddr;
+    //reg [ADDR_WIDTH-1:0] captured_araddr;
     reg [2:0]            captured_arprot;
 
     reg [TIMEOUT_WIDTH-1:0] rd_timeout_cnt;
