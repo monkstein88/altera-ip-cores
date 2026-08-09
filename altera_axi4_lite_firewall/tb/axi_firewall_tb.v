@@ -117,15 +117,29 @@ module axi_firewall_tb;
     ) u_axi_firewall_sva (
         .clk(clk),
         .resetn(resetn),
+
         .s_axi_awaddr(s_axi_awaddr),
         .s_axi_awvalid(s_axi_awvalid),
         .s_axi_awready(s_axi_awready),
         .s_axi_bresp(s_axi_bresp),
         .s_axi_bvalid(s_axi_bvalid),
         .s_axi_bready(s_axi_bready),
+
+        .s_axi_araddr(s_axi_araddr),
+        .s_axi_arvalid(s_axi_arvalid),
+        .s_axi_arready(s_axi_arready),
+        .s_axi_rresp(s_axi_rresp),
+        .s_axi_rvalid(s_axi_rvalid),
+        .s_axi_rready(s_axi_rready),
+
         .m_axi_awvalid(m_axi_awvalid),
         .m_axi_awready(m_axi_awready),
-        .access_violation(fault_addr_violation | fault_perm_violation)
+        .m_axi_arvalid(m_axi_arvalid),
+        .m_axi_arready(m_axi_arready),
+
+        // per-direction pulses, NOT the merged fault_*_violation wires
+        .wr_violation(wr_fault_addr_violation | wr_fault_perm_violation),
+        .rd_violation(rd_fault_addr_violation | rd_fault_perm_violation)
     );
 
     // ------------------------------------------------------------------
@@ -460,6 +474,76 @@ module axi_firewall_tb;
         ctrl_write(OFF_CTRL, 32'b001); // re-enable
         data_write(32'h0000_5004, 32'h1234_5678, resp);
         check_eq(resp, 2'b11, "I: re-enabled, unmapped write -> DECERR again");
+
+        // ==================================================================
+        // Tests J-M: READ-DENIAL PATH
+        // Coverage showed RD_EVAL -> RD_RESP was never taken: every denial
+        // test above is a WRITE. The read path has its own FSM, its own rule
+        // lookup port (chk_r_*), and its own fault signals, so none of it was
+        // exercised. These close that gap.
+        // ==================================================================
+
+        // Rule 2: 0x3000-0x3FFF, WRITE-ONLY (no read) - needed to provoke a
+        // read permission denial, which no existing rule can do.
+        ctrl_write(rule_off(2,0), 32'h0000_3000);
+        ctrl_write(rule_off(2,4), 32'h0000_3FFF);
+        ctrl_write(rule_off(2,8), 32'b110); // valid|write, read NOT allowed
+        ctrl_write(OFF_STATUS, 32'h7);      // clear any residue
+
+        // --- Test J: read from a write-only region -> SLVERR + PERM_VIOLATION
+        data_read(32'h0000_3004, rdata, resp);
+        check_eq(resp, 2'b10, "J: read from write-only region -> SLVERR");
+        ctrl_read(OFF_STATUS, rdata);
+        check_eq(rdata[1], 1'b1, "J: STATUS.PERM_VIOLATION set by a READ");
+        ctrl_read(OFF_FADDR, rdata);
+        check_eq(rdata, 32'h0000_3004, "J: FAULT_ADDR captured from read path");
+        ctrl_read(OFF_FINFO, rdata);
+        check_eq(rdata[0], 1'b0, "J: FAULT_INFO.WAS_WRITE = 0 for a read fault");
+        check_eq(rdata[3:1], 3'd2, "J: FAULT_INFO type = PERM(2)");
+        ctrl_write(OFF_STATUS, 32'h7);
+
+        // --- Test K: read from an unmapped address -> DECERR + ADDR_VIOLATION
+        data_read(32'h0000_7000, rdata, resp);
+        check_eq(resp, 2'b11, "K: unmapped read -> DECERR");
+        ctrl_read(OFF_STATUS, rdata);
+        check_eq(rdata[0], 1'b1, "K: STATUS.ADDR_VIOLATION set by a READ");
+        ctrl_read(OFF_FADDR, rdata);
+        check_eq(rdata, 32'h0000_7000, "K: FAULT_ADDR is the read address");
+        ctrl_read(OFF_FINFO, rdata);
+        check_eq(rdata[0], 1'b0, "K: FAULT_INFO.WAS_WRITE = 0 for unmapped read");
+        check_eq(rdata[3:1], 3'd1, "K: FAULT_INFO type = ADDR(1)");
+        ctrl_write(OFF_STATUS, 32'h7);
+
+        // --- Test L: denied read returns zeroed RDATA (no stale/leaked data)
+        // Preload a known value at an allowed address first, then confirm a
+        // denied read elsewhere does not return it.
+        data_write(32'h0000_1000, 32'hDEADC0DE, resp);
+        data_read(32'h0000_7004, rdata, resp);
+        check_eq(resp,  2'b11,       "L: second unmapped read -> DECERR");
+        check_eq(rdata, 32'h0000_0000, "L: denied read returns zeros, not stale data");
+        ctrl_write(OFF_STATUS, 32'h7);
+
+        // --- Test M: read while ISOLATED is blocked without reaching m_axi
+        ctrl_write(OFF_CTRL, 32'b101); // global_enable=1, manual_isolate=1
+        fork
+            begin: m_watch
+                @(posedge m_axi_arvalid);
+                fail_count = fail_count + 1;
+                $display("  FAIL: M: m_axi_arvalid asserted while ISOLATED");
+            end
+            begin
+                data_read(32'h0000_1000, rdata, resp);
+                check_eq(resp, 2'b10, "M: read while ISOLATED -> SLVERR");
+                disable m_watch;
+            end
+        join
+        ctrl_write(OFF_CTRL, 32'b001); // release manual isolate
+        ctrl_write(OFF_STATUS, 32'h7);
+
+        // --- sanity: reads still work normally after all the denials
+        data_read(32'h0000_1000, rdata, resp);
+        check_eq(resp,  2'b00,       "M: read works again after isolate released");
+        check_eq(rdata, 32'hDEADC0DE, "M: correct data after recovery");
 
         // ==================================================================
         // EXECUTE COVERAGE TASKS
