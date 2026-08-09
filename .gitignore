@@ -1,0 +1,39 @@
+# --- QuestaSim / ModelSim simulation artifacts ---
+work/
+*_opt/
+transcript
+transcript.*
+*.wlf
+*.wlf.lock
+vsim.dbg
+vish_stacks.err
+.vlogansetup.env
+modelsim.ini
+*.ucdb
+coverage_report.txt
+
+# --- Quartus / Platform Designer build artifacts ---
+db/
+incremental_db/
+output_files/
+simulation/*/msim/
+simulation/*/vcs/
+greybox_tmp/
+hc_output/
+*.qws
+*.rpt
+*.summary
+*.smsg
+*.done
+*.jdi
+*.sld
+*.pin
+*.qarlog
+*.qsys.bak
+PLLJ_PLLSPE_INFO.txt
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
+*.swp
+*~
