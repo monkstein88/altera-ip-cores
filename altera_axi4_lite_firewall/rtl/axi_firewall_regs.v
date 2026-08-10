@@ -74,7 +74,7 @@ module axi_firewall_regs #(
     output reg                         timeout_ack
 );
 
-    localparam [15:0] VERSION16 = 16'h0100; // v1.0
+    localparam [15:0] VERSION16 = 16'h0101; // v1.1
 
     // ------------------------------------------------------------------
     // Rule table storage

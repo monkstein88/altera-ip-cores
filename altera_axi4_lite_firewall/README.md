@@ -103,7 +103,7 @@ unreachable.
 | 0x0C | TIMEOUT_VALUE | R/W | Round-trip timeout in clk cycles (default all-ones ⇒ effectively disabled until set) |
 | 0x10 | FAULT_ADDR | R | Address of the most recently latched fault |
 | 0x14 | FAULT_INFO | R | bit0 `WAS_WRITE` (0 ⇒ the fault came from a read); bits[3:1] type (1=ADDR, 2=PERM, 3=TIMEOUT) |
-| 0x18 | CORE_INFO | R | bits[7:0] `NUM_RULES` as generated; bits[31:16] version (0x0100 = v1.0) |
+| 0x18 | CORE_INFO | R | bits[7:0] `NUM_RULES` as generated; bits[31:16] version (0x0101 = v1.1) |
 | 0x40 + i·0x10 | `RULE_BASE[i]` | R/W | Inclusive base address of range *i* |
 | 0x44 + i·0x10 | `RULE_LIMIT[i]` | R/W | Inclusive top address of range *i* |
 | 0x48 + i·0x10 | `RULE_PERM[i]` | R/W | bit0 `READ_ALLOW`, bit1 `WRITE_ALLOW`, bit2 `VALID` (rule ignored entirely if 0) |
@@ -376,6 +376,11 @@ numbers above predate them, and the committed `coverage_report.txt` /
 #define FW_FAULT_ADDR  0x10
 #define FW_FAULT_INFO  0x14
 #define FW_CORE_INFO   0x18
+
+/* CORE_INFO[31:16] is the core version: 0x0100 = v1.0, 0x0101 = v1.1.
+   v1.1 changed observable behaviour - m_axi_resetn must be connected, and
+   a timeout blocks forwarding regardless of CTRL.AUTO_ISOLATE_EN - so
+   drivers supporting both should check this before relying on either. */
 #define FW_RULE(i, r)  (0x40 + (i)*0x10 + (r))   /* r: 0=BASE 4=LIMIT 8=PERM */
 
 #define FW_PERM_READ   0x1
