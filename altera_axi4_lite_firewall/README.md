@@ -287,25 +287,48 @@ do run_sim.tcl
 That compiles RTL + SVA + testbench with `+cover=sbceft`, runs to completion,
 then writes `coverage.ucdb` and `coverage_report.txt`.
 
-### Coverage status
+### Assertion and coverage results
 
-From the last full Questa run (`simulation/questa/coverage_report.txt`),
-**before** the read-denial tests were added:
+Measured under **Questa 2024.1** via `simulation/questa/run_sim.tcl`.
 
-| Metric (instance `dut`) | Result |
+**Assertions: 0 failures**, and — more usefully — non-zero *non-vacuous*
+pass counts on every property. An assertion that only ever passes vacuously
+has verified nothing; these fired their antecedents and checked.
+
+**Cover directives: 5 / 5, 100%.** This is what proves the SVA is live
+rather than silently inert:
+
+| Cover point | Hits |
 |---|---|
-| FSM states | 8 / 8 — 100% |
-| FSM transitions | 9 / 14 — 64.28% |
-| Statements | 96.61% (`u_regs`) · 75.80% (`dut`) |
-| Branches | 78.72% (`u_regs`) · 79.62% (`dut`) |
-| Conditions | 83.33% (`u_regs`) · 55.55% (`dut`) |
-| Toggle | 34.76% (`u_regs`) · 41.20% (`dut`) |
+| `c_write_denied` | 4 |
+| `c_read_denied` | 3 |
+| `c_write_decerr` | 3 |
+| `c_read_decerr` | 2 |
+| `c_peripheral_reset` | 73 |
 
-The uncovered FSM transitions were:
+`c_peripheral_reset` is high because its property uses an unbounded
+`##[1:$]` range, so every cycle with the reset asserted opens an attempt
+that later matches. Two actual recovery episodes, not 73 — worth knowing
+before setting a coverage goal on that number.
+
+Code coverage:
+
+| Metric | `u_regs` | `dut` (`axi_firewall_top`) |
+|---|---|---|
+| FSM states | — | 8 / 8 — 100% |
+| FSM transitions | — | 10 / 14 — 71.42% |
+| Statements | 96.69% | 84.76% |
+| Branches | 78.72% | 85.71% |
+| Conditions | 83.33% | 56.00% |
+| Expressions | 53.84% | 100% |
+| Toggle | 36.10% | 46.58% |
+
+Both FSMs sit at 5 / 7 transitions. The four uncovered ones are all the
+same case:
 
 | Transition | Cause | Status |
 |---|---|---|
-| `RD_EVAL → RD_RESP` | **Real gap** — every denial test was a write, so the read-denial path was never entered | **Closed** by tests J–M |
+| `RD_EVAL → RD_RESP` | **Was a real gap** — every denial test was a write, so the read-denial path was never entered | **Closed** by tests J–M (5 hits) |
 | read-path timeout branch | Never exercised — the only hang test was a write | **Closed** by test N |
 | `WR_EVAL → WR_IDLE` | Reset asserted mid-transaction | Open |
 | `WR_FWD → WR_IDLE` | Reset asserted mid-transaction | Open |
@@ -314,15 +337,17 @@ The uncovered FSM transitions were:
 
 `RD_EVAL → RD_RESP` mattered: the read path has its own FSM, its own rule
 lookup port (`chk_r_*`), and its own fault signals, and the
-`fault_addr_value` mux had never selected its read branch. All 15 new checks
-passed on the first run, so the RTL was correct — it was simply unverified.
+`fault_addr_value` mux had never selected its read branch. All 15 checks
+added to close it passed first time, so the RTL was correct — it was simply
+unverified.
 
-The four remaining misses are all reset-asserted-mid-transaction cases. Worth
-a deliberate test if you want them closed; they are not functional holes.
+The four remaining misses are reset-asserted-mid-transaction cases. Worth a
+deliberate test if you want them closed; they are not functional holes.
 
-**Re-run `run_sim.tcl` to regenerate coverage with tests J–M included** — the
-numbers above predate them, and the committed `coverage_report.txt` /
-`coverage.ucdb` have not yet been refreshed.
+> **Note on reporting:** `run_sim.tcl` uses `coverage report -details`, not
+> `-codeAll`. `-codeAll` selects *code* coverage only and silently omits the
+> assertion and cover-directive sections, which is easy to mistake for the
+> SVA not having run at all.
 
 ---
 
@@ -445,10 +470,10 @@ static void firewall_isr(void *context)
 
 | Item | Status |
 |---|---|
-| Functional testbench (40 checks) | Run and passing under Icarus Verilog |
+| Functional testbench (50 checks) | Passing under both Icarus Verilog and Questa 2024.1 |
 | Best-case latency (6 cycles r/w) | Measured in simulation |
-| SVA properties | **Written and reviewed, still never executed** — Icarus cannot run SVA. Re-run `run_sim.tcl` and check the assertion report. The master-side properties added in v1.1 are equally unrun; their plain-Verilog equivalent in the testbench does pass. |
-| Coverage figures above | From a run **predating** tests J–P; needs regeneration |
+| SVA properties | **Executed under Questa 2024.1** — 0 failures, non-vacuous passes on every property, 5/5 cover directives hit. |
+| Coverage figures above | Current — regenerated after tests J–P |
 | Synthesis results (LE/register count, Fmax) | **Not measured.** The combinational rule lookup scales with `NUM_RULES` and is the likeliest critical path; if it limits Fmax, registering that lookup with an extra pipeline stage is the standard fix |
 | Behaviour inside a real Platform Designer system | **Not verified end to end.** The testbench models a well-behaved AXI4-Lite slave, not Platform Designer's generated interconnect |
 

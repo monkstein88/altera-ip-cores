@@ -23,7 +23,11 @@ run -all
 # Save UCDB database and export reports
 assertion report -verbose -recursive
 coverage save coverage.ucdb
-coverage report -detail -codeAll -output coverage_report.txt
+
+# -details (not -codeAll) so the report includes assertion results and cover
+# directives as well as code coverage. -codeAll selects code coverage only and
+# silently omits the SVA sections.
+coverage report -details -output coverage_report.txt
 
 puts "Simulation completed. Coverage saved to coverage.ucdb and coverage_report.txt"
 # Comment out or remove this line to keep QuestaSim open:
