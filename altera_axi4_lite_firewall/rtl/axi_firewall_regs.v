@@ -64,7 +64,14 @@ module axi_firewall_regs #(
     input  wire                        fault_perm_violation,
     input  wire                        fault_timeout,
     input  wire [ADDR_WIDTH-1:0]       fault_addr_value,
-    input  wire                        fault_was_write
+    input  wire                        fault_was_write,
+
+    // Single-cycle pulse when software clears STATUS.TIMEOUT_ERROR (W1C).
+    // Drives the downstream recovery sequence in axi_firewall_top.v: it
+    // releases the "downstream broken" latch and starts the peripheral
+    // reset pulse. See that file's header for why recovery must reset the
+    // peripheral rather than simply resuming traffic.
+    output reg                         timeout_ack
 );
 
     localparam [15:0] VERSION16 = 16'h0100; // v1.0
@@ -190,6 +197,7 @@ module axi_firewall_regs #(
         if (!resetn) begin
             s_axi_ctrl_bvalid   <= 1'b0;
             s_axi_ctrl_bresp    <= 2'b00;
+            timeout_ack         <= 1'b0;
 
             reg_global_enable   <= 1'b1;   // secure by default
             reg_auto_isolate_en <= 1'b1;
@@ -212,6 +220,7 @@ module axi_firewall_regs #(
                 rule_wr_en[k]   <= 1'b0;
             end
         end else begin
+            timeout_ack <= 1'b0;   // default: single-cycle pulse
 
             // ---- hardware fault capture (highest priority; always wins
             //      the register-write in the same cycle if both occur) ----
@@ -285,6 +294,7 @@ module axi_firewall_regs #(
                                 if (s_axi_ctrl_wdata[2]) begin
                                     reg_timeout_error  <= 1'b0;
                                     auto_isolate_latch <= 1'b0; // ack fault -> release auto-isolate
+                                    timeout_ack        <= 1'b1; // -> start downstream recovery
                                 end
                             end
                         end

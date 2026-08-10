@@ -21,6 +21,28 @@
 //   - Default-deny: an address that doesn't fall in any valid rule range is
 //     rejected (DECERR). An address that matches a rule but not for the
 //     requested direction is rejected (SLVERR). This is an allow-list model.
+//   - TIMEOUT RECOVERY (v1.1): on a timeout the core NEVER withdraws an
+//     already-asserted m_axi_*VALID. AXI requires VALID to stay asserted
+//     until READY, and withdrawing it can wedge the interconnect sitting
+//     between this core and the peripheral - not just the peripheral. So a
+//     timeout instead:
+//       (a) reports SLVERR upstream immediately (master never hangs),
+//       (b) latches `downstream_broken`, which blocks all further
+//           forwarding regardless of the ISOLATE bits, and
+//       (c) leaves the stuck m_axi_*VALID asserted.
+//     The stuck VALID is only dropped while `m_axi_resetn` is held low -
+//     i.e. while the peripheral is in reset, where dangling protocol state
+//     is moot. Software recovers by clearing STATUS.TIMEOUT_ERROR, which
+//     pulses `m_axi_resetn` low for RESET_HOLD_CYCLES and then re-opens
+//     forwarding. Because forwarding is blocked for the whole interval
+//     between fault and reset, no new transaction can collide with the
+//     abandoned one.
+//
+//   - m_axi_resetn MUST be connected to the protected peripheral's reset.
+//     It is the mechanism that flushes a peripheral left mid-transaction.
+//     Leaving it unconnected re-opens the stale-response hazard that the
+//     *_discard_pending flags below only partially cover.
+//
 //   - m_axi_bready / m_axi_rready are tied high permanently. A firewall's
 //     whole point is that a wedged downstream slave can never stall the rest
 //     of the system; holding these ready at all times means a late response
@@ -42,7 +64,8 @@ module axi_firewall_top #(
     parameter DATA_WIDTH      = 32,
     parameter CTRL_ADDR_WIDTH = 12,
     parameter NUM_RULES       = 8,
-    parameter TIMEOUT_WIDTH   = 20
+    parameter TIMEOUT_WIDTH   = 20,
+    parameter RESET_HOLD_CYCLES = 16   // peripheral reset pulse length, in clk cycles
 ) (
     input  wire                        clk,
     input  wire                        resetn,     // active-low, synchronous
@@ -110,7 +133,12 @@ module axi_firewall_top #(
     output wire                        s_axi_ctrl_rvalid,
     input  wire                        s_axi_ctrl_rready,
 
-    output wire                        irq
+    output wire                        irq,
+
+    // Active-low reset for the PROTECTED PERIPHERAL. Held low while the
+    // downstream is known-broken and for RESET_HOLD_CYCLES afterwards.
+    // Connect this to the peripheral's reset input - see header.
+    output wire                        m_axi_resetn
 );
 
     localparam [1:0] RESP_OKAY   = 2'b00;
@@ -193,8 +221,70 @@ module axi_firewall_top #(
         .fault_perm_violation  (fault_perm_violation),
         .fault_timeout         (fault_timeout),
         .fault_addr_value      (fault_addr_value),
-        .fault_was_write       (fault_was_write)
+        .fault_was_write       (fault_was_write),
+        .timeout_ack           (timeout_ack)
     );
+
+    // ==================================================================
+    // DOWNSTREAM RECOVERY  (see header: TIMEOUT RECOVERY)
+    // ==================================================================
+    wire timeout_ack;
+
+    reg                       downstream_broken;
+    reg [$clog2(RESET_HOLD_CYCLES+1)-1:0] reset_hold_cnt;
+    reg                       m_resetn_r;
+
+    assign m_axi_resetn = m_resetn_r;
+
+    // Forwarding is blocked by an explicit isolate OR by a known-broken
+    // downstream. Kept separate from isolate_effective on purpose: blocking
+    // after a timeout is required for protocol safety and must not depend
+    // on CTRL.AUTO_ISOLATE_EN, which only governs the visible ISOLATED bit.
+    wire forward_blocked = isolate_effective | downstream_broken;
+
+    // The post-acknowledge window: the fault has been cleared but the
+    // peripheral reset pulse is still in progress. A transaction arriving
+    // here is STALLED (not denied) until the pulse completes - a bounded
+    // wait of at most RESET_HOLD_CYCLES. Denying instead would force
+    // software to poll and retry after every recovery, and stalling keeps
+    // the recovery invisible to the master.
+    wire recovery_active = !downstream_broken && !m_resetn_r;
+
+    // Armed ONLY when a transaction timed out AFTER its address handshake
+    // completed - the one case where exactly one response is provably still
+    // owed by a compliant peripheral. (If AWREADY/ARREADY was never seen, a
+    // compliant slave never accepted the transaction and owes nothing, so
+    // arming there would risk swallowing a later legitimate response: an
+    // orphan and a real response are indistinguishable without transaction
+    // IDs, which AXI4-Lite does not have.)
+    //
+    // This is a narrow safety net, NOT the primary fix. The primary fix is
+    // m_axi_resetn: resetting the peripheral is the only way to guarantee no
+    // orphan survives, which is why connecting it is mandatory.
+    reg wr_discard_pending, rd_discard_pending;
+
+    always @(posedge clk) begin
+        if (!resetn) begin
+            downstream_broken <= 1'b0;
+            reset_hold_cnt    <= {$clog2(RESET_HOLD_CYCLES+1){1'b0}};
+            m_resetn_r        <= 1'b0;
+        end else begin
+            if (wr_fault_timeout | rd_fault_timeout)
+                downstream_broken <= 1'b1;
+            else if (timeout_ack)
+                downstream_broken <= 1'b0;
+
+            if (downstream_broken) begin
+                m_resetn_r     <= 1'b0;
+                reset_hold_cnt <= RESET_HOLD_CYCLES[$clog2(RESET_HOLD_CYCLES+1)-1:0];
+            end else if (reset_hold_cnt != 0) begin
+                m_resetn_r     <= 1'b0;
+                reset_hold_cnt <= reset_hold_cnt - 1'b1;
+            end else begin
+                m_resetn_r     <= 1'b1;
+            end
+        end
+    end
 
     // ==================================================================
     // WRITE DATAPATH
@@ -232,6 +322,7 @@ module axi_firewall_top #(
             wr_fault_addr_violation <= 1'b0;
             wr_fault_perm_violation <= 1'b0;
             wr_fault_timeout        <= 1'b0;
+            wr_discard_pending      <= 1'b0;
             captured_awaddr         <= {ADDR_WIDTH{1'b0}};
             captured_awprot         <= 3'b0;
             captured_wdata          <= {DATA_WIDTH{1'b0}};
@@ -258,7 +349,9 @@ module axi_firewall_top #(
                 end
 
                 WR_EVAL: begin
-                    if (isolate_effective) begin
+                    if (recovery_active) begin
+                        wr_state <= WR_EVAL;      // stall, bounded
+                    end else if (forward_blocked) begin
                         s_axi_bresp <= RESP_SLVERR;
                         wr_state    <= WR_RESP;
                     end else if (!global_enable) begin
@@ -289,13 +382,21 @@ module axi_firewall_top #(
 
                     if (!m_axi_awvalid && !m_axi_wvalid) begin
                         // address+data phases done; waiting on the response
-                        if (m_axi_bvalid) begin
+                        if (m_axi_bvalid && wr_discard_pending) begin
+                            // stale response owed by an earlier abandoned
+                            // transaction - swallow it, keep waiting
+                            wr_discard_pending <= 1'b0;
+                        end else if (m_axi_bvalid) begin
                             s_axi_bresp <= m_axi_bresp;
                             wr_state    <= WR_RESP;
                         end else if (wr_timeout_cnt >= timeout_value) begin
-                            s_axi_bresp      <= RESP_SLVERR;
-                            wr_fault_timeout <= 1'b1;
-                            wr_state         <= WR_RESP;
+                            // Address phase already handshaked, so nothing to
+                            // withdraw - but the peripheral may still answer
+                            // later. Flag the orphan.
+                            s_axi_bresp        <= RESP_SLVERR;
+                            wr_fault_timeout   <= 1'b1;
+                            wr_discard_pending <= 1'b1;
+                            wr_state           <= WR_RESP;
                         end else begin
                             wr_timeout_cnt <= wr_timeout_cnt + 1'b1;
                         end
@@ -303,11 +404,16 @@ module axi_firewall_top #(
                         // still trying to issue address/data - timeout also
                         // covers a slave that never raises AWREADY/WREADY
                         if (wr_timeout_cnt >= timeout_value) begin
-                            m_axi_awvalid    <= 1'b0;
-                            m_axi_wvalid     <= 1'b0;
-                            s_axi_bresp      <= RESP_SLVERR;
-                            wr_fault_timeout <= 1'b1;
-                            wr_state         <= WR_RESP;
+                            // AXI: VALID must stay asserted until READY, so
+                            // m_axi_awvalid/m_axi_wvalid are deliberately NOT
+                            // cleared here. They are dropped only while
+                            // m_axi_resetn is low (see recovery block above).
+                            // No discard flag: the address handshake never
+                            // completed, so a compliant slave never accepted
+                            // this transaction and owes no response.
+                            s_axi_bresp        <= RESP_SLVERR;
+                            wr_fault_timeout   <= 1'b1;
+                            wr_state           <= WR_RESP;
                         end else begin
                             wr_timeout_cnt <= wr_timeout_cnt + 1'b1;
                         end
@@ -324,6 +430,15 @@ module axi_firewall_top #(
 
                 default: wr_state <= WR_IDLE;
             endcase
+
+            // The ONLY place m_axi_awvalid/m_axi_wvalid may be dropped
+            // without a completed handshake: while the peripheral is held
+            // in reset, where dangling AXI state is discarded anyway.
+            if (!m_resetn_r) begin
+                m_axi_awvalid      <= 1'b0;
+                m_axi_wvalid       <= 1'b0;
+                wr_discard_pending <= 1'b0;
+            end
         end
     end
 
@@ -357,6 +472,7 @@ module axi_firewall_top #(
             rd_fault_addr_violation <= 1'b0;
             rd_fault_perm_violation <= 1'b0;
             rd_fault_timeout        <= 1'b0;
+            rd_discard_pending      <= 1'b0;
             captured_araddr         <= {ADDR_WIDTH{1'b0}};
             captured_arprot         <= 3'b0;
         end else begin
@@ -376,7 +492,9 @@ module axi_firewall_top #(
                 end
 
                 RD_EVAL: begin
-                    if (isolate_effective) begin
+                    if (recovery_active) begin
+                        rd_state <= RD_EVAL;      // stall, bounded
+                    end else if (forward_blocked) begin
                         s_axi_rresp <= RESP_SLVERR;
                         s_axi_rdata <= {DATA_WIDTH{1'b0}};
                         rd_state    <= RD_RESP;
@@ -405,25 +523,29 @@ module axi_firewall_top #(
                     if (m_axi_arvalid && m_axi_arready) m_axi_arvalid <= 1'b0;
 
                     if (!m_axi_arvalid) begin
-                        if (m_axi_rvalid) begin
+                        if (m_axi_rvalid && rd_discard_pending) begin
+                            rd_discard_pending <= 1'b0;   // swallow orphan
+                        end else if (m_axi_rvalid) begin
                             s_axi_rdata <= m_axi_rdata;
                             s_axi_rresp <= m_axi_rresp;
                             rd_state    <= RD_RESP;
                         end else if (rd_timeout_cnt >= timeout_value) begin
-                            s_axi_rdata      <= {DATA_WIDTH{1'b0}};
-                            s_axi_rresp      <= RESP_SLVERR;
-                            rd_fault_timeout <= 1'b1;
-                            rd_state         <= RD_RESP;
+                            s_axi_rdata        <= {DATA_WIDTH{1'b0}};
+                            s_axi_rresp        <= RESP_SLVERR;
+                            rd_fault_timeout   <= 1'b1;
+                            rd_discard_pending <= 1'b1;
+                            rd_state           <= RD_RESP;
                         end else begin
                             rd_timeout_cnt <= rd_timeout_cnt + 1'b1;
                         end
                     end else begin
                         if (rd_timeout_cnt >= timeout_value) begin
-                            m_axi_arvalid    <= 1'b0;
-                            s_axi_rdata      <= {DATA_WIDTH{1'b0}};
-                            s_axi_rresp      <= RESP_SLVERR;
-                            rd_fault_timeout <= 1'b1;
-                            rd_state         <= RD_RESP;
+                            // See write path: ARVALID is NOT withdrawn here,
+                            // and no discard flag is armed.
+                            s_axi_rdata        <= {DATA_WIDTH{1'b0}};
+                            s_axi_rresp        <= RESP_SLVERR;
+                            rd_fault_timeout   <= 1'b1;
+                            rd_state           <= RD_RESP;
                         end else begin
                             rd_timeout_cnt <= rd_timeout_cnt + 1'b1;
                         end
@@ -440,6 +562,12 @@ module axi_firewall_top #(
 
                 default: rd_state <= RD_IDLE;
             endcase
+
+            // See write path.
+            if (!m_resetn_r) begin
+                m_axi_arvalid      <= 1'b0;
+                rd_discard_pending <= 1'b0;
+            end
         end
     end
 

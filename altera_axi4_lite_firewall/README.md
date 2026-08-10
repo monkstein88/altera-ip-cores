@@ -8,7 +8,7 @@ component wrapper, a self-checking testbench, SystemVerilog assertions, and a
 Questa flow with coverage collection.
 
 **Component:** `altera_axi4_lite_firewall` · displayed in the IP Catalog as
-**"AXI4-Lite Firewall"** under *Bridges and Adapters / Custom* · v1.0
+**"AXI4-Lite Firewall"** under *Bridges and Adapters / Custom* · v1.1
 
 ---
 
@@ -63,10 +63,11 @@ altera_axi4_lite_firewall/
 │   ├── axi_firewall_tb.v           Self-checking testbench (40 checks) + SVA bind
 │   └── axi_firewall_sva.sv         SystemVerilog assertions & cover points
 └── simulation/questa/
-    ├── run_sim.tcl                 Compile + elaborate + run + save coverage
-    ├── modelsim.ini
-    ├── coverage_report.txt         Detailed coverage output
-    └── coverage.ucdb               Coverage database
+    └── run_sim.tcl                  Compile + elaborate + run + save coverage
+
+Simulation outputs (`work/`, `*.ucdb`, `coverage_report.txt`, `modelsim.ini`,
+`transcript`, `*.wlf`) are build artifacts and are gitignored - `run_sim.tcl`
+regenerates them.
 ```
 
 To expose this (and sibling cores) to Platform Designer, add the repository's
@@ -83,6 +84,12 @@ To expose this (and sibling cores) to Platform Designer, add the repository's
 | `CTRL_ADDR_WIDTH` | 12 | Control port address width; must cover `0x40 + NUM_RULES*16` bytes |
 | `NUM_RULES` | 8 | Number of address-range rules |
 | `TIMEOUT_WIDTH` | 20 | Max programmable timeout is `2^TIMEOUT_WIDTH − 1` clk cycles |
+| `RESET_HOLD_CYCLES` | 16 | How long `m_axi_resetn` is held low during downstream recovery. Must exceed the protected peripheral's minimum reset pulse width. |
+
+`CTRL_ADDR_WIDTH` must be wide enough to reach the whole rule table
+(`0x40 + NUM_RULES*16` bytes). A validation callback in `hw.tcl` enforces
+this — previously an undersized control port silently made high-index rules
+unreachable.
 
 ---
 
@@ -125,8 +132,13 @@ not just flipping a bit blind.
   well-defined in AXI once the address phase is accepted.
 - **`m_axi_bready` / `m_axi_rready` are tied high permanently.** The point of
   an isolation core is that a wedged peripheral can never stall anything
-  upstream — including itself. A late response from an already-timed-out
-  transaction is silently absorbed rather than leaving a channel stuck.
+  upstream — including itself. A late response is absorbed rather than
+  leaving a channel stuck. See *Timeout recovery* for how the core avoids
+  mistaking an absorbed late response for a current one.
+- **Timeout recovery never withdraws an asserted `m_axi_*VALID`** (v1.1).
+  AXI requires VALID to hold until READY; withdrawing it can wedge the
+  interconnect between the firewall and the peripheral, not just the
+  peripheral. See below.
 - **Timeout covers the whole round trip** (address issue → response), so it
   also catches a peripheral that never even raises AWREADY/ARREADY, not just
   one that accepts and then goes quiet.
@@ -138,6 +150,40 @@ not just flipping a bit blind.
   below before putting a DMA engine behind it.
 
 ---
+
+## Timeout recovery and `m_axi_resetn`
+
+When a forwarded transaction times out, the core:
+
+1. reports **SLVERR upstream immediately**, so the master never hangs;
+2. latches an internal *downstream-broken* state that blocks **all** further
+   forwarding — independently of `CTRL.AUTO_ISOLATE_EN`, which governs only
+   the visible `ISOLATED` status bit;
+3. **leaves the stuck `m_axi_*VALID` asserted**, because AXI forbids
+   withdrawing it before the handshake.
+
+Software recovers by writing 1 to `STATUS.TIMEOUT_ERROR`. That pulses
+`m_axi_resetn` low for `RESET_HOLD_CYCLES`, flushing the peripheral — the
+only point at which the stuck VALID is dropped, since AXI state is moot
+while a device is in reset. Forwarding then reopens automatically.
+
+A transaction arriving during the reset pulse is **stalled**, not rejected —
+a bounded wait of at most `RESET_HOLD_CYCLES`, so recovery is invisible to
+the master and needs no retry logic.
+
+> **`m_axi_resetn` must be connected to the protected peripheral's reset.**
+> It is what guarantees a peripheral left mid-transaction cannot later emit
+> a stale response that gets mis-attributed to a subsequent transaction.
+> Measured: with the reset connected, 0 of 25 tested timing offsets show
+> mis-attribution; with it left unconnected, 1 of 25 does.
+
+The core additionally arms a one-shot response-discard flag, but only in the
+case where a response is *provably* still owed (the address handshake
+completed and the response never arrived). It is deliberately not armed when
+the address handshake never completed: a compliant peripheral owes nothing
+there, and an orphaned response is indistinguishable from a legitimate one
+without transaction IDs, which AXI4-Lite does not have. The discard flag is a
+narrow safety net; `m_axi_resetn` is the actual fix.
 
 ## Performance
 
@@ -163,10 +209,11 @@ use a burst-capable AXI4 variant instead (see *Roadmap*).
 
 ## Verification
 
-### Test suite — 40/40 passing
+### Test suite — 50/50 passing
 
 `tb/axi_firewall_tb.v` is self-checking and needs no Quartus licence; it runs
-under Icarus Verilog as well as Questa. Coverage:
+under Icarus Verilog as well as Questa. The SVA bind is wrapped in
+`` `ifndef ICARUS ``, so the Icarus command below works unmodified. Coverage:
 
 - Allowed read and write, with data integrity checks
 - Permission denial on writes (SLVERR + sticky status + IRQ assertion)
@@ -180,6 +227,14 @@ under Icarus Verilog as well as Questa. Coverage:
 - Downstream timeout → auto-isolate → immediate block of the next access,
   with an explicit watcher asserting `m_axi_awvalid` never fires
 - W1C recovery, IRQ masking, manual isolation, global bypass mode
+- **Read-side timeout** (test N): hung peripheral on a read → SLVERR,
+  `TIMEOUT_ERROR`, `FAULT_INFO.WAS_WRITE = 0`
+- **Downstream recovery** (tests O–P): `m_axi_resetn` asserted while broken,
+  forwarding blocked with an explicit watcher on `m_axi_arvalid`, reset
+  released after acknowledgement, traffic correct afterwards
+- **Master-side AXI protocol checking**: a checker counts any
+  `m_axi_*VALID` dropped without a handshake outside the reset window, and
+  fails the run if any occur
 - Register-map sweep including unmapped offsets, and staggered
   AW/W channel arrival on the control port
 
@@ -190,7 +245,11 @@ under Icarus Verilog as well as Questa. Coverage:
 - **Containment** — a violation never leaks `AWVALID`/`ARVALID` downstream
 - **Liveness** — each violation gets an error response *on its own channel*
   (B for writes, R for reads) within 10 cycles
-- **Handshake stability** — VALID holds until READY on all four channels
+- **Handshake stability** — VALID holds until READY on all four `s_axi`
+  channels **and on the `m_axi` side** (added v1.1: the master side was
+  previously unchecked, which is why the timeout path's protocol violation
+  survived a full assertion + coverage run)
+- **No transaction issued while the peripheral is held in reset**
 - **Cover points** — that the write- and read-denial paths were actually
   *reached*, not merely never violated
 
@@ -206,11 +265,11 @@ which would make any read-channel assertion wait forever on `BVALID`.
 
 ### Running it
 
-**Icarus** (functional tests only — no SVA support, so strip or ignore the
-`bind` block):
+**Icarus** (functional tests only — `-DICARUS` skips the SVA bind, which
+Icarus cannot compile):
 
 ```bash
-iverilog -g2005 -o tb.out rtl/axi_firewall_regs.v rtl/axi_firewall_top.v tb/axi_firewall_tb.v
+iverilog -g2005 -DICARUS -o tb.out rtl/axi_firewall_regs.v rtl/axi_firewall_top.v tb/axi_firewall_tb.v
 vvp tb.out
 ```
 
@@ -243,6 +302,7 @@ The uncovered FSM transitions were:
 | Transition | Cause | Status |
 |---|---|---|
 | `RD_EVAL → RD_RESP` | **Real gap** — every denial test was a write, so the read-denial path was never entered | **Closed** by tests J–M |
+| read-path timeout branch | Never exercised — the only hang test was a write | **Closed** by test N |
 | `WR_EVAL → WR_IDLE` | Reset asserted mid-transaction | Open |
 | `WR_FWD → WR_IDLE` | Reset asserted mid-transaction | Open |
 | `RD_EVAL → RD_IDLE` | Reset asserted mid-transaction | Open |
@@ -286,9 +346,14 @@ numbers above predate them, and the committed `coverage_report.txt` /
    peripheral (Avalon-MM or AXI4-Lite either way). An explicit *AXI Bridge
    Intel FPGA IP* is available if you ever want to trade concurrency for less
    interconnect logic, but it's optional.
-5. Wire `irq` to a CPU interrupt input.
-6. Connect `clock` / `reset` to your system clock and reset network.
-7. Program each rule's base/limit to match the peripheral's actual address
+5. **Connect `m_axi_reset` (the `m_axi_resetn` output) to the protected
+   peripheral's reset input.** This is required, not optional — see
+   *Timeout recovery* above. If the peripheral shares a reset with other
+   logic, give it a dedicated reset so the firewall can flush it
+   independently.
+6. Wire `irq` to a CPU interrupt input.
+7. Connect `clock` / `reset` to your system clock and reset network.
+8. Program each rule's base/limit to match the peripheral's actual address
    decode, and size `NUM_RULES` / `CTRL_ADDR_WIDTH` for how many ranges you
    need.
 
@@ -323,6 +388,15 @@ numbers above predate them, and the committed `coverage_report.txt` /
 #define FW_STAT_ISOLATED   0x8   /* read-only, live */
 #define FW_STAT_STICKY     0x7   /* the W1C-able bits */
 
+/* Rules are three separate registers, so updating a rule that is currently
+   VALID leaves a transient window where BASE is new but LIMIT is still old.
+   Always clear VALID first when reconfiguring a live rule:
+       IOWR_32DIRECT(FW_BASE, FW_RULE(i,8), 0);       // retire the rule
+       IOWR_32DIRECT(FW_BASE, FW_RULE(i,0), new_base);
+       IOWR_32DIRECT(FW_BASE, FW_RULE(i,4), new_limit);
+       IOWR_32DIRECT(FW_BASE, FW_RULE(i,8), perms | FW_PERM_VALID);
+   At init this is unnecessary - VALID is 0 out of reset. */
+
 void firewall_init(void)
 {
     /* Rule 0: 0x1000-0x1FFF, read + write allowed */
@@ -347,7 +421,10 @@ static void firewall_isr(void *context)
 
         (void)addr; (void)was_write; (void)type;   /* log / handle */
 
-        /* W1C. Clearing TIMEOUT also releases auto-isolate. */
+        /* W1C. Clearing TIMEOUT also releases auto-isolate AND starts the
+           downstream recovery pulse on m_axi_resetn. No wait or retry is
+           needed: transactions arriving during the pulse are stalled, not
+           rejected. */
         IOWR_32DIRECT(FW_BASE, FW_STATUS, status & FW_STAT_STICKY);
     }
 }
@@ -361,8 +438,8 @@ static void firewall_isr(void *context)
 |---|---|
 | Functional testbench (40 checks) | Run and passing under Icarus Verilog |
 | Best-case latency (6 cycles r/w) | Measured in simulation |
-| SVA properties | **Written and reviewed, not yet confirmed by a run** — re-run `run_sim.tcl` and check the assertion report |
-| Coverage figures above | From a run **predating** tests J–M; needs regeneration |
+| SVA properties | **Written and reviewed, still never executed** — Icarus cannot run SVA. Re-run `run_sim.tcl` and check the assertion report. The master-side properties added in v1.1 are equally unrun; their plain-Verilog equivalent in the testbench does pass. |
+| Coverage figures above | From a run **predating** tests J–P; needs regeneration |
 | Synthesis results (LE/register count, Fmax) | **Not measured.** The combinational rule lookup scales with `NUM_RULES` and is the likeliest critical path; if it limits Fmax, registering that lookup with an extra pipeline stage is the standard fix |
 | Behaviour inside a real Platform Designer system | **Not verified end to end.** The testbench models a well-behaved AXI4-Lite slave, not Platform Designer's generated interconnect |
 
@@ -375,5 +452,7 @@ static void firewall_isr(void *context)
 - **Per-master (per-ID) filtering** — requires full AXI4 or a sideband ID
   signal; not expressible in AXI4-Lite.
 - Reset-during-transaction tests, to close the four remaining FSM transitions.
+- `AWPROT`/`ARPROT`-based filtering (privileged / secure / instruction-vs-data).
+  Both are already captured and forwarded; a per-rule qualifier would be cheap.
 - Separate fault-address latches per fault type instead of one shared latch.
 - Rule-hit counters per range, for auditing and profiling access patterns.

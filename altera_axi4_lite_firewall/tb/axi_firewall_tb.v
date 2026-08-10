@@ -76,6 +76,7 @@ module axi_firewall_tb;
     reg                        s_axi_ctrl_rready = 0;
 
     wire irq;
+    wire m_axi_resetn;   // peripheral reset output (v1.1)
 
     integer pass_count = 0;
     integer fail_count = 0;
@@ -107,10 +108,12 @@ module axi_firewall_tb;
         .s_axi_ctrl_araddr(s_axi_ctrl_araddr), .s_axi_ctrl_arprot(s_axi_ctrl_arprot), .s_axi_ctrl_arvalid(s_axi_ctrl_arvalid), .s_axi_ctrl_arready(s_axi_ctrl_arready),
         .s_axi_ctrl_rdata(s_axi_ctrl_rdata), .s_axi_ctrl_rresp(s_axi_ctrl_rresp), .s_axi_ctrl_rvalid(s_axi_ctrl_rvalid), .s_axi_ctrl_rready(s_axi_ctrl_rready),
 
-        .irq(irq)
+        .irq(irq),
+        .m_axi_resetn(m_axi_resetn)
     );
 
 
+`ifndef ICARUS
     bind axi_firewall_top axi_firewall_sva #(
         .ADDR_WIDTH(ADDR_WIDTH),
         .DATA_WIDTH(DATA_WIDTH)
@@ -134,13 +137,17 @@ module axi_firewall_tb;
 
         .m_axi_awvalid(m_axi_awvalid),
         .m_axi_awready(m_axi_awready),
+        .m_axi_wvalid(m_axi_wvalid),
+        .m_axi_wready(m_axi_wready),
         .m_axi_arvalid(m_axi_arvalid),
         .m_axi_arready(m_axi_arready),
+        .m_axi_resetn(m_axi_resetn),
 
         // per-direction pulses, NOT the merged fault_*_violation wires
         .wr_violation(wr_fault_addr_violation | wr_fault_perm_violation),
         .rd_violation(rd_fault_addr_violation | rd_fault_perm_violation)
     );
+`endif
 
     // ------------------------------------------------------------------
     // Behavioral downstream slave: 16 words of memory, always-ready
@@ -253,6 +260,13 @@ module axi_firewall_tb;
             data = s_axi_ctrl_rdata;
             @(posedge clk);
             s_axi_ctrl_rready = 0;
+        end
+    endtask
+
+    task wait_cycles(input integer n);
+        integer w;
+        begin
+            for (w = 0; w < n; w = w + 1) @(posedge clk);
         end
     endtask
 
@@ -546,6 +560,57 @@ module axi_firewall_tb;
         check_eq(rdata, 32'hDEADC0DE, "M: correct data after recovery");
 
         // ==================================================================
+        // Tests N-P: READ-SIDE TIMEOUT and DOWNSTREAM RECOVERY  (v1.1)
+        // The read path's timeout branch was never exercised, so its
+        // protocol behaviour was untested. These also cover the new
+        // m_axi_resetn recovery sequence.
+        // ==================================================================
+        ctrl_write(OFF_STATUS, 32'h7);
+        ctrl_write(OFF_CTRL,   32'b011);   // enable + auto-isolate
+
+        // --- Test N: hung slave on a READ -> SLVERR + TIMEOUT + isolate
+        hang_next = 1;
+        data_read(32'h0000_1000, rdata, resp);
+        check_eq(resp, 2'b10, "N: hung slave on read -> SLVERR");
+        ctrl_read(OFF_STATUS, rdata);
+        check_eq(rdata[2], 1'b1, "N: STATUS.TIMEOUT_ERROR set by a read timeout");
+        ctrl_read(OFF_FINFO, rdata);
+        check_eq(rdata[0], 1'b0, "N: FAULT_INFO.WAS_WRITE = 0 for read timeout");
+        check_eq(rdata[3:1], 3'd3, "N: FAULT_INFO type = TIMEOUT(3)");
+
+        // --- Test O: peripheral reset is asserted while broken
+        check_eq(m_axi_resetn, 1'b0, "O: m_axi_resetn asserted low while downstream broken");
+
+        // forwarding must stay blocked even though AUTO_ISOLATE only governs
+        // the visible ISOLATED bit
+        fork
+            begin: o_watch
+                @(posedge m_axi_arvalid);
+                fail_count = fail_count + 1;
+                $display("  FAIL: O: m_axi_arvalid asserted while downstream broken");
+            end
+            begin
+                data_read(32'h0000_1000, rdata, resp);
+                check_eq(resp, 2'b10, "O: read blocked while downstream broken -> SLVERR");
+                disable o_watch;
+            end
+        join
+        hang_next = 0;
+
+        // --- Test P: acknowledge the fault -> reset pulse -> traffic resumes
+        ctrl_write(OFF_STATUS, 32'h4);     // W1C TIMEOUT_ERROR -> starts recovery
+        // wait out the peripheral reset pulse
+        wait_cycles(40);
+        check_eq(m_axi_resetn, 1'b1, "P: m_axi_resetn released after recovery");
+
+        data_write(32'h0000_1000, 32'h600D_600D, resp);
+        check_eq(resp, 2'b00, "P: write works after downstream recovery");
+        data_read(32'h0000_1000, rdata, resp);
+        check_eq(resp,  2'b00,        "P: read works after downstream recovery");
+        check_eq(rdata, 32'h600D_600D, "P: correct data after downstream recovery");
+        ctrl_write(OFF_STATUS, 32'h7);
+
+        // ==================================================================
         // EXECUTE COVERAGE TASKS
         // ==================================================================
         test_reg_sweep();
@@ -554,12 +619,51 @@ module axi_firewall_tb;
         ctrl_write_staggered(OFF_TMOUT, 32'd20);
 
         $display("=== RESULTS: %0d passed, %0d failed ===", pass_count, fail_count);
+        $display("=== m_axi VALID-drop violations: AW=%0d W=%0d AR=%0d ===",
+                 m_awvalid_drops, m_wvalid_drops, m_arvalid_drops);
+        if (m_awvalid_drops || m_wvalid_drops || m_arvalid_drops) begin
+            fail_count = fail_count + 1;
+            $display("*** m_axi PROTOCOL VIOLATIONS DETECTED ***");
+        end
         if (fail_count != 0) begin
             $display("*** TEST BENCH FAILED ***");
             $finish(1);
         end else begin
             $display("*** ALL TESTS PASSED ***");
             $finish(0);
+        end
+    end
+
+
+    // ==================================================================
+    // AXI protocol checker on the MASTER (m_axi) side.
+    // Rule: once *VALID is asserted it must stay asserted until the
+    // matching *READY handshake. Dropping it while the peripheral is held
+    // in reset (m_axi_resetn low) is the one legitimate exception.
+    // ==================================================================
+    integer m_awvalid_drops = 0, m_wvalid_drops = 0, m_arvalid_drops = 0;
+    reg m_awv_q, m_wv_q, m_arv_q, m_awr_q, m_wr_q, m_arr_q, m_rstn_q;
+
+    always @(posedge clk) begin
+        if (!resetn) begin
+            m_awv_q<=0; m_wv_q<=0; m_arv_q<=0; m_awr_q<=0; m_wr_q<=0; m_arr_q<=0; m_rstn_q<=0;
+        end else begin
+            if (m_awv_q && !m_axi_awvalid && !m_awr_q && m_rstn_q) begin
+                m_awvalid_drops = m_awvalid_drops + 1;
+                $display("  >> AXI VIOLATION t=%0t: m_axi_AWVALID dropped without AWREADY", $time);
+            end
+            if (m_wv_q && !m_axi_wvalid && !m_wr_q && m_rstn_q) begin
+                m_wvalid_drops = m_wvalid_drops + 1;
+                $display("  >> AXI VIOLATION t=%0t: m_axi_WVALID dropped without WREADY", $time);
+            end
+            if (m_arv_q && !m_axi_arvalid && !m_arr_q && m_rstn_q) begin
+                m_arvalid_drops = m_arvalid_drops + 1;
+                $display("  >> AXI VIOLATION t=%0t: m_axi_ARVALID dropped without ARREADY", $time);
+            end
+            m_awv_q<=m_axi_awvalid; m_awr_q<=m_axi_awready;
+            m_wv_q <=m_axi_wvalid;  m_wr_q <=m_axi_wready;
+            m_arv_q<=m_axi_arvalid; m_arr_q<=m_axi_arready;
+            m_rstn_q<=m_axi_resetn;
         end
     end
 

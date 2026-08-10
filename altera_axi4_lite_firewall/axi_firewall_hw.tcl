@@ -28,13 +28,14 @@ package require -exact qsys 14.0
 set_module_property NAME altera_axi4_lite_firewall
 set_module_property DISPLAY_NAME "AXI4-Lite Firewall"
 set_module_property DESCRIPTION "Access-control + fault-isolation firewall for an AXI4-Lite slave, with a separate AXI4-Lite control/status port and an interrupt output."
-set_module_property VERSION 1.0
+set_module_property VERSION 1.1
 set_module_property GROUP "Bridges and Adapters/Custom"
 set_module_property AUTHOR "monkstein88"
 #set_module_property TOP_LEVEL_HDL_MODULE axi_firewall_top
 set_module_property INSTANTIATE_IN_SYSTEM_MODULE true
 set_module_property EDITABLE false
 set_module_property ELABORATION_CALLBACK elaborate
+set_module_property VALIDATION_CALLBACK validate
 
 # -----------------------------------------------------------------------
 # Files
@@ -78,6 +79,13 @@ add_parameter NUM_RULES INTEGER 8
 set_parameter_property NUM_RULES DISPLAY_NAME "Number of address-range rules"
 set_parameter_property NUM_RULES ALLOWED_RANGES {1:64}
 set_parameter_property NUM_RULES HDL_PARAMETER true
+
+add_parameter RESET_HOLD_CYCLES INTEGER 16
+set_parameter_property RESET_HOLD_CYCLES DISPLAY_NAME "Peripheral reset pulse length"
+set_parameter_property RESET_HOLD_CYCLES UNITS cycles
+set_parameter_property RESET_HOLD_CYCLES ALLOWED_RANGES {1:1024}
+set_parameter_property RESET_HOLD_CYCLES HDL_PARAMETER true
+set_parameter_property RESET_HOLD_CYCLES DESCRIPTION "How long m_axi_resetn is held low when recovering from a downstream timeout. Must exceed the protected peripheral's minimum reset pulse width."
 
 add_parameter TIMEOUT_WIDTH INTEGER 20
 set_parameter_property TIMEOUT_WIDTH DISPLAY_NAME "Timeout counter width"
@@ -177,6 +185,17 @@ add_interface_port s_axi_ctrl s_axi_ctrl_rvalid  rvalid  Output 1
 add_interface_port s_axi_ctrl s_axi_ctrl_rready  rready  Input  1
 
 # -----------------------------------------------------------------------
+# m_axi_reset - reset SOURCE driving the protected peripheral. Must be
+# connected to that peripheral's reset input: it is how a peripheral left
+# mid-transaction by a timeout gets flushed before traffic resumes.
+# -----------------------------------------------------------------------
+add_interface m_axi_reset reset start
+set_interface_property m_axi_reset associatedClock clock
+set_interface_property m_axi_reset associatedDirectReset reset
+set_interface_property m_axi_reset synchronousEdges DEASSERT
+add_interface_port m_axi_reset m_axi_resetn reset_n Output 1
+
+# -----------------------------------------------------------------------
 # irq - level interrupt, stays asserted until the causing STATUS bit(s)
 # are cleared (write-1-to-clear) over s_axi_ctrl
 # -----------------------------------------------------------------------
@@ -190,3 +209,19 @@ add_interface_port irq irq irq Output 1
 # Elaboration callback - keeps WSTRB widths consistent if DATA_WIDTH changes
 # -----------------------------------------------------------------------
 proc elaborate {} { }
+
+# -----------------------------------------------------------------------
+# Validation - the control port must be wide enough to actually reach every
+# rule. Without this check, CTRL_ADDR_WIDTH=8 with NUM_RULES=64 elaborates
+# and simulates happily while rules 12..63 are silently unreachable.
+# -----------------------------------------------------------------------
+proc validate {} {
+    set nr   [get_parameter_value NUM_RULES]
+    set caw  [get_parameter_value CTRL_ADDR_WIDTH]
+    set span [expr {0x40 + $nr * 16}]
+    set need [expr {int(ceil(log($span) / log(2)))}]
+    if {$caw < $need} {
+        send_message error \
+            "CTRL_ADDR_WIDTH=$caw is too small for NUM_RULES=$nr: the rule table spans $span bytes and needs at least $need address bits. Rules above index [expr {((1 << $caw) - 0x40) / 16 - 1}] would be unreachable."
+    }
+}

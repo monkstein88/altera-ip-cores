@@ -1,5 +1,5 @@
 // =============================================================================
-// axi_firewall_sva.sv  (revised)
+// axi_firewall_sva.sv  (v1.1)
 //
 // Change from the previous revision
 // --------------------------------
@@ -60,8 +60,11 @@ module axi_firewall_sva #(
     // Downstream master side
     input wire                  m_axi_awvalid,
     input wire                  m_axi_awready,
+    input wire                  m_axi_wvalid,
+    input wire                  m_axi_wready,
     input wire                  m_axi_arvalid,
     input wire                  m_axi_arready,
+    input wire                  m_axi_resetn,
 
     // Per-direction violation pulses (see header note)
     input wire                  wr_violation,
@@ -140,6 +143,44 @@ module axi_firewall_sva #(
     else $error("AXI: RVALID dropped before RREADY handshake!");
 
   // ---------------------------------------------------------------------
+  // 3b. MASTER-side handshake stability.
+  //
+  // These were absent before v1.1, which is why the timeout path could
+  // withdraw m_axi_*VALID without a handshake and pass a full assertion +
+  // coverage run unnoticed. The one legitimate exception is while the
+  // peripheral is held in reset (m_axi_resetn low), where dangling AXI
+  // state is discarded anyway - hence the m_axi_resetn qualifier.
+  // ---------------------------------------------------------------------
+  property p_m_awvalid_stability;
+    @(posedge clk) disable iff (!resetn || !m_axi_resetn)
+    (m_axi_awvalid && !m_axi_awready) |=> (m_axi_awvalid || !m_axi_resetn);
+  endproperty
+  a_m_awvalid_stability: assert property (p_m_awvalid_stability)
+    else $error("AXI: m_axi_AWVALID dropped without AWREADY (peripheral not in reset)!");
+
+  property p_m_wvalid_stability;
+    @(posedge clk) disable iff (!resetn || !m_axi_resetn)
+    (m_axi_wvalid && !m_axi_wready) |=> (m_axi_wvalid || !m_axi_resetn);
+  endproperty
+  a_m_wvalid_stability: assert property (p_m_wvalid_stability)
+    else $error("AXI: m_axi_WVALID dropped without WREADY (peripheral not in reset)!");
+
+  property p_m_arvalid_stability;
+    @(posedge clk) disable iff (!resetn || !m_axi_resetn)
+    (m_axi_arvalid && !m_axi_arready) |=> (m_axi_arvalid || !m_axi_resetn);
+  endproperty
+  a_m_arvalid_stability: assert property (p_m_arvalid_stability)
+    else $error("AXI: m_axi_ARVALID dropped without ARREADY (peripheral not in reset)!");
+
+  // No new transaction may be issued while the peripheral is held in reset.
+  property p_no_issue_during_reset;
+    @(posedge clk) disable iff (!resetn)
+    !m_axi_resetn |-> (!m_axi_awvalid && !m_axi_arvalid);
+  endproperty
+  a_no_issue_during_reset: assert property (p_no_issue_during_reset)
+    else $error("FIREWALL: transaction issued while peripheral held in reset!");
+
+  // ---------------------------------------------------------------------
   // 4. Cover points - prove the interesting paths were actually reached
   //    rather than merely never violated. The read-denial covers are the
   //    ones that were silently empty before.
@@ -152,5 +193,8 @@ module axi_firewall_sva #(
       s_axi_bvalid && (s_axi_bresp == 2'b11));
   c_read_decerr:  cover property (@(posedge clk) disable iff (!resetn)
       s_axi_rvalid && (s_axi_rresp == 2'b11));
+  // recovery sequence actually exercised
+  c_peripheral_reset: cover property (@(posedge clk) disable iff (!resetn)
+      !m_axi_resetn ##[1:$] m_axi_resetn);
 
 endmodule
