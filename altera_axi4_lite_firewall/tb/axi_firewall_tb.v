@@ -196,6 +196,38 @@ module axi_firewall_tb;
         end
     end
 
+    // ==================================================================
+    // AXI protocol checker on the MASTER (m_axi) side.
+    // Rule: once *VALID is asserted it must stay asserted until the
+    // matching *READY handshake. Dropping it while the peripheral is held
+    // in reset (m_axi_resetn low) is the one legitimate exception.
+    // ==================================================================
+    integer m_awvalid_drops = 0, m_wvalid_drops = 0, m_arvalid_drops = 0;
+    reg m_awv_q, m_wv_q, m_arv_q, m_awr_q, m_wr_q, m_arr_q, m_rstn_q;
+
+    always @(posedge clk) begin
+        if (!resetn) begin
+            m_awv_q<=0; m_wv_q<=0; m_arv_q<=0; m_awr_q<=0; m_wr_q<=0; m_arr_q<=0; m_rstn_q<=0;
+        end else begin
+            if (m_awv_q && !m_axi_awvalid && !m_awr_q && m_rstn_q) begin
+                m_awvalid_drops = m_awvalid_drops + 1;
+                $display("  >> AXI VIOLATION t=%0t: m_axi_AWVALID dropped without AWREADY", $time);
+            end
+            if (m_wv_q && !m_axi_wvalid && !m_wr_q && m_rstn_q) begin
+                m_wvalid_drops = m_wvalid_drops + 1;
+                $display("  >> AXI VIOLATION t=%0t: m_axi_WVALID dropped without WREADY", $time);
+            end
+            if (m_arv_q && !m_axi_arvalid && !m_arr_q && m_rstn_q) begin
+                m_arvalid_drops = m_arvalid_drops + 1;
+                $display("  >> AXI VIOLATION t=%0t: m_axi_ARVALID dropped without ARREADY", $time);
+            end
+            m_awv_q<=m_axi_awvalid; m_awr_q<=m_axi_awready;
+            m_wv_q <=m_axi_wvalid;  m_wr_q <=m_axi_wready;
+            m_arv_q<=m_axi_arvalid; m_arr_q<=m_axi_arready;
+            m_rstn_q<=m_axi_resetn;
+        end
+    end
+
     // ------------------------------------------------------------------
     // BFM tasks
     // ------------------------------------------------------------------
@@ -634,38 +666,6 @@ module axi_firewall_tb;
         end
     end
 
-
-    // ==================================================================
-    // AXI protocol checker on the MASTER (m_axi) side.
-    // Rule: once *VALID is asserted it must stay asserted until the
-    // matching *READY handshake. Dropping it while the peripheral is held
-    // in reset (m_axi_resetn low) is the one legitimate exception.
-    // ==================================================================
-    integer m_awvalid_drops = 0, m_wvalid_drops = 0, m_arvalid_drops = 0;
-    reg m_awv_q, m_wv_q, m_arv_q, m_awr_q, m_wr_q, m_arr_q, m_rstn_q;
-
-    always @(posedge clk) begin
-        if (!resetn) begin
-            m_awv_q<=0; m_wv_q<=0; m_arv_q<=0; m_awr_q<=0; m_wr_q<=0; m_arr_q<=0; m_rstn_q<=0;
-        end else begin
-            if (m_awv_q && !m_axi_awvalid && !m_awr_q && m_rstn_q) begin
-                m_awvalid_drops = m_awvalid_drops + 1;
-                $display("  >> AXI VIOLATION t=%0t: m_axi_AWVALID dropped without AWREADY", $time);
-            end
-            if (m_wv_q && !m_axi_wvalid && !m_wr_q && m_rstn_q) begin
-                m_wvalid_drops = m_wvalid_drops + 1;
-                $display("  >> AXI VIOLATION t=%0t: m_axi_WVALID dropped without WREADY", $time);
-            end
-            if (m_arv_q && !m_axi_arvalid && !m_arr_q && m_rstn_q) begin
-                m_arvalid_drops = m_arvalid_drops + 1;
-                $display("  >> AXI VIOLATION t=%0t: m_axi_ARVALID dropped without ARREADY", $time);
-            end
-            m_awv_q<=m_axi_awvalid; m_awr_q<=m_axi_awready;
-            m_wv_q <=m_axi_wvalid;  m_wr_q <=m_axi_wready;
-            m_arv_q<=m_axi_arvalid; m_arr_q<=m_axi_arready;
-            m_rstn_q<=m_axi_resetn;
-        end
-    end
 
     // watchdog
     initial begin
