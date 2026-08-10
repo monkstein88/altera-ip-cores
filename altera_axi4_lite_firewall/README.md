@@ -62,8 +62,12 @@ altera_axi4_lite_firewall/
 ├── tb/
 │   ├── axi_firewall_tb.v           Self-checking testbench (40 checks) + SVA bind
 │   └── axi_firewall_sva.sv         SystemVerilog assertions & cover points
-└── simulation/questa/
-    └── run_sim.tcl                  Compile + elaborate + run + save coverage
+├── simulation/questa/
+│   └── run_sim.tcl                  Compile + elaborate + run + save coverage
+└── verification/
+    ├── orphan_response_tb.v         Standalone proof of the timeout-recovery
+    │                                fix - see Timeout recovery below
+    └── README.md                    How to run it, and what its result means
 
 Simulation outputs (`work/`, `*.ucdb`, `coverage_report.txt`, `modelsim.ini`,
 `transcript`, `*.wlf`) are build artifacts and are gitignored - `run_sim.tcl`

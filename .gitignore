@@ -12,6 +12,10 @@ modelsim.ini
 *.ucdb
 coverage_report.txt
 
+# --- Icarus Verilog build artifacts (see README simulation commands) ---
+*.out
+*.vvp
+
 # --- Quartus / Platform Designer build artifacts ---
 db/
 incremental_db/
