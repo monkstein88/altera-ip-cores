@@ -141,6 +141,20 @@ module axi_firewall_top #(
     output wire                        m_axi_resetn
 );
 
+    // Constant function rather than $clog2, which is Verilog-2005 - this
+    // keeps the RTL compilable as plain Verilog-2001 as documented.
+    function integer clog2;
+        input integer value;
+        integer i;
+        begin
+            clog2 = 0;
+            for (i = value - 1; i > 0; i = i >> 1)
+                clog2 = clog2 + 1;
+        end
+    endfunction
+
+    localparam RESET_CNT_W = clog2(RESET_HOLD_CYCLES + 1);
+
     localparam [1:0] RESP_OKAY   = 2'b00;
     localparam [1:0] RESP_SLVERR = 2'b10;
     localparam [1:0] RESP_DECERR = 2'b11;
@@ -174,6 +188,12 @@ module axi_firewall_top #(
     wire wr_fault_any = wr_fault_addr_violation | wr_fault_perm_violation | wr_fault_timeout;
     wire [ADDR_WIDTH-1:0] fault_addr_value = wr_fault_any ? captured_awaddr : captured_araddr;
     wire fault_was_write = wr_fault_any;
+
+    // Declared before the instantiation below: connecting an undeclared
+    // identifier to a port creates an implicit net at that point, which then
+    // collides with a later explicit declaration. Some tools accept it,
+    // Questa correctly does not.
+    wire timeout_ack;
 
     axi_firewall_regs #(
         .ADDR_WIDTH      (ADDR_WIDTH),
@@ -228,10 +248,8 @@ module axi_firewall_top #(
     // ==================================================================
     // DOWNSTREAM RECOVERY  (see header: TIMEOUT RECOVERY)
     // ==================================================================
-    wire timeout_ack;
-
     reg                       downstream_broken;
-    reg [$clog2(RESET_HOLD_CYCLES+1)-1:0] reset_hold_cnt;
+    reg [RESET_CNT_W-1:0]     reset_hold_cnt;
     reg                       m_resetn_r;
 
     assign m_axi_resetn = m_resetn_r;
@@ -266,7 +284,7 @@ module axi_firewall_top #(
     always @(posedge clk) begin
         if (!resetn) begin
             downstream_broken <= 1'b0;
-            reset_hold_cnt    <= {$clog2(RESET_HOLD_CYCLES+1){1'b0}};
+            reset_hold_cnt    <= {RESET_CNT_W{1'b0}};
             m_resetn_r        <= 1'b0;
         end else begin
             if (wr_fault_timeout | rd_fault_timeout)
@@ -276,7 +294,7 @@ module axi_firewall_top #(
 
             if (downstream_broken) begin
                 m_resetn_r     <= 1'b0;
-                reset_hold_cnt <= RESET_HOLD_CYCLES[$clog2(RESET_HOLD_CYCLES+1)-1:0];
+                reset_hold_cnt <= RESET_HOLD_CYCLES;
             end else if (reset_hold_cnt != 0) begin
                 m_resetn_r     <= 1'b0;
                 reset_hold_cnt <= reset_hold_cnt - 1'b1;

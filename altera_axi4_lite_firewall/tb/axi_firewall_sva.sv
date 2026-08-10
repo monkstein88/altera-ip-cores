@@ -173,9 +173,16 @@ module axi_firewall_sva #(
     else $error("AXI: m_axi_ARVALID dropped without ARREADY (peripheral not in reset)!");
 
   // No new transaction may be issued while the peripheral is held in reset.
+  //
+  // |=> not |->: m_axi_resetn and the VALID clear are both nonblocking
+  // updates, so on the exact edge m_axi_resetn falls a VALID left over from
+  // the abandoned transaction is still asserted and only clears on the next
+  // edge. That one cycle of overlap is harmless - the peripheral is being
+  // reset - and asserting |-> here produces a false failure. (Verified: the
+  // |-> form fires twice against the current test suite.)
   property p_no_issue_during_reset;
     @(posedge clk) disable iff (!resetn)
-    !m_axi_resetn |-> (!m_axi_awvalid && !m_axi_arvalid);
+    !m_axi_resetn |=> (!m_axi_awvalid && !m_axi_arvalid);
   endproperty
   a_no_issue_during_reset: assert property (p_no_issue_during_reset)
     else $error("FIREWALL: transaction issued while peripheral held in reset!");

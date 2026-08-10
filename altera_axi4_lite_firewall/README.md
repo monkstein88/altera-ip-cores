@@ -88,7 +88,7 @@ To expose this (and sibling cores) to Platform Designer, add the repository's
 | `CTRL_ADDR_WIDTH` | 12 | Control port address width; must cover `0x40 + NUM_RULES*16` bytes |
 | `NUM_RULES` | 8 | Number of address-range rules |
 | `TIMEOUT_WIDTH` | 20 | Max programmable timeout is `2^TIMEOUT_WIDTH − 1` clk cycles |
-| `RESET_HOLD_CYCLES` | 16 | How long `m_axi_resetn` is held low during downstream recovery. Must exceed the protected peripheral's minimum reset pulse width. |
+| `RESET_HOLD_CYCLES` | 16 | How long `m_axi_resetn` is held low during downstream recovery (the actual pulse is one cycle longer). Must exceed the protected peripheral's minimum reset pulse width. |
 
 `CTRL_ADDR_WIDTH` must be wide enough to reach the whole rule table
 (`0x40 + NUM_RULES*16` bytes). A validation callback in `hw.tcl` enforces
@@ -167,12 +167,12 @@ When a forwarded transaction times out, the core:
    withdrawing it before the handshake.
 
 Software recovers by writing 1 to `STATUS.TIMEOUT_ERROR`. That pulses
-`m_axi_resetn` low for `RESET_HOLD_CYCLES`, flushing the peripheral — the
+`m_axi_resetn` low for at least `RESET_HOLD_CYCLES`, flushing the peripheral — the
 only point at which the stuck VALID is dropped, since AXI state is moot
 while a device is in reset. Forwarding then reopens automatically.
 
 A transaction arriving during the reset pulse is **stalled**, not rejected —
-a bounded wait of at most `RESET_HOLD_CYCLES`, so recovery is invisible to
+a bounded wait of roughly `RESET_HOLD_CYCLES`, so recovery is invisible to
 the master and needs no retry logic.
 
 > **`m_axi_resetn` must be connected to the protected peripheral's reset.**
