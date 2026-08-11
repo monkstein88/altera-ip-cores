@@ -610,6 +610,84 @@ module axi_firewall_tb;
     endtask
 
     // ==================================================================
+    // Data-path response backpressure (s_axi B and R channels).
+    //
+    // Questa reported a_bvalid_stability and a_rvalid_stability with 845
+    // vacuous attempts and a pass count of ZERO. Their antecedent is
+    // (BVALID && !BREADY), and every BFM task above raises BREADY/RREADY
+    // together with the request, so a response never once had to wait -
+    // two assertions that had verified precisely nothing while looking
+    // green. This holds each response channel off for several cycles so
+    // they fire, and checks what AXI actually requires meanwhile: VALID
+    // stays asserted and the payload stays stable until READY.
+    // ==================================================================
+    task automatic test_response_backpressure;
+        logic [1:0]  held_resp;
+        logic [31:0] held_data;
+        begin
+            $display("\n--- Coverage Test 7: s_axi response backpressure ---");
+            hang_mode = HANG_NONE;
+
+            // ---- write: complete the request, then stall BREADY ----
+            tick;
+            s_axi_awaddr = 32'h0000_1004; s_axi_awvalid = 1;
+            s_axi_wdata  = 32'hB0B0_CAFE; s_axi_wstrb = 4'hF; s_axi_wvalid = 1;
+            s_axi_bready = 0;
+            while (!(s_axi_awready && s_axi_wready)) tick;
+            tick;
+            s_axi_awvalid = 0; s_axi_wvalid = 0;
+            while (!s_axi_bvalid) tick;
+            held_resp = s_axi_bresp;
+
+            for (int i = 0; i < 6; i++) begin
+                tick;
+                if (!s_axi_bvalid) begin
+                    fail_count++;
+                    $display("  FAIL: BVALID dropped before BREADY");
+                end
+                if (s_axi_bresp !== held_resp) begin
+                    fail_count++;
+                    $display("  FAIL: BRESP changed while waiting for BREADY");
+                end
+            end
+            check_eq(s_axi_bvalid, 1'b1, "response backpressure: BVALID held until BREADY");
+            check_eq(held_resp,   2'b00, "response backpressure: BRESP is OKAY");
+
+            s_axi_bready = 1; tick; tick;
+            s_axi_bready = 0;
+            check_eq(s_axi_bvalid, 1'b0, "response backpressure: BVALID cleared after BREADY");
+
+            // ---- read: same on the R channel ----
+            tick;
+            s_axi_araddr = 32'h0000_1004; s_axi_arvalid = 1;
+            s_axi_rready = 0;
+            while (!s_axi_arready) tick;
+            tick;
+            s_axi_arvalid = 0;
+            while (!s_axi_rvalid) tick;
+            held_data = s_axi_rdata;
+
+            for (int i = 0; i < 6; i++) begin
+                tick;
+                if (!s_axi_rvalid) begin
+                    fail_count++;
+                    $display("  FAIL: RVALID dropped before RREADY");
+                end
+                if (s_axi_rdata !== held_data) begin
+                    fail_count++;
+                    $display("  FAIL: RDATA changed while waiting for RREADY");
+                end
+            end
+            check_eq(s_axi_rvalid, 1'b1,          "response backpressure: RVALID held until RREADY");
+            check_eq(held_data, 32'hB0B0_CAFE,    "response backpressure: RDATA stable and correct");
+
+            s_axi_rready = 1; tick; tick;
+            s_axi_rready = 0;
+            check_eq(s_axi_rvalid, 1'b0, "response backpressure: RVALID cleared after RREADY");
+        end
+    endtask
+
+    // ==================================================================
     // Reset asserted mid-transaction.
     //
     // Closes the four FSM transitions Questa reported as uncovered:
@@ -999,6 +1077,7 @@ module axi_firewall_tb;
         ctrl_write_staggered(OFF_TMOUT, 32'd20);
         test_write_backpressure();
         test_read_backpressure();
+        test_response_backpressure();
         measure_latency();
 
         $display("=== RESULTS: %0d passed, %0d failed ===", pass_count, fail_count);

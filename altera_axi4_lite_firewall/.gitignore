@@ -14,6 +14,7 @@ run.log
 *.vstf
 modelsim.ini
 vsim.dbg
+etch*
 coverage_report.txt
 assert_report.txt
 covhtmlreport/

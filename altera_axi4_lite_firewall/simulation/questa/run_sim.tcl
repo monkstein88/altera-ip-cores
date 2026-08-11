@@ -5,16 +5,16 @@
 #        or from a shell:  vsim -c -do run_sim.tcl
 #
 # Produces, all in this directory:
-#   run.log              full transcript, including the assertion report
+#   run.log              full transcript
 #   coverage.ucdb        coverage database
-#   coverage_report.txt  code coverage, per instance
-#   assert_report.txt    assertion pass/fail counts and cover-directive hits
+#   coverage_report.txt  per-instance code coverage, PLUS the Assertion
+#                        Coverage and Directive Coverage sections under the
+#                        bound SVA instance
 #
-# NOTE: `coverage report -details` emits CODE coverage only. It does not
-# include assertion results or cover directives - that omission is why an
-# earlier revision of this repo shipped a coverage_report.txt with no
-# assertion section while the README quoted cover-directive hit counts. The
-# assertion data comes from `assertion report`, written separately below.
+# Read the assertion table's Pass Count column, not just Failure Count. A
+# property whose pass count is 0 and whose vacuous count is in the hundreds
+# has never been evaluated - it is not evidence of anything. Two of these
+# were in exactly that state until v1.2; see the README.
 # =============================================================================
 
 # Capture everything to a file as well as the console.
@@ -40,35 +40,51 @@ set NoQuitOnFinish 1
 onbreak {resume}
 run -all
 
-# Assertion + cover-directive results.
-# Redirected explicitly: `assertion report` prints to the transcript, so
-# without this the numbers only ever live in run.log.
-set fh [open assert_report.txt w]
-puts $fh [assertion report -verbose -recursive]
-close $fh
-assertion report -verbose -recursive
-
-# Code coverage
+# ---------------------------------------------------------------------------
+# Reports.
+#
+# `coverage report -details` includes Assertion Coverage and Directive
+# Coverage sections alongside the code coverage, under the bound SVA
+# instance. Verified on Questa 2024.1: 12 assertions and 5 cover directives
+# appear in coverage_report.txt.
+#
+# Do NOT try `puts $fh [assertion report ...]` to capture assertions
+# separately: `assertion report` writes to the transcript and returns an
+# empty string, so that produces a 1-byte file and looks like the assertions
+# never ran. If you want the report on its own, use `transcript file` (set at
+# the top of this script) and read run.log.
+#
+# The old `-codeAll` switch selects code coverage only and silently omits
+# both SVA sections - that is what to avoid.
+# ---------------------------------------------------------------------------
 coverage save coverage.ucdb
 coverage report -details -output coverage_report.txt
 
 # ---------------------------------------------------------------------------
-# Pass/fail. $fatal in the testbench already makes a batch vsim exit non-zero,
-# but scan the transcript too so an interactive run reports clearly.
+# Pass/fail. $fatal in the testbench already makes a batch vsim exit non-zero;
+# scan the transcript too so an interactive run reports clearly.
+#
+# Wrapped in a proc so vsim's -do handling doesn't echo each command's return
+# value into the transcript.
 # ---------------------------------------------------------------------------
-set passed 0
-if {[file exists run.log]} {
+proc run_passed {} {
+    if {![file exists run.log]} { return 0 }
     set fh [open run.log r]
     set txt [read $fh]
     close $fh
-    if {[string first "*** ALL TESTS PASSED ***" $txt] >= 0} { set passed 1 }
+    return [expr {[string first "*** ALL TESTS PASSED ***" $txt] >= 0}]
 }
 
-if {$passed} {
-    puts "RESULT: PASSED - coverage.ucdb, coverage_report.txt, assert_report.txt written"
-} else {
-    puts "RESULT: FAILED - see run.log"
+proc report_result {} {
+    if {[run_passed]} {
+        puts "RESULT: PASSED - coverage.ucdb and coverage_report.txt written"
+        puts "        (assertion + directive results are inside coverage_report.txt)"
+    } else {
+        puts "RESULT: FAILED - see run.log"
+    }
+    return
 }
+report_result
 
 # Uncomment for batch use (returns a shell exit status):
-# if {$passed} { quit -code 0 } else { quit -code 1 }
+# if {[run_passed]} { quit -code 0 } else { quit -code 1 }
