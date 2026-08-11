@@ -1,5 +1,5 @@
 // =============================================================================
-// axi_firewall_top.v
+// axi_firewall_top.sv
 //
 // AXI4-Lite Access-Control + Fault-Isolation Firewall
 //
@@ -39,9 +39,10 @@
 //     abandoned one.
 //
 //   - m_axi_resetn MUST be connected to the protected peripheral's reset.
-//     It is the mechanism that flushes a peripheral left mid-transaction.
-//     Leaving it unconnected re-opens the stale-response hazard that the
-//     *_discard_pending flags below only partially cover.
+//     It is the mechanism that flushes a peripheral left mid-transaction, and
+//     the only defence against a stale response from an abandoned one. There
+//     is no software-visible fallback: leaving it unconnected re-opens the
+//     stale-response hazard entirely.
 //
 //   - m_axi_bready / m_axi_rready are tied high permanently. A firewall's
 //     whole point is that a wedged downstream slave can never stall the rest
@@ -57,107 +58,106 @@
 //   - If a read fault and a write fault land in the exact same cycle, both
 //     sticky STATUS bits are still set correctly, but FAULT_ADDR/FAULT_INFO
 //     captures the write side (documented, deterministic tie-break).
+//
+// LANGUAGE: SystemVerilog (IEEE 1800), synthesisable subset. The two datapath
+// state machines are enum-typed, which is what lets Questa name the states in
+// its FSM coverage report rather than showing bare 2'b encodings.
 // =============================================================================
 
 module axi_firewall_top #(
-    parameter ADDR_WIDTH      = 32,
-    parameter DATA_WIDTH      = 32,
-    parameter CTRL_ADDR_WIDTH = 12,
-    parameter NUM_RULES       = 8,
-    parameter TIMEOUT_WIDTH   = 20,
-    parameter RESET_HOLD_CYCLES = 16   // peripheral reset pulse length, in clk cycles
+    parameter int ADDR_WIDTH        = 32,
+    parameter int DATA_WIDTH        = 32,
+    parameter int CTRL_ADDR_WIDTH   = 12,
+    parameter int NUM_RULES         = 8,
+    parameter int TIMEOUT_WIDTH     = 20,
+    parameter int RESET_HOLD_CYCLES = 16   // peripheral reset pulse length, in clk cycles
 ) (
-    input  wire                        clk,
-    input  wire                        resetn,     // active-low, synchronous
+    input  logic                       clk,
+    input  logic                       resetn,     // active-low, synchronous
 
     // ------------------------- s_axi (protected data-path slave) -----------
-    input  wire [ADDR_WIDTH-1:0]       s_axi_awaddr,
-    input  wire [2:0]                  s_axi_awprot,
-    input  wire                        s_axi_awvalid,
-    output wire                        s_axi_awready,
-    input  wire [DATA_WIDTH-1:0]       s_axi_wdata,
-    input  wire [DATA_WIDTH/8-1:0]     s_axi_wstrb,
-    input  wire                        s_axi_wvalid,
-    output wire                        s_axi_wready,
-    output reg  [1:0]                  s_axi_bresp,
-    output reg                         s_axi_bvalid,
-    input  wire                        s_axi_bready,
-    input  wire [ADDR_WIDTH-1:0]       s_axi_araddr,
-    input  wire [2:0]                  s_axi_arprot,
-    input  wire                        s_axi_arvalid,
-    output wire                        s_axi_arready,
-    output reg  [DATA_WIDTH-1:0]       s_axi_rdata,
-    output reg  [1:0]                  s_axi_rresp,
-    output reg                         s_axi_rvalid,
-    input  wire                        s_axi_rready,
+    input  logic [ADDR_WIDTH-1:0]      s_axi_awaddr,
+    input  logic [2:0]                 s_axi_awprot,
+    input  logic                       s_axi_awvalid,
+    output logic                       s_axi_awready,
+    input  logic [DATA_WIDTH-1:0]      s_axi_wdata,
+    input  logic [DATA_WIDTH/8-1:0]    s_axi_wstrb,
+    input  logic                       s_axi_wvalid,
+    output logic                       s_axi_wready,
+    output logic [1:0]                 s_axi_bresp,
+    output logic                       s_axi_bvalid,
+    input  logic                       s_axi_bready,
+    input  logic [ADDR_WIDTH-1:0]      s_axi_araddr,
+    input  logic [2:0]                 s_axi_arprot,
+    input  logic                       s_axi_arvalid,
+    output logic                       s_axi_arready,
+    output logic [DATA_WIDTH-1:0]      s_axi_rdata,
+    output logic [1:0]                 s_axi_rresp,
+    output logic                       s_axi_rvalid,
+    input  logic                       s_axi_rready,
 
     // ------------------------- m_axi (protected data-path master) ----------
-    output wire [ADDR_WIDTH-1:0]       m_axi_awaddr,
-    output wire [2:0]                  m_axi_awprot,
-    output reg                         m_axi_awvalid,
-    input  wire                        m_axi_awready,
-    output wire [DATA_WIDTH-1:0]       m_axi_wdata,
-    output wire [DATA_WIDTH/8-1:0]     m_axi_wstrb,
-    output reg                         m_axi_wvalid,
-    input  wire                        m_axi_wready,
-    input  wire [1:0]                  m_axi_bresp,
-    input  wire                        m_axi_bvalid,
-    output wire                        m_axi_bready,
-    output wire [ADDR_WIDTH-1:0]       m_axi_araddr,
-    output wire [2:0]                  m_axi_arprot,
-    output reg                         m_axi_arvalid,
-    input  wire                        m_axi_arready,
-    input  wire [DATA_WIDTH-1:0]       m_axi_rdata,
-    input  wire [1:0]                  m_axi_rresp,
-    input  wire                        m_axi_rvalid,
-    output wire                        m_axi_rready,
+    output logic [ADDR_WIDTH-1:0]      m_axi_awaddr,
+    output logic [2:0]                 m_axi_awprot,
+    output logic                       m_axi_awvalid,
+    input  logic                       m_axi_awready,
+    output logic [DATA_WIDTH-1:0]      m_axi_wdata,
+    output logic [DATA_WIDTH/8-1:0]    m_axi_wstrb,
+    output logic                       m_axi_wvalid,
+    input  logic                       m_axi_wready,
+    input  logic [1:0]                 m_axi_bresp,
+    input  logic                       m_axi_bvalid,
+    output logic                       m_axi_bready,
+    output logic [ADDR_WIDTH-1:0]      m_axi_araddr,
+    output logic [2:0]                 m_axi_arprot,
+    output logic                       m_axi_arvalid,
+    input  logic                       m_axi_arready,
+    input  logic [DATA_WIDTH-1:0]      m_axi_rdata,
+    input  logic [1:0]                 m_axi_rresp,
+    input  logic                       m_axi_rvalid,
+    output logic                       m_axi_rready,
 
     // ------------------------- s_axi_ctrl (control/status slave) -----------
-    input  wire [CTRL_ADDR_WIDTH-1:0]  s_axi_ctrl_awaddr,
-    input  wire [2:0]                  s_axi_ctrl_awprot,
-    input  wire                        s_axi_ctrl_awvalid,
-    output wire                        s_axi_ctrl_awready,
-    input  wire [31:0]                 s_axi_ctrl_wdata,
-    input  wire [3:0]                  s_axi_ctrl_wstrb,
-    input  wire                        s_axi_ctrl_wvalid,
-    output wire                        s_axi_ctrl_wready,
-    output wire [1:0]                  s_axi_ctrl_bresp,
-    output wire                        s_axi_ctrl_bvalid,
-    input  wire                        s_axi_ctrl_bready,
-    input  wire [CTRL_ADDR_WIDTH-1:0]  s_axi_ctrl_araddr,
-    input  wire [2:0]                  s_axi_ctrl_arprot,
-    input  wire                        s_axi_ctrl_arvalid,
-    output wire                        s_axi_ctrl_arready,
-    output wire [31:0]                 s_axi_ctrl_rdata,
-    output wire [1:0]                  s_axi_ctrl_rresp,
-    output wire                        s_axi_ctrl_rvalid,
-    input  wire                        s_axi_ctrl_rready,
+    input  logic [CTRL_ADDR_WIDTH-1:0] s_axi_ctrl_awaddr,
+    input  logic [2:0]                 s_axi_ctrl_awprot,
+    input  logic                       s_axi_ctrl_awvalid,
+    output logic                       s_axi_ctrl_awready,
+    input  logic [31:0]                s_axi_ctrl_wdata,
+    input  logic [3:0]                 s_axi_ctrl_wstrb,
+    input  logic                       s_axi_ctrl_wvalid,
+    output logic                       s_axi_ctrl_wready,
+    output logic [1:0]                 s_axi_ctrl_bresp,
+    output logic                       s_axi_ctrl_bvalid,
+    input  logic                       s_axi_ctrl_bready,
+    input  logic [CTRL_ADDR_WIDTH-1:0] s_axi_ctrl_araddr,
+    input  logic [2:0]                 s_axi_ctrl_arprot,
+    input  logic                       s_axi_ctrl_arvalid,
+    output logic                       s_axi_ctrl_arready,
+    output logic [31:0]                s_axi_ctrl_rdata,
+    output logic [1:0]                 s_axi_ctrl_rresp,
+    output logic                       s_axi_ctrl_rvalid,
+    input  logic                       s_axi_ctrl_rready,
 
-    output wire                        irq,
+    output logic                       irq,
 
     // Active-low reset for the PROTECTED PERIPHERAL. Held low while the
     // downstream is known-broken and for RESET_HOLD_CYCLES afterwards.
     // Connect this to the peripheral's reset input - see header.
-    output wire                        m_axi_resetn
+    output logic                       m_axi_resetn
 );
 
-    // Constant function rather than $clog2, which is Verilog-2005 - this
-    // keeps the RTL compilable as plain Verilog-2001 as documented.
-    function integer clog2;
-        input integer value;
-        integer i;
-        begin
-            clog2 = 0;
-            for (i = value - 1; i > 0; i = i >> 1)
-                clog2 = clog2 + 1;
-        end
-    endfunction
+    // $clog2 replaces the hand-rolled constant function the Verilog-2001
+    // version needed.
+    localparam int RESET_CNT_W = $clog2(RESET_HOLD_CYCLES + 1);
 
-    localparam RESET_CNT_W = clog2(RESET_HOLD_CYCLES + 1);
+    typedef enum logic [1:0] {
+        RESP_OKAY   = 2'b00,
+        RESP_SLVERR = 2'b10,
+        RESP_DECERR = 2'b11
+    } axi_resp_e;
 
-    localparam [1:0] RESP_OKAY   = 2'b00;
-    localparam [1:0] RESP_SLVERR = 2'b10;
-    localparam [1:0] RESP_DECERR = 2'b11;
+    typedef enum logic [1:0] { WR_IDLE, WR_EVAL, WR_FWD, WR_RESP } wr_state_e;
+    typedef enum logic [1:0] { RD_IDLE, RD_EVAL, RD_FWD, RD_RESP } rd_state_e;
 
     // tie the master-side response-accept signals high at all times -
     // see design note above.
@@ -167,33 +167,32 @@ module axi_firewall_top #(
     // ------------------------------------------------------------------
     // Wires to/from the register block
     // ------------------------------------------------------------------
-    wire                      global_enable;
-    wire                      isolate_effective;
-    wire [TIMEOUT_WIDTH-1:0]  timeout_value;
+    logic                     global_enable;
+    logic                     isolate_effective;
+    logic [TIMEOUT_WIDTH-1:0] timeout_value;
 
-    wire [ADDR_WIDTH-1:0]     chk_w_addr;
-    wire                      chk_w_allow, chk_w_match;
-    wire [ADDR_WIDTH-1:0]     chk_r_addr;
-    wire                      chk_r_allow, chk_r_match;
+    logic [ADDR_WIDTH-1:0]    chk_w_addr;
+    logic                     chk_w_allow, chk_w_match;
+    logic [ADDR_WIDTH-1:0]    chk_r_addr;
+    logic                     chk_r_allow, chk_r_match;
 
-    reg  wr_fault_addr_violation, wr_fault_perm_violation, wr_fault_timeout;
-    reg  rd_fault_addr_violation, rd_fault_perm_violation, rd_fault_timeout;
+    logic wr_fault_addr_violation, wr_fault_perm_violation, wr_fault_timeout;
+    logic rd_fault_addr_violation, rd_fault_perm_violation, rd_fault_timeout;
 
-    reg [ADDR_WIDTH-1:0]   captured_awaddr;
-    reg [ADDR_WIDTH-1:0] captured_araddr;
+    logic [ADDR_WIDTH-1:0] captured_awaddr;
+    logic [ADDR_WIDTH-1:0] captured_araddr;
 
-    wire fault_addr_violation = wr_fault_addr_violation | rd_fault_addr_violation;
-    wire fault_perm_violation = wr_fault_perm_violation | rd_fault_perm_violation;
-    wire fault_timeout        = wr_fault_timeout        | rd_fault_timeout;
-    wire wr_fault_any = wr_fault_addr_violation | wr_fault_perm_violation | wr_fault_timeout;
-    wire [ADDR_WIDTH-1:0] fault_addr_value = wr_fault_any ? captured_awaddr : captured_araddr;
-    wire fault_was_write = wr_fault_any;
+    logic fault_addr_violation, fault_perm_violation, fault_timeout;
+    logic wr_fault_any, fault_was_write;
+    logic [ADDR_WIDTH-1:0] fault_addr_value;
+    logic timeout_ack;
 
-    // Declared before the instantiation below: connecting an undeclared
-    // identifier to a port creates an implicit net at that point, which then
-    // collides with a later explicit declaration. Some tools accept it,
-    // Questa correctly does not.
-    wire timeout_ack;
+    assign fault_addr_violation = wr_fault_addr_violation | rd_fault_addr_violation;
+    assign fault_perm_violation = wr_fault_perm_violation | rd_fault_perm_violation;
+    assign fault_timeout        = wr_fault_timeout        | rd_fault_timeout;
+    assign wr_fault_any = wr_fault_addr_violation | wr_fault_perm_violation | wr_fault_timeout;
+    assign fault_addr_value = wr_fault_any ? captured_awaddr : captured_araddr;
+    assign fault_was_write  = wr_fault_any;
 
     axi_firewall_regs #(
         .ADDR_WIDTH      (ADDR_WIDTH),
@@ -248,9 +247,9 @@ module axi_firewall_top #(
     // ==================================================================
     // DOWNSTREAM RECOVERY  (see header: TIMEOUT RECOVERY)
     // ==================================================================
-    reg                       downstream_broken;
-    reg [RESET_CNT_W-1:0]     reset_hold_cnt;
-    reg                       m_resetn_r;
+    logic                   downstream_broken;
+    logic [RESET_CNT_W-1:0] reset_hold_cnt;
+    logic                   m_resetn_r;
 
     assign m_axi_resetn = m_resetn_r;
 
@@ -258,7 +257,8 @@ module axi_firewall_top #(
     // downstream. Kept separate from isolate_effective on purpose: blocking
     // after a timeout is required for protocol safety and must not depend
     // on CTRL.AUTO_ISOLATE_EN, which only governs the visible ISOLATED bit.
-    wire forward_blocked = isolate_effective | downstream_broken;
+    logic forward_blocked;
+    assign forward_blocked = isolate_effective | downstream_broken;
 
     // The post-acknowledge window: the fault has been cleared but the
     // peripheral reset pulse is still in progress. A transaction arriving
@@ -266,25 +266,29 @@ module axi_firewall_top #(
     // wait of at most RESET_HOLD_CYCLES. Denying instead would force
     // software to poll and retry after every recovery, and stalling keeps
     // the recovery invisible to the master.
-    wire recovery_active = !downstream_broken && !m_resetn_r;
+    logic recovery_active;
+    assign recovery_active = !downstream_broken && !m_resetn_r;
 
-    // Armed ONLY when a transaction timed out AFTER its address handshake
-    // completed - the one case where exactly one response is provably still
-    // owed by a compliant peripheral. (If AWREADY/ARREADY was never seen, a
-    // compliant slave never accepted the transaction and owes nothing, so
-    // arming there would risk swallowing a later legitimate response: an
-    // orphan and a real response are indistinguishable without transaction
-    // IDs, which AXI4-Lite does not have.)
+    // NOTE (v1.2): earlier revisions carried wr_discard_pending /
+    // rd_discard_pending one-shot flags, armed on a response-phase timeout so
+    // that a late "orphan" response from the abandoned transaction could be
+    // swallowed rather than mis-attributed to the next one. They were dead
+    // code and have been removed. A timeout unconditionally sets
+    // `downstream_broken` (below), which drops m_axi_resetn two cycles later,
+    // and the !m_resetn_r clause at the bottom of each datapath cleared the
+    // flags at that point - always before the FSM could re-enter *_FWD and
+    // ever test them. Questa confirmed it: both flags sat at 0% condition
+    // coverage with "'_1' not hit" against a suite that does exercise the
+    // timeout path.
     //
-    // This is a narrow safety net, NOT the primary fix. The primary fix is
-    // m_axi_resetn: resetting the peripheral is the only way to guarantee no
-    // orphan survives, which is why connecting it is mandatory.
-    reg wr_discard_pending, rd_discard_pending;
+    // m_axi_resetn is, and always was, the actual mechanism: resetting the
+    // peripheral is the only way to guarantee no orphan survives, which is
+    // why connecting it is mandatory.
 
-    always @(posedge clk) begin
+    always_ff @(posedge clk) begin
         if (!resetn) begin
             downstream_broken <= 1'b0;
-            reset_hold_cnt    <= {RESET_CNT_W{1'b0}};
+            reset_hold_cnt    <= '0;
             m_resetn_r        <= 1'b0;
         end else begin
             if (wr_fault_timeout | rd_fault_timeout)
@@ -294,7 +298,7 @@ module axi_firewall_top #(
 
             if (downstream_broken) begin
                 m_resetn_r     <= 1'b0;
-                reset_hold_cnt <= RESET_HOLD_CYCLES;
+                reset_hold_cnt <= RESET_CNT_W'(RESET_HOLD_CYCLES);
             end else if (reset_hold_cnt != 0) begin
                 m_resetn_r     <= 1'b0;
                 reset_hold_cnt <= reset_hold_cnt - 1'b1;
@@ -307,57 +311,51 @@ module axi_firewall_top #(
     // ==================================================================
     // WRITE DATAPATH
     // ==================================================================
-    localparam WR_IDLE = 2'd0, WR_EVAL = 2'd1, WR_FWD = 2'd2, WR_RESP = 2'd3;
-    reg [1:0] wr_state;
+    wr_state_e wr_state;
 
-    reg s_axi_awready_r, s_axi_wready_r;
-    //reg [ADDR_WIDTH-1:0]   captured_awaddr;
-    reg [2:0]              captured_awprot;
-    reg [DATA_WIDTH-1:0]   captured_wdata;
-    reg [DATA_WIDTH/8-1:0] captured_wstrb;
+    logic [2:0]              captured_awprot;
+    logic [DATA_WIDTH-1:0]   captured_wdata;
+    logic [DATA_WIDTH/8-1:0] captured_wstrb;
 
-    reg [TIMEOUT_WIDTH-1:0] wr_timeout_cnt;
+    logic [TIMEOUT_WIDTH-1:0] wr_timeout_cnt;
 
-    assign s_axi_awready = s_axi_awready_r;
-    assign s_axi_wready  = s_axi_wready_r;
-    assign chk_w_addr    = captured_awaddr;
+    assign chk_w_addr = captured_awaddr;
 
     assign m_axi_awaddr = captured_awaddr;
     assign m_axi_awprot = captured_awprot;
     assign m_axi_wdata  = captured_wdata;
     assign m_axi_wstrb  = captured_wstrb;
 
-    always @(posedge clk) begin
+    always_ff @(posedge clk) begin
         if (!resetn) begin
             wr_state                <= WR_IDLE;
-            s_axi_awready_r         <= 1'b0;
-            s_axi_wready_r          <= 1'b0;
+            s_axi_awready           <= 1'b0;
+            s_axi_wready            <= 1'b0;
             s_axi_bvalid            <= 1'b0;
             s_axi_bresp             <= RESP_OKAY;
             m_axi_awvalid           <= 1'b0;
             m_axi_wvalid            <= 1'b0;
-            wr_timeout_cnt          <= {TIMEOUT_WIDTH{1'b0}};
+            wr_timeout_cnt          <= '0;
             wr_fault_addr_violation <= 1'b0;
             wr_fault_perm_violation <= 1'b0;
             wr_fault_timeout        <= 1'b0;
-            wr_discard_pending      <= 1'b0;
-            captured_awaddr         <= {ADDR_WIDTH{1'b0}};
-            captured_awprot         <= 3'b0;
-            captured_wdata          <= {DATA_WIDTH{1'b0}};
-            captured_wstrb          <= {(DATA_WIDTH/8){1'b0}};
+            captured_awaddr         <= '0;
+            captured_awprot         <= '0;
+            captured_wdata          <= '0;
+            captured_wstrb          <= '0;
         end else begin
             // defaults - pulses clear every cycle unless re-asserted below
             wr_fault_addr_violation <= 1'b0;
             wr_fault_perm_violation <= 1'b0;
             wr_fault_timeout        <= 1'b0;
-            s_axi_awready_r         <= 1'b0;
-            s_axi_wready_r          <= 1'b0;
+            s_axi_awready           <= 1'b0;
+            s_axi_wready            <= 1'b0;
 
             case (wr_state)
                 WR_IDLE: begin
                     if (s_axi_awvalid && s_axi_wvalid) begin
-                        s_axi_awready_r <= 1'b1;
-                        s_axi_wready_r  <= 1'b1;
+                        s_axi_awready   <= 1'b1;
+                        s_axi_wready    <= 1'b1;
                         captured_awaddr <= s_axi_awaddr;
                         captured_awprot <= s_axi_awprot;
                         captured_wdata  <= s_axi_wdata;
@@ -376,7 +374,7 @@ module axi_firewall_top #(
                         // bypass mode: forward unconditionally
                         m_axi_awvalid  <= 1'b1;
                         m_axi_wvalid   <= 1'b1;
-                        wr_timeout_cnt <= {TIMEOUT_WIDTH{1'b0}};
+                        wr_timeout_cnt <= '0;
                         wr_state       <= WR_FWD;
                     end else if (!chk_w_match) begin
                         s_axi_bresp             <= RESP_DECERR;
@@ -389,7 +387,7 @@ module axi_firewall_top #(
                     end else begin
                         m_axi_awvalid  <= 1'b1;
                         m_axi_wvalid   <= 1'b1;
-                        wr_timeout_cnt <= {TIMEOUT_WIDTH{1'b0}};
+                        wr_timeout_cnt <= '0;
                         wr_state       <= WR_FWD;
                     end
                 end
@@ -400,21 +398,17 @@ module axi_firewall_top #(
 
                     if (!m_axi_awvalid && !m_axi_wvalid) begin
                         // address+data phases done; waiting on the response
-                        if (m_axi_bvalid && wr_discard_pending) begin
-                            // stale response owed by an earlier abandoned
-                            // transaction - swallow it, keep waiting
-                            wr_discard_pending <= 1'b0;
-                        end else if (m_axi_bvalid) begin
-                            s_axi_bresp <= m_axi_bresp;
+                        if (m_axi_bvalid) begin
+                            s_axi_bresp <= axi_resp_e'(m_axi_bresp);
                             wr_state    <= WR_RESP;
                         end else if (wr_timeout_cnt >= timeout_value) begin
-                            // Address phase already handshaked, so nothing to
-                            // withdraw - but the peripheral may still answer
-                            // later. Flag the orphan.
-                            s_axi_bresp        <= RESP_SLVERR;
-                            wr_fault_timeout   <= 1'b1;
-                            wr_discard_pending <= 1'b1;
-                            wr_state           <= WR_RESP;
+                            // Address phase already handshaked, so there is
+                            // nothing to withdraw. The peripheral may still
+                            // answer later; m_axi_resetn flushes it before any
+                            // new transaction is forwarded.
+                            s_axi_bresp      <= RESP_SLVERR;
+                            wr_fault_timeout <= 1'b1;
+                            wr_state         <= WR_RESP;
                         end else begin
                             wr_timeout_cnt <= wr_timeout_cnt + 1'b1;
                         end
@@ -426,12 +420,12 @@ module axi_firewall_top #(
                             // m_axi_awvalid/m_axi_wvalid are deliberately NOT
                             // cleared here. They are dropped only while
                             // m_axi_resetn is low (see recovery block above).
-                            // No discard flag: the address handshake never
-                            // completed, so a compliant slave never accepted
-                            // this transaction and owes no response.
-                            s_axi_bresp        <= RESP_SLVERR;
-                            wr_fault_timeout   <= 1'b1;
-                            wr_state           <= WR_RESP;
+                            // A compliant slave never accepted this
+                            // transaction (no address handshake) and so owes
+                            // no response.
+                            s_axi_bresp      <= RESP_SLVERR;
+                            wr_fault_timeout <= 1'b1;
+                            wr_state         <= WR_RESP;
                         end else begin
                             wr_timeout_cnt <= wr_timeout_cnt + 1'b1;
                         end
@@ -453,9 +447,8 @@ module axi_firewall_top #(
             // without a completed handshake: while the peripheral is held
             // in reset, where dangling AXI state is discarded anyway.
             if (!m_resetn_r) begin
-                m_axi_awvalid      <= 1'b0;
-                m_axi_wvalid       <= 1'b0;
-                wr_discard_pending <= 1'b0;
+                m_axi_awvalid <= 1'b0;
+                m_axi_wvalid  <= 1'b0;
             end
         end
     end
@@ -463,46 +456,41 @@ module axi_firewall_top #(
     // ==================================================================
     // READ DATAPATH (mirrors the write path)
     // ==================================================================
-    localparam RD_IDLE = 2'd0, RD_EVAL = 2'd1, RD_FWD = 2'd2, RD_RESP = 2'd3;
-    reg [1:0] rd_state;
+    rd_state_e rd_state;
 
-    reg s_axi_arready_r;
-    //reg [ADDR_WIDTH-1:0] captured_araddr;
-    reg [2:0]            captured_arprot;
+    logic [2:0] captured_arprot;
 
-    reg [TIMEOUT_WIDTH-1:0] rd_timeout_cnt;
+    logic [TIMEOUT_WIDTH-1:0] rd_timeout_cnt;
 
-    assign s_axi_arready = s_axi_arready_r;
-    assign chk_r_addr    = captured_araddr;
+    assign chk_r_addr = captured_araddr;
 
     assign m_axi_araddr = captured_araddr;
     assign m_axi_arprot = captured_arprot;
 
-    always @(posedge clk) begin
+    always_ff @(posedge clk) begin
         if (!resetn) begin
             rd_state                <= RD_IDLE;
-            s_axi_arready_r         <= 1'b0;
-            s_axi_rvalid             <= 1'b0;
+            s_axi_arready           <= 1'b0;
+            s_axi_rvalid            <= 1'b0;
             s_axi_rresp             <= RESP_OKAY;
-            s_axi_rdata             <= {DATA_WIDTH{1'b0}};
+            s_axi_rdata             <= '0;
             m_axi_arvalid           <= 1'b0;
-            rd_timeout_cnt          <= {TIMEOUT_WIDTH{1'b0}};
+            rd_timeout_cnt          <= '0;
             rd_fault_addr_violation <= 1'b0;
             rd_fault_perm_violation <= 1'b0;
             rd_fault_timeout        <= 1'b0;
-            rd_discard_pending      <= 1'b0;
-            captured_araddr         <= {ADDR_WIDTH{1'b0}};
-            captured_arprot         <= 3'b0;
+            captured_araddr         <= '0;
+            captured_arprot         <= '0;
         end else begin
             rd_fault_addr_violation <= 1'b0;
             rd_fault_perm_violation <= 1'b0;
             rd_fault_timeout        <= 1'b0;
-            s_axi_arready_r         <= 1'b0;
+            s_axi_arready           <= 1'b0;
 
             case (rd_state)
                 RD_IDLE: begin
                     if (s_axi_arvalid) begin
-                        s_axi_arready_r <= 1'b1;
+                        s_axi_arready   <= 1'b1;
                         captured_araddr <= s_axi_araddr;
                         captured_arprot <= s_axi_arprot;
                         rd_state        <= RD_EVAL;
@@ -514,25 +502,25 @@ module axi_firewall_top #(
                         rd_state <= RD_EVAL;      // stall, bounded
                     end else if (forward_blocked) begin
                         s_axi_rresp <= RESP_SLVERR;
-                        s_axi_rdata <= {DATA_WIDTH{1'b0}};
+                        s_axi_rdata <= '0;
                         rd_state    <= RD_RESP;
                     end else if (!global_enable) begin
                         m_axi_arvalid  <= 1'b1;
-                        rd_timeout_cnt <= {TIMEOUT_WIDTH{1'b0}};
+                        rd_timeout_cnt <= '0;
                         rd_state       <= RD_FWD;
                     end else if (!chk_r_match) begin
                         s_axi_rresp             <= RESP_DECERR;
-                        s_axi_rdata             <= {DATA_WIDTH{1'b0}};
+                        s_axi_rdata             <= '0;
                         rd_fault_addr_violation <= 1'b1;
                         rd_state                <= RD_RESP;
                     end else if (!chk_r_allow) begin
                         s_axi_rresp             <= RESP_SLVERR;
-                        s_axi_rdata             <= {DATA_WIDTH{1'b0}};
+                        s_axi_rdata             <= '0;
                         rd_fault_perm_violation <= 1'b1;
                         rd_state                <= RD_RESP;
                     end else begin
                         m_axi_arvalid  <= 1'b1;
-                        rd_timeout_cnt <= {TIMEOUT_WIDTH{1'b0}};
+                        rd_timeout_cnt <= '0;
                         rd_state       <= RD_FWD;
                     end
                 end
@@ -541,29 +529,25 @@ module axi_firewall_top #(
                     if (m_axi_arvalid && m_axi_arready) m_axi_arvalid <= 1'b0;
 
                     if (!m_axi_arvalid) begin
-                        if (m_axi_rvalid && rd_discard_pending) begin
-                            rd_discard_pending <= 1'b0;   // swallow orphan
-                        end else if (m_axi_rvalid) begin
+                        if (m_axi_rvalid) begin
                             s_axi_rdata <= m_axi_rdata;
-                            s_axi_rresp <= m_axi_rresp;
+                            s_axi_rresp <= axi_resp_e'(m_axi_rresp);
                             rd_state    <= RD_RESP;
                         end else if (rd_timeout_cnt >= timeout_value) begin
-                            s_axi_rdata        <= {DATA_WIDTH{1'b0}};
-                            s_axi_rresp        <= RESP_SLVERR;
-                            rd_fault_timeout   <= 1'b1;
-                            rd_discard_pending <= 1'b1;
-                            rd_state           <= RD_RESP;
+                            s_axi_rdata      <= '0;
+                            s_axi_rresp      <= RESP_SLVERR;
+                            rd_fault_timeout <= 1'b1;
+                            rd_state         <= RD_RESP;
                         end else begin
                             rd_timeout_cnt <= rd_timeout_cnt + 1'b1;
                         end
                     end else begin
                         if (rd_timeout_cnt >= timeout_value) begin
-                            // See write path: ARVALID is NOT withdrawn here,
-                            // and no discard flag is armed.
-                            s_axi_rdata        <= {DATA_WIDTH{1'b0}};
-                            s_axi_rresp        <= RESP_SLVERR;
-                            rd_fault_timeout   <= 1'b1;
-                            rd_state           <= RD_RESP;
+                            // See write path: ARVALID is NOT withdrawn here.
+                            s_axi_rdata      <= '0;
+                            s_axi_rresp      <= RESP_SLVERR;
+                            rd_fault_timeout <= 1'b1;
+                            rd_state         <= RD_RESP;
                         end else begin
                             rd_timeout_cnt <= rd_timeout_cnt + 1'b1;
                         end
@@ -583,8 +567,7 @@ module axi_firewall_top #(
 
             // See write path.
             if (!m_resetn_r) begin
-                m_axi_arvalid      <= 1'b0;
-                rd_discard_pending <= 1'b0;
+                m_axi_arvalid <= 1'b0;
             end
         end
     end

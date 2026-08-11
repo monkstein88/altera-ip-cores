@@ -12,8 +12,8 @@ package require -exact qsys 14.0
 #
 # The robust way to package this component, recommended over trusting this
 # file blindly:
-#   1. In Platform Designer, Component Editor -> add axi_firewall_top.v and
-#      axi_firewall_regs.v as synthesis files, set axi_firewall_top.v as the
+#   1. In Platform Designer, Component Editor -> add axi_firewall_top.sv and
+#      axi_firewall_regs.sv as synthesis files, set axi_firewall_top.sv as the
 #      top-level file, then "Analyze Synthesis Files".
 #   2. Because every port below follows the s_axi_*/m_axi_*/s_axi_ctrl_*
 #      naming convention with standard AXI4-Lite signal suffixes (awaddr,
@@ -28,7 +28,7 @@ package require -exact qsys 14.0
 set_module_property NAME altera_axi4_lite_firewall
 set_module_property DISPLAY_NAME "AXI4-Lite Firewall"
 set_module_property DESCRIPTION "Access-control + fault-isolation firewall for an AXI4-Lite slave, with a separate AXI4-Lite control/status port and an interrupt output."
-set_module_property VERSION 1.1
+set_module_property VERSION 1.2
 set_module_property GROUP "Bridges and Adapters/Custom"
 set_module_property AUTHOR "monkstein88"
 #set_module_property TOP_LEVEL_HDL_MODULE axi_firewall_top
@@ -39,16 +39,24 @@ set_module_property VALIDATION_CALLBACK validate
 
 # -----------------------------------------------------------------------
 # Files
+#
+# The file TYPE argument must be SYSTEM_VERILOG, not VERILOG. The RTL uses
+# `logic`, always_ff/always_comb, packed structs and enums; declaring it as
+# VERILOG makes Quartus analyse it with the Verilog-2001 parser and it fails
+# on the first `logic` declaration.
+#
+# The SIM fileset is still named SIM_VERILOG - that is the fileset's name in
+# Platform Designer, independent of the language of the files inside it.
 # -----------------------------------------------------------------------
 add_fileset QUARTUS_SYNTH QUARTUS_SYNTH generate_synth_files ""
 set_fileset_property QUARTUS_SYNTH TOP_LEVEL axi_firewall_top
-add_fileset_file axi_firewall_regs.v VERILOG PATH rtl/axi_firewall_regs.v
-add_fileset_file axi_firewall_top.v  VERILOG PATH rtl/axi_firewall_top.v TOP_LEVEL_FILE
+add_fileset_file axi_firewall_regs.sv SYSTEM_VERILOG PATH rtl/axi_firewall_regs.sv
+add_fileset_file axi_firewall_top.sv  SYSTEM_VERILOG PATH rtl/axi_firewall_top.sv TOP_LEVEL_FILE
 
 add_fileset SIM_VERILOG SIM_VERILOG generate_sim_files ""
 set_fileset_property SIM_VERILOG TOP_LEVEL axi_firewall_top
-add_fileset_file axi_firewall_regs.v VERILOG PATH rtl/axi_firewall_regs.v
-add_fileset_file axi_firewall_top.v  VERILOG PATH rtl/axi_firewall_top.v TOP_LEVEL_FILE
+add_fileset_file axi_firewall_regs.sv SYSTEM_VERILOG PATH rtl/axi_firewall_regs.sv
+add_fileset_file axi_firewall_top.sv  SYSTEM_VERILOG PATH rtl/axi_firewall_top.sv TOP_LEVEL_FILE
 
 proc generate_synth_files {entity_name} { }
 proc generate_sim_files {entity_name} { }
@@ -219,9 +227,19 @@ proc validate {} {
     set nr   [get_parameter_value NUM_RULES]
     set caw  [get_parameter_value CTRL_ADDR_WIDTH]
     set span [expr {0x40 + $nr * 16}]
-    set need [expr {int(ceil(log($span) / log(2)))}]
+
+    # Integer ceil-log2 by shifting, not int(ceil(log(x)/log(2))). The
+    # floating-point form gives the right answer for every NUM_RULES in the
+    # allowed 1..64 range on the platforms tested, but it relies on
+    # log(x)/log(2) never landing a hair above an integer for exact powers of
+    # two - a property of the host libm, not of Tcl. Shifting has no such
+    # dependency and is no slower at this size.
+    set need 0
+    while {(1 << $need) < $span} { incr need }
+
     if {$caw < $need} {
+        set last [expr {((1 << $caw) - 0x40) / 16 - 1}]
         send_message error \
-            "CTRL_ADDR_WIDTH=$caw is too small for NUM_RULES=$nr: the rule table spans $span bytes and needs at least $need address bits. Rules above index [expr {((1 << $caw) - 0x40) / 16 - 1}] would be unreachable."
+            "CTRL_ADDR_WIDTH=$caw is too small for NUM_RULES=$nr: the rule table spans $span bytes and needs at least $need address bits. Rules above index $last would be unreachable."
     }
 }
