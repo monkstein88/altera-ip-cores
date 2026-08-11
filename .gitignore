@@ -41,3 +41,6 @@ PLLJ_PLLSPE_INFO.txt
 Thumbs.db
 *.swp
 *~
+
+# --- Local tooling config (Cowork / Claude Code) ---
+.claude/
