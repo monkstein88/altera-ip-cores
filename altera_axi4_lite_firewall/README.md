@@ -8,7 +8,7 @@ component wrapper, a self-checking testbench, SystemVerilog assertions, and
 both a Questa flow with coverage collection and a licence-free Verilator flow.
 
 **Component:** `altera_axi4_lite_firewall` · displayed in the IP Catalog as
-**"AXI4-Lite Firewall"** under *Bridges and Adapters / Custom* · v1.2
+**"AXI4-Lite Firewall"** under *Bridges and Adapters / Custom* · v2.0
 
 ---
 
@@ -60,14 +60,15 @@ altera_axi4_lite_firewall/
 │   │                             timeout / isolate FSMs
 │   └── axi_firewall_regs.sv      Rule table, status/IRQ, control AXI4-Lite slave
 ├── tb/
-│   ├── axi_firewall_tb.sv        Self-checking testbench (80 checks) + SVA bind
+│   ├── axi_firewall_tb.sv        Self-checking testbench (103 checks) + SVA bind
 │   └── axi_firewall_sva.sv       SystemVerilog assertions & cover points
 ├── simulation/
 │   ├── questa/run_sim.tcl        Compile + run + coverage (incl. assertions)
-│   └── verilator/run_sim.sh      Licence-free regression (assertions, no coverage)
+│   ├── verilator/run_sim.sh      Licence-free regression (assertions, no coverage)
+│   └── verilator/slangcheck.py   Strict LRM elaboration gate (see Toolchain)
 └── verification/
-    ├── orphan_response_tb.sv     Standalone measurement of what m_axi_resetn
-    │                             is worth - see Timeout recovery
+    ├── orphan_response_tb.sv     Measures the cost of skipping the peripheral
+    │                             reset during recovery - see Timeout recovery
     └── README.md                 How to run it, and what its result means
 
 Simulation outputs (`work/`, `obj_dir/`, `*.ucdb`, `coverage_report.txt`,
@@ -105,6 +106,10 @@ What that buys over the Verilog-2001 the core started as:
   RTL now lints clean at `verilator --lint-only -Wall` across the whole
   parameter space.
 - **`$clog2`** in place of a hand-rolled constant function.
+- **Every file carries a `` `timescale ``**, RTL included. Mixing timescaled
+  and untimescaled modules in one compilation is tool-dependent (IEEE 1800
+  3.14.2.3): slang rejects it, Verilator warns, Questa accepts it silently.
+  Quartus ignores the directive for synthesis, so declaring it costs nothing.
 
 > **One conversion hazard worth knowing**, because it cost a debugging round
 > here: `wire x = expr;` is a *continuous assignment*, but `logic x = expr;` is
@@ -112,6 +117,36 @@ What that buys over the Verilog-2001 the core started as:
 > never again. A blind `wire`→`logic` sweep silently freezes such signals.
 > Write `logic x; assign x = expr;`. The symptom is not a compile error; it is
 > a signal stuck at its power-on value.
+
+---
+
+## Toolchain
+
+Three front ends, because they disagree about what is legal and the
+disagreements are where bugs hide:
+
+| Tool | Role | Catches |
+|---|---|---|
+| **Verilator 5.48** | regression + `-Wall` lint | functional bugs, width and lint issues |
+| **slang 11** | strict LRM elaboration, no simulation | use-before-declaration, implicit-net collisions, timescale mixing |
+| **Questa 2024.1** | coverage, assertion non-vacuity | vacuous assertions, FSM/directive coverage |
+
+That combination exists because each has missed something the others caught.
+Verilator ran 99 checks green on code Questa refused to compile — an
+identifier connected to a port before its declaration creates an implicit net
+that collides with the later declaration, and Verilator resolves the forward
+reference instead. slang catches that class in under a second without
+simulating, so it belongs in the loop before Questa. Conversely Questa is the
+only one of the three that reports assertion non-vacuity, which is how two
+permanently-vacuous properties were found.
+
+`simulation/verilator/run_sim.sh` runs the slang check first and stops on
+error, so the strict pass happens before anything is built:
+
+```bash
+pip install pyslang                    # enables the strict gate
+simulation/verilator/run_sim.sh        # slang -> lint -> build -> regression
+```
 
 ---
 
@@ -124,7 +159,6 @@ What that buys over the Verilog-2001 the core started as:
 | `CTRL_ADDR_WIDTH` | 12 | Control port address width; must cover `0x40 + NUM_RULES*16` bytes |
 | `NUM_RULES` | 8 | Number of address-range rules |
 | `TIMEOUT_WIDTH` | 20 | Max programmable timeout is `2^TIMEOUT_WIDTH − 1` clk cycles |
-| `RESET_HOLD_CYCLES` | 16 | How long `m_axi_resetn` is held low during downstream recovery (the actual pulse is one cycle longer). Must exceed the protected peripheral's minimum reset pulse width. |
 
 `CTRL_ADDR_WIDTH` must be wide enough to reach the whole rule table
 (`0x40 + NUM_RULES*16` bytes). A validation callback in `hw.tcl` enforces
@@ -138,21 +172,24 @@ unreachable.
 | Offset | Name | Access | Description |
 |---|---|---|---|
 | 0x00 | CTRL | R/W | bit0 `GLOBAL_ENABLE` (default **1**, secure-by-default); bit1 `AUTO_ISOLATE_EN` (default 1); bit2 `MANUAL_ISOLATE` |
-| 0x04 | STATUS | R, W1C on [2:0] | bit0 `ADDR_VIOLATION`, bit1 `PERM_VIOLATION`, bit2 `TIMEOUT_ERROR` (sticky, write-1-to-clear); bit3 `ISOLATED` (live, read-only — `MANUAL_ISOLATE` OR the internal auto-isolate latch) |
+| 0x04 | STATUS | R, W1C on [2:0] | bit0 `ADDR_VIOLATION`, bit1 `PERM_VIOLATION`, bit2 `TIMEOUT_ERROR` (sticky, write-1-to-clear); bit3 `ISOLATED`; bit4 `BLOCKED`; bit5 `WR_RESP_BUSY`; bit6 `RD_RESP_BUSY`; bit7 `WR_CMD_STUCK`; bit8 `RD_CMD_STUCK` — bits [8:3] all live and read-only |
 | 0x08 | IRQ_ENABLE | R/W | bits 0/1/2 enable IRQ for ADDR / PERM / TIMEOUT (default all enabled) |
 | 0x0C | TIMEOUT_VALUE | R/W | Round-trip timeout in clk cycles (default all-ones ⇒ effectively disabled until set) |
 | 0x10 | FAULT_ADDR | R | Address of the most recently latched fault |
 | 0x14 | FAULT_INFO | R | bit0 `WAS_WRITE` (0 ⇒ the fault came from a read); bits[3:1] type (1=ADDR, 2=PERM, 3=TIMEOUT) |
-| 0x18 | CORE_INFO | R | bits[7:0] `NUM_RULES` as generated; bits[31:16] version (0x0102 = v1.2) |
+| 0x18 | CORE_INFO | R | bits[7:0] `NUM_RULES` as generated; bits[31:16] version (0x0200 = v2.0) |
+| 0x1C | RECOVERY | W | bit0 `UNBLOCK` — write 1 to reopen the downstream. Self-clearing, reads 0 |
 | 0x40 + i·0x10 | `RULE_BASE[i]` | R/W | Inclusive base address of range *i* |
 | 0x44 + i·0x10 | `RULE_LIMIT[i]` | R/W | Inclusive top address of range *i* |
 | 0x48 + i·0x10 | `RULE_PERM[i]` | R/W | bit0 `READ_ALLOW`, bit1 `WRITE_ALLOW`, bit2 `VALID` (rule ignored entirely if 0) |
 
 `i` runs `0 … NUM_RULES-1` (default 8 rules ⇒ table spans 0x40–0xBF).
 
-Clearing `STATUS.TIMEOUT_ERROR` also releases the auto-isolate latch — this is
-deliberate: recovering from isolation requires acknowledging why it happened,
-not just flipping a bit blind.
+Clearing `STATUS.TIMEOUT_ERROR` releases the auto-isolate latch, but **does
+not** reopen the downstream. That takes an explicit `RECOVERY.UNBLOCK`, so
+acknowledging a fault cannot accidentally restart traffic toward a peripheral
+nobody has reset yet. This is the v2.0 behaviour change — see *Timeout
+recovery*.
 
 ---
 
@@ -194,7 +231,7 @@ not just flipping a bit blind.
 
 ---
 
-## Timeout recovery and `m_axi_resetn`
+## Timeout recovery
 
 When a forwarded transaction times out, the core:
 
@@ -205,31 +242,51 @@ When a forwarded transaction times out, the core:
 3. **leaves the stuck `m_axi_*VALID` asserted**, because AXI forbids
    withdrawing it before the handshake.
 
-Software recovers by writing 1 to `STATUS.TIMEOUT_ERROR`. That pulses
-`m_axi_resetn` low for at least `RESET_HOLD_CYCLES`, flushing the peripheral — the
-only point at which the stuck VALID is dropped, since AXI state is moot
-while a device is in reset. Forwarding then reopens automatically.
+Recovery is an explicit software sequence:
 
-A transaction arriving during the reset pulse is **stalled**, not rejected —
-a bounded wait of roughly `RESET_HOLD_CYCLES`, so recovery is invisible to
-the master and needs no retry logic.
+```c
+1.  stop issuing transactions to s_axi
+2.  write 1 to the sticky STATUS bits          /* acknowledge the fault    */
+3.  poll STATUS until WR_RESP_BUSY and RD_RESP_BUSY clear — WITH A BOUND
+4.  reset the protected peripheral             /* >= 16 clocks             */
+5.  write 1 to RECOVERY.UNBLOCK
+6.  resume
+```
 
-> **`m_axi_resetn` must be connected to the protected peripheral's reset.**
-> It is what guarantees a peripheral left mid-transaction cannot later emit
-> a stale response that gets mis-attributed to a subsequent transaction.
-> Measured: with the reset connected, 0 of 25 tested timing offsets show
-> mis-attribution; with it left unconnected, 1 of 25 does.
+This mirrors the sequence AMD document for their AXI Firewall, which has the
+same requirement — their step 4 is *"reset all devices on the side of the
+firewall being monitored for faults… for a minimum recommended duration of
+16 clock cycles"*. Up to v1.2 this core owned a peripheral reset output and
+did steps 4–5 itself. That was safer, but demanded a dedicated reset net per
+protected peripheral, which shared reset domains and hard IP often can't give
+you.
 
-There is no software-visible fallback and no secondary mechanism. Up to v1.1
-the core carried `wr_discard_pending`/`rd_discard_pending` one-shot flags
-described as a narrow safety net for late responses. They were **dead code**
-and are gone as of v1.2: a timeout unconditionally sets the internal
-`downstream_broken` latch, which drops `m_axi_resetn` two cycles later, and
-the reset clause cleared the flag before either FSM could re-enter its
-forwarding state and test it. Questa had them at 0% condition coverage
-(`'_1' not hit`) against a suite that does exercise the timeout path, and
-`verification/orphan_response_tb.sv` reports identical numbers with and without
-them. The reset was always doing all the work.
+**Bound the poll in step 3.** The busy bits mean *the peripheral owes us a
+response*, and a peripheral that accepted a command and then died owes one
+forever — an unbounded poll hangs exactly when recovery matters. Treat them as
+advisory: clear means no late response can still be in flight and the reset is
+unambiguously safe; stuck means reset anyway and let `UNBLOCK` discard what is
+owed. `WR_CMD_STUCK`/`RD_CMD_STUCK` tell you the other case — a command the
+peripheral never even accepted, which only `UNBLOCK` can clear.
+
+> **Step 4 is not optional.** `UNBLOCK` is what withdraws the stuck
+> `m_axi_*VALID`. If the peripheral has not been reset, that is a protocol
+> violation on a live bus, and the peripheral may additionally have latched a
+> transaction this core already reported to the master as failed. Measured:
+> following the sequence, 0 of 25 tested timing offsets mis-attribute a stale
+> response; skipping the reset, 1 of 25 does.
+
+A transaction arriving while blocked is **rejected with SLVERR**, not stalled.
+Up to v1.2 the reset pulse gave a bounded window in which arrivals could be
+held and completed normally, making recovery invisible to the master. With the
+reset gone there is no such window, so **drivers need a retry path**.
+
+There is no automatic fallback. Up to v1.1 the core also carried
+`wr_discard_pending`/`rd_discard_pending` one-shot flags, described as a narrow
+safety net for late responses. They were **dead code** and were removed in
+v1.2: Questa had them at 0% condition coverage (`'_1' not hit`) against a suite
+that does exercise the timeout path, and the orphan bench reported identical
+numbers with and without them.
 
 ## Performance
 
@@ -259,7 +316,7 @@ use a burst-capable AXI4 variant instead (see *Roadmap*).
 
 ## Verification
 
-### Test suite — 80/80 passing
+### Test suite — 103/103 passing
 
 `tb/axi_firewall_tb.sv` is self-checking and needs no Quartus licence; it runs
 under Questa, Verilator 5.x (`--timing --assert`), and Icarus Verilog. The SVA
@@ -292,9 +349,10 @@ Coverage:
 - W1C recovery, IRQ masking, manual isolation, global bypass mode
 - **Read-side timeout** (test N): hung peripheral on a read → SLVERR,
   `TIMEOUT_ERROR`, `FAULT_INFO.WAS_WRITE = 0`
-- **Downstream recovery** (tests O–P): `m_axi_resetn` asserted while broken,
-  forwarding blocked with an explicit watcher on `m_axi_arvalid`, reset
-  released after acknowledgement, traffic correct afterwards
+- **Downstream recovery** (tests O–P): `STATUS.BLOCKED` and the stuck/busy
+  bits after a timeout, forwarding blocked with an explicit watcher on
+  `m_axi_arvalid`, W1C alone proven *not* to unblock, then the full
+  acknowledge → reset → `UNBLOCK` sequence with traffic correct afterwards
 - **Response-phase timeout** (tests Q–R, v1.2): the slave model's `HANG_RESP`
   mode accepts the address and data normally and *then* goes quiet. Tests A–P
   all use `HANG_ADDR`, where the peripheral never raises AWREADY/ARREADY —
@@ -306,6 +364,9 @@ Coverage:
 - **Control-port backpressure** (v1.2): a second write issued while `BVALID`
   is unacknowledged, and a second read while `RVALID` is — the regression test
   for the handshake bug described below
+- **UNBLOCK semantics** (v2.0): a no-op on a healthy core; a stuck VALID held
+  until `UNBLOCK` and withdrawn by nothing else; `BLOCKED` and the stuck bits
+  clearing correctly afterwards
 - **Data-path response backpressure** (v1.2): `BREADY`/`RREADY` withheld for
   several cycles after the response arrives, checking `BVALID`/`RVALID` hold
   and the payload stays stable. This is what makes `a_bvalid_stability` and
@@ -378,68 +439,64 @@ vvp tb.out
 ### Assertion and coverage results
 
 Measured under **Questa 2024.1** (`simulation/questa/run_sim.tcl`) and
-**Verilator 5.48** (`simulation/verilator/run_sim.sh`) against v1.2 RTL. Both
-compile with 0 errors and 0 warnings; Questa recognises both datapath FSMs.
+**Verilator 5.48** (`simulation/verilator/run_sim.sh`) against v2.0. Both
+compile with 0 errors and 0 warnings; slang 11 elaborates with 0 errors.
 
-**80/80 checks pass. 0 assertion failures. 0 `m_axi` VALID-drop violations.**
+**103/103 checks pass. 0 assertion failures. 0 `m_axi` VALID-drop violations.**
 
 | Metric | Result |
 |---|---|
-| Assertions | **12 / 12 — 100%**, every one with a non-zero non-vacuous pass count |
-| Cover directives | **5 / 5 — 100%** |
+| Assertions | **14 / 14 — 100%**, every one with a non-zero non-vacuous pass count |
+| Cover directives | **6 / 6 — 100%** |
 | FSM states | **8 / 8 — 100%** |
 | FSM transitions | **14 / 14 — 100%** |
-| Total coverage by instance (filtered) | 85.19% |
-
-Test S closed the four reset-mid-transaction FSM transitions that had been
-open since v1.0.
+| Total coverage by instance (filtered) | 85.96% |
 
 **Cover directive hits:**
 
 | Cover point | Hits |
 |---|---|
 | `c_write_denied` | 4 |
-| `c_read_denied` | 3 |
+| `c_read_denied` | 4 |
 | `c_write_decerr` | 3 |
 | `c_read_decerr` | 2 |
-| `c_peripheral_reset` | 123 |
+| `c_block_and_recover` | 5 |
+| `c_unblock_with_stuck_cmd` | 3 |
 
-`c_peripheral_reset` is inflated because its property uses an unbounded
-`##[1:$]` range: every cycle with the reset asserted opens an attempt that
-later matches. It is not a count of recovery episodes — don't set a goal on it.
+`c_block_and_recover` counts recovery *episodes* — five, matching the five
+timeouts the suite provokes. The v1.2 equivalent used an unbounded `##[1:$]`
+range and reported 123 for two episodes, which is why it was replaced.
 
 **Assertion non-vacuity is the number that matters**, and it is the one worth
-reading before trusting any of the above. Questa reports each property's pass
-count separately from its vacuous count, and a property that only ever passes
+reading before trusting any of the above. A property that only ever passes
 vacuously has verified nothing while looking green:
 
 | Property | Failures | Real passes | Vacuous |
 |---|---|---|---|
-| `a_suppress_illegal_write` | 0 | 4 | 871 |
-| `a_suppress_illegal_read` | 0 | 3 | 872 |
-| `a_err_on_blocked_write` | 0 | 4 | 871 |
-| `a_err_on_blocked_read` | 0 | 3 | 872 |
-| `a_awvalid_stability` | 0 | 20 | 852 |
-| `a_arvalid_stability` | 0 | 20 | 852 |
-| `a_bvalid_stability` | 0 | **6** | 869 |
-| `a_rvalid_stability` | 0 | **6** | 869 |
-| `a_m_awvalid_stability` | 0 | 27 | 727 |
-| `a_m_wvalid_stability` | 0 | 27 | 727 |
-| `a_m_arvalid_stability` | 0 | 27 | 727 |
-| `a_no_issue_during_reset` | 0 | 123 | 752 |
+| `a_suppress_illegal_write` | 0 | 4 | 1331 |
+| `a_suppress_illegal_read` | 0 | 4 | 1331 |
+| `a_err_on_blocked_write` | 0 | 4 | 1331 |
+| `a_err_on_blocked_read` | 0 | 4 | 1331 |
+| `a_awvalid_stability` | 0 | 23 | 1309 |
+| `a_arvalid_stability` | 0 | 23 | 1309 |
+| `a_bvalid_stability` | 0 | 6 | 1329 |
+| `a_rvalid_stability` | 0 | 6 | 1329 |
+| `a_m_awvalid_stability` | 0 | 162 | 1171 |
+| `a_m_wvalid_stability` | 0 | 162 | 1171 |
+| `a_m_arvalid_stability` | 0 | 119 | 1214 |
+| `a_no_issue_while_blocked` | 0 | 382 | 953 |
+| `a_no_read_issue_while_blocked` | 0 | 429 | 906 |
+| `a_block_holds_until_unblock` | 0 | 560 | 775 |
 
-The two bolded rows were at **zero real passes and 845 vacuous** before v1.2 —
-Questa scored the assertion set 10/12 because of them. Their antecedent is
-`(BVALID && !BREADY)`, and every BFM task raised `BREADY`/`RREADY` together
-with the request, so a response never once had to wait: the two properties
-guarding response-channel stability had never been evaluated, while reporting
-zero failures. Coverage Test 7 stalls each response channel and checks the
-payload stays put, which is what makes them fire.
+`a_bvalid_stability` and `a_rvalid_stability` were at **zero real passes and
+845 vacuous** until v1.2 — their antecedent is `(BVALID && !BREADY)`, and every
+BFM task raised `BREADY`/`RREADY` with the request, so a response never had to
+wait. They reported zero failures the entire time. Coverage Test 7 is what
+makes them fire.
 
 > **Reporting note:** `coverage report -details` *does* include the Assertion
-> Coverage and Directive Coverage sections, under the bound SVA instance — the
-> numbers above all come out of `coverage_report.txt`. What omits them is
-> `-codeAll`. And do not try to capture them separately with
+> Coverage and Directive Coverage sections, under the bound SVA instance. What
+> omits them is `-codeAll`. And do not try to capture them separately with
 > `puts $fh [assertion report ...]`: that command writes to the transcript and
 > returns an empty string, so you get a 1-byte file that looks exactly like the
 > assertions never ran.
@@ -453,6 +510,7 @@ Known coverage history, for context on what the tests are for:
 | Response-phase timeout — the slave model only starved AWREADY/ARREADY, so the accepted-then-silent branch of both FSMs was never reached | Closed by tests Q–R (v1.2) |
 | `WR_EVAL/WR_FWD/RD_EVAL/RD_FWD → *_IDLE` — reset asserted mid-transaction | Closed by test S (v1.2) |
 | `a_bvalid_stability` / `a_rvalid_stability` — 0 real passes, wholly vacuous | Closed by Coverage Test 7 (v1.2) |
+| "denied read returns zeros" passing on an accident — the preload was a write, so RDATA already held zero | Closed in v2.0: preload with a real read, and cover the permission-denied branch too |
 | `wr_discard_pending`/`rd_discard_pending` at 0% — flagged as untested | Was **unreachable**, not untested. Removed in v1.2; see *Timeout recovery* |
 
 Two lessons in that table. A stubbornly uncoverable branch is sometimes telling
@@ -486,11 +544,10 @@ evaluated.
    peripheral (Avalon-MM or AXI4-Lite either way). An explicit *AXI Bridge
    Intel FPGA IP* is available if you ever want to trade concurrency for less
    interconnect logic, but it's optional.
-5. **Connect `m_axi_reset` (the `m_axi_resetn` output) to the protected
-   peripheral's reset input.** This is required, not optional — see
-   *Timeout recovery* above. If the peripheral shares a reset with other
-   logic, give it a dedicated reset so the firewall can flush it
-   independently.
+5. **Make the protected peripheral's reset software-controllable.** The core
+   no longer drives it, but recovery from a timeout still requires it — see
+   *Timeout recovery*. A Platform Designer reset bridge under software control,
+   or any GPIO-driven reset, will do.
 6. Wire `irq` to a CPU interrupt input.
 7. Connect `clock` / `reset` to your system clock and reset network.
 8. Program each rule's base/limit to match the peripheral's actual address
@@ -516,15 +573,17 @@ evaluated.
 #define FW_FAULT_ADDR  0x10
 #define FW_FAULT_INFO  0x14
 #define FW_CORE_INFO   0x18
+#define FW_RECOVERY    0x1C
 
-/* CORE_INFO[31:16] is the core version: 0x0100 = v1.0, 0x0101 = v1.1,
-   0x0102 = v1.2.
-   v1.1 changed observable behaviour - m_axi_resetn must be connected, and
-   a timeout blocks forwarding regardless of CTRL.AUTO_ISOLATE_EN.
-   v1.2 makes s_axi_ctrl backpressure correctly: a second access issued while
-   the previous response is unacknowledged now waits instead of being taken
-   and dropped. Drivers that poll registers back-to-back are unaffected; one
-   that pipelines was silently losing writes before v1.2. */
+#define FW_RECOVERY_UNBLOCK  0x1
+
+/* CORE_INFO[31:16] is the core version: 0x0100 = v1.0 ... 0x0200 = v2.0.
+   v2.0 is a BREAKING change. The peripheral reset output is gone, and
+   clearing STATUS.TIMEOUT_ERROR no longer reopens the downstream - that now
+   takes an explicit RECOVERY.UNBLOCK, after software has reset the
+   peripheral itself. A v1.x driver will acknowledge a fault and then find
+   every subsequent transaction returning SLVERR. Check this field before
+   assuming either behaviour. */
 #define FW_RULE(i, r)  (0x40 + (i)*0x10 + (r))   /* r: 0=BASE 4=LIMIT 8=PERM */
 
 #define FW_PERM_READ   0x1
@@ -534,8 +593,13 @@ evaluated.
 #define FW_STAT_ADDR_VIOL  0x1
 #define FW_STAT_PERM_VIOL  0x2
 #define FW_STAT_TIMEOUT    0x4
-#define FW_STAT_ISOLATED   0x8   /* read-only, live */
-#define FW_STAT_STICKY     0x7   /* the W1C-able bits */
+#define FW_STAT_ISOLATED   0x8    /* read-only, live */
+#define FW_STAT_BLOCKED    0x10   /* downstream blocked; needs UNBLOCK */
+#define FW_STAT_WR_BUSY    0x20   /* peripheral owes a write response  */
+#define FW_STAT_RD_BUSY    0x40   /* peripheral owes a read response   */
+#define FW_STAT_WR_STUCK   0x80   /* AWVALID/WVALID never accepted     */
+#define FW_STAT_RD_STUCK   0x100  /* ARVALID never accepted            */
+#define FW_STAT_STICKY     0x7    /* the W1C-able bits */
 
 /* Rules are three separate registers, so updating a rule that is currently
    VALID leaves a transient window where BASE is new but LIMIT is still old.
@@ -570,12 +634,45 @@ static void firewall_isr(void *context)
 
         (void)addr; (void)was_write; (void)type;   /* log / handle */
 
-        /* W1C. Clearing TIMEOUT also releases auto-isolate AND starts the
-           downstream recovery pulse on m_axi_resetn. No wait or retry is
-           needed: transactions arriving during the pulse are stalled, not
-           rejected. */
+        /* Acknowledge. W1C on the sticky bits; also releases auto-isolate. */
         IOWR_32DIRECT(FW_BASE, FW_STATUS, status & FW_STAT_STICKY);
+
+        /* A timeout additionally leaves the downstream BLOCKED. Reopening it
+           is a deliberate, separate act - see firewall_recover(). */
+        if (status & FW_STAT_TIMEOUT)
+            firewall_recover();
     }
+}
+
+/* Full v2.0 recovery. Do not shorten this: writing UNBLOCK without resetting
+   the peripheral makes the core withdraw an asserted VALID on a live bus. */
+void firewall_recover(void)
+{
+    int spins;
+
+    /* Wait for the downstream to go quiet - BOUNDED. A peripheral that
+       accepted a command and then died owes a response forever, so an
+       unbounded poll hangs exactly when recovery matters. Busy clear means
+       no late response can still be in flight; busy stuck means reset anyway
+       and let UNBLOCK discard what is owed. */
+    for (spins = 0; spins < 1000; spins++) {
+        alt_u32 st = IORD_32DIRECT(FW_BASE, FW_STATUS);
+        if (!(st & (FW_STAT_WR_BUSY | FW_STAT_RD_BUSY)))
+            break;
+    }
+
+    /* Reset the protected peripheral. Whatever drives its reset in your
+       system - a Platform Designer reset bridge, a PIO - assert it for at
+       least 16 clocks. This step is what makes the UNBLOCK below legitimate. */
+    peripheral_reset_assert();
+    usleep(1);
+    peripheral_reset_release();
+
+    /* Declare the downstream AXI state discarded and reopen forwarding. */
+    IOWR_32DIRECT(FW_BASE, FW_RECOVERY, FW_RECOVERY_UNBLOCK);
+
+    /* Transactions attempted while blocked were answered SLVERR, not
+       stalled, so retry anything that failed since the fault. */
 }
 ```
 
@@ -585,19 +682,43 @@ static void firewall_isr(void *context)
 
 | Item | Status |
 |---|---|
-| Functional testbench (80 checks) | **Passing under Questa 2024.1 and Verilator 5.48.** Re-run under Icarus after any change; all three are supported |
-| SVA properties | **12/12 under Questa 2024.1**, 0 failures, every one with a non-zero *non-vacuous* pass count as of v1.2 — see *Assertion and coverage results* |
+| Functional testbench (103 checks) | **Passing under Questa 2024.1 and Verilator 5.48.** Re-run under Icarus after any change; all three are supported |
+| SVA properties | **14/14 under Questa 2024.1**, 0 failures, every one with a non-zero *non-vacuous* pass count |
 | FSM coverage | **8/8 states, 14/14 transitions** under Questa 2024.1 |
-| Cover directives | **5/5** under Questa 2024.1 |
+| Cover directives | **6/6** under Questa 2024.1 |
 | Best-case latency (6 cycles r/w) | **Measured** by the in-suite benchmark, with a regression guard |
 | Control-port single-outstanding backpressure | **Measured** — regression test fails on the pre-v1.2 RTL and passes on v1.2 |
-| `m_axi_resetn` protection (0/25 vs 1/25) | **Measured** — `verification/orphan_response_tb.sv`, both parameterisations |
+| Cost of skipping the peripheral reset (0/25 vs 1/25) | **Measured** — `verification/orphan_response_tb.sv`, both parameterisations |
 | Code coverage figures | **Not quoted** — regenerate with the Questa flow. Toggle and condition coverage in particular are far from 100%, and a single number here would rot |
 | Synthesis results (LE/register count, Fmax) | **Not measured.** The combinational rule lookup scales with `NUM_RULES` and is the likeliest critical path; if it limits Fmax, registering that lookup with an extra pipeline stage is the standard fix |
 | Behaviour inside a real Platform Designer system | **Not verified end to end.** The testbench models a well-behaved AXI4-Lite slave, not Platform Designer's generated interconnect |
 | `hw.tcl` import into a specific Quartus release | **Not verified.** See *Integration*, step 2 |
 
 ## Changelog
+
+**v2.0 — breaking**
+
+- **Removed the `m_axi_resetn` output** and the `RESET_HOLD_CYCLES`
+  parameter. The core no longer resets the protected peripheral; that is now
+  step 4 of a documented software sequence. This matches how AMD's AXI
+  Firewall works — their recovery flow also requires resetting the monitored
+  side, it just never offered to do it for you.
+- **Added `RECOVERY.UNBLOCK` (0x1C)** and five live `STATUS` bits:
+  `BLOCKED`, `WR_RESP_BUSY`, `RD_RESP_BUSY`, `WR_CMD_STUCK`, `RD_CMD_STUCK`.
+- **Clearing `STATUS.TIMEOUT_ERROR` no longer reopens the downstream.** It
+  clears the sticky bit and releases auto-isolate; forwarding stays blocked
+  until `UNBLOCK`. **A v1.x driver will acknowledge a fault and then see every
+  subsequent transaction return SLVERR.**
+- **Recovery is no longer invisible to the master.** There is no reset pulse
+  to stall arrivals against, so a transaction attempted while blocked is
+  answered SLVERR. Drivers need a retry path.
+- `UNBLOCK` is now the sole point at which a stuck `m_axi_*VALID` is withdrawn,
+  and doing so without having reset the peripheral is a protocol violation on
+  a live bus. The orphan bench measures that hazard: 0 of 25 offsets
+  mis-attribute when the sequence is followed, 1 of 25 when the reset is
+  skipped — the same numbers as v1.2, now attached to a software mistake
+  rather than a wiring one.
+- `CORE_INFO` version field reads `0x0200`.
 
 **v1.2**
 

@@ -1,3 +1,11 @@
+// Carries a `timescale even though it is pure synthesisable RTL with no
+// delays. Mixing timescaled and untimescaled modules in one compilation is
+// tool-dependent (IEEE 1800 3.14.2.3) - slang rejects it outright, Verilator
+// warns (TIMESCALEMOD), Questa accepts it silently. Quartus ignores the
+// directive for synthesis, so declaring it costs nothing and removes the
+// ambiguity.
+`timescale 1ns/1ps
+
 // =============================================================================
 // axi_firewall_regs.sv
 //
@@ -71,15 +79,24 @@ module axi_firewall_regs #(
     input  logic [ADDR_WIDTH-1:0]       fault_addr_value,
     input  logic                        fault_was_write,
 
-    // Single-cycle pulse when software clears STATUS.TIMEOUT_ERROR (W1C).
-    // Drives the downstream recovery sequence in axi_firewall_top.sv: it
-    // releases the "downstream broken" latch and starts the peripheral
-    // reset pulse. See that file's header for why recovery must reset the
-    // peripheral rather than simply resuming traffic.
-    output logic                        timeout_ack
+    // ---------------- downstream status, for the recovery sequence ---------
+    input  logic                        dstat_blocked,
+    input  logic                        dstat_wr_resp_busy,
+    input  logic                        dstat_rd_resp_busy,
+    input  logic                        dstat_wr_cmd_stuck,
+    input  logic                        dstat_rd_cmd_stuck,
+
+    // Single-cycle pulse when software writes RECOVERY.UNBLOCK.
+    //
+    // This is the authorisation to discard downstream AXI state: it releases
+    // the "downstream broken" latch AND is the one point at which a stuck
+    // m_axi_*VALID may be withdrawn without a handshake. Software must have
+    // reset the protected peripheral before issuing it - see the header of
+    // axi_firewall_top.sv.
+    output logic                        unblock
 );
 
-    localparam logic [15:0] VERSION16 = 16'h0102; // v1.2
+    localparam logic [15:0] VERSION16 = 16'h0200; // v2.0
 
     // ------------------------------------------------------------------
     // Register map. Named localparams rather than bare literals in the
@@ -93,7 +110,8 @@ module axi_firewall_regs #(
         OFF_TIMEOUT    = 'h0C,
         OFF_FAULT_ADDR = 'h10,
         OFF_FAULT_INFO = 'h14,
-        OFF_CORE_INFO  = 'h18;
+        OFF_CORE_INFO  = 'h18,
+        OFF_RECOVERY   = 'h1C;
 
     localparam int RULE_TABLE_BASE = 'h40;  // byte offset of RULE[0]
     localparam int RULE_STRIDE     = 16;    // bytes per rule
@@ -277,7 +295,7 @@ module axi_firewall_regs #(
         if (!resetn) begin
             s_axi_ctrl_bvalid   <= 1'b0;
             s_axi_ctrl_bresp    <= 2'b00;
-            timeout_ack         <= 1'b0;
+            unblock             <= 1'b0;
 
             reg_global_enable   <= 1'b1;   // secure by default
             reg_auto_isolate_en <= 1'b1;
@@ -298,7 +316,7 @@ module axi_firewall_regs #(
                 rule_perm[i]  <= '0;
             end
         end else begin
-            timeout_ack <= 1'b0;   // default: single-cycle pulse
+            unblock <= 1'b0;   // default: single-cycle pulse
 
             // ---- hardware fault capture (highest priority; always wins
             //      the register-write in the same cycle if both occur) ----
@@ -355,12 +373,21 @@ module axi_firewall_regs #(
                                 if (s_axi_ctrl_wdata[0]) reg_addr_violation <= 1'b0;
                                 if (s_axi_ctrl_wdata[1]) reg_perm_violation <= 1'b0;
                                 if (s_axi_ctrl_wdata[2]) begin
+                                    // v2.0: clears the sticky bit and releases
+                                    // auto-isolate, but no longer resumes
+                                    // forwarding. Reopening the downstream is
+                                    // now an explicit RECOVERY.UNBLOCK, so
+                                    // that acknowledging a fault cannot
+                                    // accidentally restart traffic toward a
+                                    // peripheral nobody has reset yet.
                                     reg_timeout_error  <= 1'b0;
-                                    auto_isolate_latch <= 1'b0; // ack fault -> release auto-isolate
-                                    timeout_ack        <= 1'b1; // -> start downstream recovery
+                                    auto_isolate_latch <= 1'b0;
                                 end
                             end
                         end
+                        OFF_RECOVERY:
+                            if (s_axi_ctrl_wstrb[0] && s_axi_ctrl_wdata[0])
+                                unblock <= 1'b1;
                         OFF_IRQ_ENABLE:
                             if (s_axi_ctrl_wstrb[0]) reg_irq_enable <= s_axi_ctrl_wdata[2:0];
                         OFF_TIMEOUT:
@@ -381,7 +408,7 @@ module axi_firewall_regs #(
             // left TIMEOUT_ERROR=1 (forced below) but ISOLATED=0, because the
             // W1C's clear of the latch is the later assignment and wins. That
             // also disagreed with axi_firewall_top.sv, where the fault
-            // unconditionally beats timeout_ack for `downstream_broken`.
+            // unconditionally beats unblock for `downstream_broken`.
             if (fault_addr_violation) reg_addr_violation <= 1'b1;
             if (fault_perm_violation) reg_perm_violation <= 1'b1;
             if (fault_timeout) begin
@@ -438,7 +465,13 @@ module axi_firewall_regs #(
                     case (axi_araddr_r)
                         OFF_CTRL:       s_axi_ctrl_rdata <= {29'b0, reg_manual_isolate,
                                                              reg_auto_isolate_en, reg_global_enable};
-                        OFF_STATUS:     s_axi_ctrl_rdata <= {28'b0, isolate_effective,
+                        OFF_STATUS:     s_axi_ctrl_rdata <= {23'b0,
+                                                             dstat_rd_cmd_stuck,
+                                                             dstat_wr_cmd_stuck,
+                                                             dstat_rd_resp_busy,
+                                                             dstat_wr_resp_busy,
+                                                             dstat_blocked,
+                                                             isolate_effective,
                                                              reg_timeout_error, reg_perm_violation,
                                                              reg_addr_violation};
                         OFF_IRQ_ENABLE: s_axi_ctrl_rdata <= {29'b0, reg_irq_enable};
@@ -447,6 +480,7 @@ module axi_firewall_regs #(
                         OFF_FAULT_INFO: s_axi_ctrl_rdata <= {28'b0, reg_fault_type,
                                                              reg_fault_was_write};
                         OFF_CORE_INFO:  s_axi_ctrl_rdata <= {VERSION16, 8'h0, 8'(NUM_RULES)};
+                        OFF_RECOVERY:   s_axi_ctrl_rdata <= '0;   // write-only, self-clearing
                         default:        s_axi_ctrl_rdata <= '0;
                     endcase
                 end

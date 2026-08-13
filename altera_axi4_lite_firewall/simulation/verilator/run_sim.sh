@@ -37,16 +37,29 @@ SOURCES=(
 )
 
 # WIDTHEXPAND/WIDTHTRUNC fire on the testbench's deliberately oversized
-# check_eq() arguments; TIMESCALEMOD on the RTL, which carries no `timescale by
-# design (the simulation timescale belongs to the testbench). The RTL itself
-# passes `verilator --lint-only -Wall` with none of these waived - see below.
-WARN_OFF=(-Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-TIMESCALEMOD)
+# check_eq() arguments. The RTL itself passes `verilator --lint-only -Wall`
+# with nothing waived - see below. Every file now carries a `timescale, so
+# TIMESCALEMOD no longer needs suppressing.
+WARN_OFF=(-Wno-WIDTHEXPAND -Wno-WIDTHTRUNC)
+
+# Strict LRM elaboration with slang, if available. This is not redundant with
+# Verilator: slang rejects use-before-declaration and implicit-net collisions
+# that Verilator silently resolves, and those are exactly what Questa rejects
+# later in the flow. Catching them here costs a second.
+if python3 -c 'import pyslang' 2>/dev/null; then
+    echo "== strict elaboration (slang) =="
+    python3 "$HERE/slangcheck.py" "RTL + TB + SVA" \
+        "$ROOT/rtl/axi_firewall_regs.sv" "$ROOT/rtl/axi_firewall_top.sv" \
+        "$ROOT/tb/axi_firewall_sva.sv"   "$ROOT/tb/axi_firewall_tb.sv" || exit 1
+else
+    echo "== strict elaboration skipped (pip install pyslang to enable) =="
+fi
 
 # Strict lint of the synthesisable RTL on its own, with nothing waived. Kept
 # separate from the simulation build so testbench-only warnings can be relaxed
 # without also relaxing them for the RTL.
 echo "== linting RTL (-Wall, nothing waived) =="
-verilator --lint-only -Wall -Wno-DECLFILENAME -Wno-TIMESCALEMOD -Wno-UNUSEDSIGNAL \
+verilator --lint-only -Wall -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL \
     --top-module axi_firewall_top \
     "$ROOT/rtl/axi_firewall_regs.sv" "$ROOT/rtl/axi_firewall_top.sv" || exit $?
 

@@ -27,6 +27,10 @@ obj_dir/
 *.vvp
 *.vcd
 
+# Python (diagram generator, slang checker)
+__pycache__/
+*.pyc
+
 # Editor / OS
 *~
 .DS_Store

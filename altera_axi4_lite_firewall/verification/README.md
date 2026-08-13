@@ -1,8 +1,9 @@
 # Supplementary verification
 
 `orphan_response_tb.sv` is not part of the main suite — it's a standalone
-measurement of what `m_axi_resetn` is worth, and the reason connecting it is
-mandatory rather than advisory.
+measurement of what step 4 of the recovery sequence is worth, and the reason
+resetting the peripheral before `RECOVERY.UNBLOCK` is mandatory rather than
+advisory.
 
 It runs a genuine timeout (peripheral never handshakes, then latches the
 request anyway — deliberately non-compliant, the nastiest orphan source),
@@ -17,7 +18,7 @@ OKAY, the stale response was mis-attributed.
 ```bash
 cd verification
 for H in 1 0; do
-  verilator --binary --timing -Wno-TIMESCALEMOD -GHONOUR_RESET=$H \
+  verilator --binary --timing -Wno-TIMESCALEMOD -GRESET_PERIPHERAL=$H \
       --top-module orphan_tb -o oz$H -Mdir obj_$H \
       ../rtl/axi_firewall_regs.sv ../rtl/axi_firewall_top.sv orphan_response_tb.sv
   ./obj_$H/oz$H
@@ -27,14 +28,14 @@ done
 **Icarus:**
 
 ```bash
-# supported wiring: peripheral honours m_axi_resetn
-iverilog -g2012 -Porphan_tb.HONOUR_RESET=1 -o o1.out \
+# correct: software resets the peripheral before unblocking
+iverilog -g2012 -Porphan_tb.RESET_PERIPHERAL=1 -o o1.out \
     ../rtl/axi_firewall_regs.sv ../rtl/axi_firewall_top.sv orphan_response_tb.sv
 vvp o1.out
 # => 0 of 25 offsets affected
 
-# unsupported wiring: peripheral ignores m_axi_resetn
-iverilog -g2012 -Porphan_tb.HONOUR_RESET=0 -o o0.out \
+# skipped: software unblocks without resetting the peripheral
+iverilog -g2012 -Porphan_tb.RESET_PERIPHERAL=0 -o o0.out \
     ../rtl/axi_firewall_regs.sv ../rtl/axi_firewall_top.sv orphan_response_tb.sv
 vvp o0.out
 # => 1 of 25 offsets affected  (at k=3)
@@ -44,17 +45,14 @@ vvp o0.out
 
 | Wiring | Offsets mis-attributed |
 |---|---|
-| `m_axi_resetn` connected (`HONOUR_RESET=1`) | **0 of 25** |
-| `m_axi_resetn` left unconnected (`HONOUR_RESET=0`) | **1 of 25**, at k=3 |
+| Reset performed (`RESET_PERIPHERAL=1`) | **0 of 25** |
+| Reset skipped (`RESET_PERIPHERAL=0`) | **1 of 25**, at k=3 |
 
-Measured under Verilator 5.48 against v1.2 RTL. The delta between the two runs
-is exactly the protection `m_axi_resetn` provides.
+Measured under Verilator 5.48 against v2.0 RTL. The delta between the two runs
+is exactly the protection step 4 provides — and, since v2.0 moved that step
+into software, exactly what a driver costs you by skipping it.
 
-> **v1.2 note.** Up to v1.1 the core also carried `wr_discard_pending` /
-> `rd_discard_pending` one-shot flags, described as a secondary safety net for
-> exactly this hazard. They were dead code: the timeout that armed a flag also
-> asserted `downstream_broken`, which drops `m_axi_resetn` two cycles later,
-> and the reset clause cleared the flag before the FSM could re-enter `*_FWD`
-> and ever test it. Questa had already reported both at 0% condition coverage.
-> They have been removed, and this testbench's numbers are unchanged by that —
-> which is the point: the reset was always doing all the work.
+> **v2.0 note.** The core no longer owns a peripheral reset output, so this
+> bench measures a software mistake rather than a wiring one. The numbers are
+> unchanged, which is the point: the reset was always what provided the
+> protection, and moving it into the driver moved the risk with it.

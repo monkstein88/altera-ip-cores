@@ -6,16 +6,14 @@
 // mis-attributed to a subsequent, legitimate transaction?
 //
 // The firewall abandons a transaction on timeout but leaves m_axi_bready tied
-// high and keeps no record of how many responses are still owed, so a stale
-// BVALID arriving later is indistinguishable from the current transaction's
-// own response. m_axi_resetn is the entire defence: it flushes the peripheral
-// before any new transaction is forwarded.
+// high, so a stale BVALID arriving later is indistinguishable from the current
+// transaction's own response. Resetting the peripheral before unblocking is
+// the entire defence: it is what guarantees nothing stale is still in flight.
 //
-// (v1.2 note: earlier revisions also carried a wr_discard_pending one-shot
-// flag. It was dead code - the timeout that armed it also dropped
-// m_axi_resetn, which cleared it before the FSM could ever test it - and has
-// been removed. This testbench measures what actually provides the
-// protection, which is why it is kept.)
+// v2.0: the core no longer owns a peripheral reset. Resetting the protected
+// peripheral is step 3 of the documented software recovery sequence, and this
+// bench now measures the cost of skipping it - RESET_PERIPHERAL=0 - rather
+// than the cost of leaving a reset output unconnected.
 //
 // Method: run a clean, permitted write that the slave answers OKAY. Inject one
 // extra BVALID (SLVERR) at offset K cycles after the write begins, modelling
@@ -28,7 +26,9 @@
 // always blocks and deadlocks under Verilator.
 // =============================================================================
 
-module orphan_tb;
+module orphan_tb #(
+    parameter bit RESET_PERIPHERAL = 1
+) ();
     localparam int AW=32, DW=32, CAW=12, NR=8, TW=20;
     logic clk=0, resetn=0; always #5 clk=~clk;
 
@@ -49,7 +49,8 @@ module orphan_tb;
     logic [1:0] c_bresp; logic c_bvalid; logic c_bready=0;
     logic [CAW-1:0] c_araddr=0; logic c_arvalid=0; logic c_arready;
     logic [31:0] c_rdata; logic [1:0] c_rresp; logic c_rvalid; logic c_rready=0;
-    logic irq; logic m_resetn;
+    logic irq;
+    logic periph_rst = 1'b0;   // driven by this bench, as an integrator would
 
     axi_firewall_top #(.ADDR_WIDTH(AW),.DATA_WIDTH(DW),.CTRL_ADDR_WIDTH(CAW),.NUM_RULES(NR),.TIMEOUT_WIDTH(TW)) dut (
       .clk(clk),.resetn(resetn),
@@ -68,21 +69,21 @@ module orphan_tb;
       .s_axi_ctrl_bresp(c_bresp),.s_axi_ctrl_bvalid(c_bvalid),.s_axi_ctrl_bready(c_bready),
       .s_axi_ctrl_araddr(c_araddr),.s_axi_ctrl_arprot(3'b0),.s_axi_ctrl_arvalid(c_arvalid),.s_axi_ctrl_arready(c_arready),
       .s_axi_ctrl_rdata(c_rdata),.s_axi_ctrl_rresp(c_rresp),.s_axi_ctrl_rvalid(c_rvalid),.s_axi_ctrl_rready(c_rready),
-      .irq(irq),.m_axi_resetn(m_resetn));
+      .irq(irq));
 
     // Slave model with explicit "owes a response" state.
-    //   HONOUR_RESET=1 : peripheral obeys m_axi_resetn (the mandatory wiring).
-    //   HONOUR_RESET=0 : peripheral ignores it (unsupported wiring), kept to
-    //                    show exactly what protection is lost.
+    //   RESET_PERIPHERAL=1 : software follows the documented sequence and
+    //                        resets the peripheral before unblocking.
+    //   RESET_PERIPHERAL=0 : software skips the reset and just unblocks -
+    //                        the v2.0 footgun, measured rather than asserted.
     // In hang mode the slave latches the request WITHOUT handshaking - a
     // deliberately non-compliant peripheral, the nastiest orphan source.
-    parameter bit HONOUR_RESET = 1;
     logic hang; logic fire_orphan; logic owes;
 
     always_ff @(posedge clk) begin
         if (!resetn) begin
             m_awready<=0; m_wready<=0; m_bvalid<=0; owes<=0;
-        end else if (HONOUR_RESET && !m_resetn) begin
+        end else if (periph_rst) begin
             m_awready<=0; m_wready<=0; m_bvalid<=0; owes<=0;   // flushed
         end else begin
             if (!hang) begin
@@ -153,10 +154,16 @@ module orphan_tb;
             while (!s_bvalid) tick;
             tick; s_bready=0;
 
-            // ---- recovery: acknowledge the fault, wait out the reset pulse
-            ctrl_write('h04, 32'h4);
+            // ---- recovery: the v2.0 software sequence
+            ctrl_write('h04, 32'h7);          // acknowledge the fault
             hang = 0;
-            wait_cycles(40);
+            if (RESET_PERIPHERAL) begin       // step 3 - or skip it, and see
+                periph_rst = 1'b1;
+                wait_cycles(16);
+                periph_rst = 1'b0;
+            end
+            ctrl_write('h1C, 32'h1);          // RECOVERY.UNBLOCK
+            wait_cycles(10);
 
             // ---- phase 2: legitimate write, orphan lands at offset k ------
             tick;
@@ -181,8 +188,8 @@ module orphan_tb;
                 $display("  k=%0d: BRESP=%b - orphan MIS-ATTRIBUTED to the new write", k, observed);
             end
         end
-        $display("=== orphan mis-attribution [HONOUR_RESET=%0d]: %0d of 25 offsets affected ===",
-                 HONOUR_RESET, bad);
+        $display("=== orphan mis-attribution [RESET_PERIPHERAL=%0d]: %0d of 25 offsets affected ===",
+                 RESET_PERIPHERAL, bad);
         $display(" ");
         $finish;
     end

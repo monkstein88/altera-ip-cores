@@ -1,3 +1,5 @@
+`timescale 1ns/1ps
+
 // =============================================================================
 // axi_firewall_sva.sv  (v1.1)
 //
@@ -33,6 +35,10 @@
 // paths are actually reached, and a_awvalid_stability caught a real
 // VALID-stability violation in the testbench's own latency benchmark during
 // the v1.2 work.
+//
+// Check the Pass Count column, not just Failure Count. a_bvalid_stability and
+// a_rvalid_stability spent three revisions at zero real passes and ~845
+// vacuous attempts, because no test ever made a response wait for READY.
 // =============================================================================
 
 module axi_firewall_sva #(
@@ -65,7 +71,12 @@ module axi_firewall_sva #(
     input wire                  m_axi_wready,
     input wire                  m_axi_arvalid,
     input wire                  m_axi_arready,
-    input wire                  m_axi_resetn,
+
+    // v2.0 recovery state. `unblock` is the single cycle in which downstream
+    // AXI state is declared discarded and a stuck VALID may be withdrawn;
+    // `blocked` is the latched downstream-broken condition.
+    input wire                  unblock,
+    input wire                  blocked,
 
     // Per-direction violation pulses (see header note)
     input wire                  wr_violation,
@@ -148,45 +159,64 @@ module axi_firewall_sva #(
   //
   // These were absent before v1.1, which is why the timeout path could
   // withdraw m_axi_*VALID without a handshake and pass a full assertion +
-  // coverage run unnoticed. The one legitimate exception is while the
-  // peripheral is held in reset (m_axi_resetn low), where dangling AXI
-  // state is discarded anyway - hence the m_axi_resetn qualifier.
+  // coverage run unnoticed.
+  //
+  // The one legitimate exception is the RECOVERY.UNBLOCK cycle, where
+  // software has declared the peripheral reset and its AXI state discarded.
+  // Up to v1.2 that exception was "while m_axi_resetn is low"; in v2.0 the
+  // core no longer owns a peripheral reset, so the exception is the unblock
+  // pulse itself. `unblock` is excluded from the antecedent rather than the
+  // consequent because the VALID clear is a nonblocking update: at the edge
+  // where unblock is high the VALID is still asserted, and drops on the next.
   // ---------------------------------------------------------------------
   property p_m_awvalid_stability;
-    @(posedge clk) disable iff (!resetn || !m_axi_resetn)
-    (m_axi_awvalid && !m_axi_awready) |=> (m_axi_awvalid || !m_axi_resetn);
+    @(posedge clk) disable iff (!resetn)
+    (m_axi_awvalid && !m_axi_awready && !unblock) |=> m_axi_awvalid;
   endproperty
   a_m_awvalid_stability: assert property (p_m_awvalid_stability)
-    else $error("AXI: m_axi_AWVALID dropped without AWREADY (peripheral not in reset)!");
+    else $error("AXI: m_axi_AWVALID dropped without AWREADY outside an unblock!");
 
   property p_m_wvalid_stability;
-    @(posedge clk) disable iff (!resetn || !m_axi_resetn)
-    (m_axi_wvalid && !m_axi_wready) |=> (m_axi_wvalid || !m_axi_resetn);
+    @(posedge clk) disable iff (!resetn)
+    (m_axi_wvalid && !m_axi_wready && !unblock) |=> m_axi_wvalid;
   endproperty
   a_m_wvalid_stability: assert property (p_m_wvalid_stability)
-    else $error("AXI: m_axi_WVALID dropped without WREADY (peripheral not in reset)!");
+    else $error("AXI: m_axi_WVALID dropped without WREADY outside an unblock!");
 
   property p_m_arvalid_stability;
-    @(posedge clk) disable iff (!resetn || !m_axi_resetn)
-    (m_axi_arvalid && !m_axi_arready) |=> (m_axi_arvalid || !m_axi_resetn);
+    @(posedge clk) disable iff (!resetn)
+    (m_axi_arvalid && !m_axi_arready && !unblock) |=> m_axi_arvalid;
   endproperty
   a_m_arvalid_stability: assert property (p_m_arvalid_stability)
-    else $error("AXI: m_axi_ARVALID dropped without ARREADY (peripheral not in reset)!");
+    else $error("AXI: m_axi_ARVALID dropped without ARREADY outside an unblock!");
 
-  // No new transaction may be issued while the peripheral is held in reset.
-  //
-  // |=> not |->: m_axi_resetn and the VALID clear are both nonblocking
-  // updates, so on the exact edge m_axi_resetn falls a VALID left over from
-  // the abandoned transaction is still asserted and only clears on the next
-  // edge. That one cycle of overlap is harmless - the peripheral is being
-  // reset - and asserting |-> here produces a false failure. (Verified: the
-  // |-> form fires twice against the current test suite.)
-  property p_no_issue_during_reset;
+  // While blocked, no NEW command may be issued downstream. A VALID left
+  // over from the abandoned transaction is allowed to stay asserted - that
+  // is required by AXI - so the property is written as "once low while
+  // blocked, stays low" rather than "always low".
+  property p_no_issue_while_blocked;
     @(posedge clk) disable iff (!resetn)
-    !m_axi_resetn |=> (!m_axi_awvalid && !m_axi_wvalid && !m_axi_arvalid);
+    (blocked && !m_axi_awvalid) |=> (!m_axi_awvalid || unblock);
   endproperty
-  a_no_issue_during_reset: assert property (p_no_issue_during_reset)
-    else $error("FIREWALL: transaction issued while peripheral held in reset!");
+  a_no_issue_while_blocked: assert property (p_no_issue_while_blocked)
+    else $error("FIREWALL: write issued downstream while blocked!");
+
+  property p_no_read_issue_while_blocked;
+    @(posedge clk) disable iff (!resetn)
+    (blocked && !m_axi_arvalid) |=> (!m_axi_arvalid || unblock);
+  endproperty
+  a_no_read_issue_while_blocked: assert property (p_no_read_issue_while_blocked)
+    else $error("FIREWALL: read issued downstream while blocked!");
+
+  // The block must actually latch: a timeout leads to `blocked`, and only an
+  // unblock clears it. This is the property that would catch a regression
+  // where a fault stopped blocking forwarding.
+  property p_block_holds_until_unblock;
+    @(posedge clk) disable iff (!resetn)
+    (blocked && !unblock) |=> blocked;
+  endproperty
+  a_block_holds_until_unblock: assert property (p_block_holds_until_unblock)
+    else $error("FIREWALL: downstream block released without an unblock!");
 
   // ---------------------------------------------------------------------
   // 4. Cover points - prove the interesting paths were actually reached
@@ -201,8 +231,16 @@ module axi_firewall_sva #(
       s_axi_bvalid && (s_axi_bresp == 2'b11));
   c_read_decerr:  cover property (@(posedge clk) disable iff (!resetn)
       s_axi_rvalid && (s_axi_rresp == 2'b11));
-  // recovery sequence actually exercised
-  c_peripheral_reset: cover property (@(posedge clk) disable iff (!resetn)
-      !m_axi_resetn ##[1:$] m_axi_resetn);
+  // The recovery sequence was actually exercised: blocked, then released.
+  // Unlike the v1.2 c_peripheral_reset cover - which used an unbounded
+  // ##[1:$] and so counted one attempt per cycle of the reset pulse, giving
+  // a hit count of 123 for two real episodes - this counts episodes.
+  c_block_and_recover: cover property (@(posedge clk) disable iff (!resetn)
+      !blocked ##1 blocked ##[1:$] unblock);
+
+  // An unblock that had to discard a stuck command, i.e. the case where
+  // polling the busy bits alone would never have been enough.
+  c_unblock_with_stuck_cmd: cover property (@(posedge clk) disable iff (!resetn)
+      unblock && (m_axi_awvalid || m_axi_wvalid || m_axi_arvalid));
 
 endmodule

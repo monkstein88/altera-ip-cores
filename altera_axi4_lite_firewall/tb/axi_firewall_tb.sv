@@ -114,7 +114,9 @@ module axi_firewall_tb;
     logic                        s_axi_ctrl_rready = 0;
 
     logic irq;
-    logic m_axi_resetn;   // peripheral reset output (v1.1)
+
+    // v2.0: the core no longer drives a peripheral reset. The testbench owns
+    // one, exactly as a system integrator now must - see periph_rst below.
 
     int pass_count = 0;
     int fail_count = 0;
@@ -146,8 +148,7 @@ module axi_firewall_tb;
         .s_axi_ctrl_araddr(s_axi_ctrl_araddr), .s_axi_ctrl_arprot(s_axi_ctrl_arprot), .s_axi_ctrl_arvalid(s_axi_ctrl_arvalid), .s_axi_ctrl_arready(s_axi_ctrl_arready),
         .s_axi_ctrl_rdata(s_axi_ctrl_rdata), .s_axi_ctrl_rresp(s_axi_ctrl_rresp), .s_axi_ctrl_rvalid(s_axi_ctrl_rvalid), .s_axi_ctrl_rready(s_axi_ctrl_rready),
 
-        .irq(irq),
-        .m_axi_resetn(m_axi_resetn)
+        .irq(irq)
     );
 
 
@@ -179,7 +180,11 @@ module axi_firewall_tb;
         .m_axi_wready(m_axi_wready),
         .m_axi_arvalid(m_axi_arvalid),
         .m_axi_arready(m_axi_arready),
-        .m_axi_resetn(m_axi_resetn),
+
+        // internal names, visible because bind port expressions resolve in
+        // the scope of the bound-to instance
+        .unblock(unblock),
+        .blocked(downstream_broken),
 
         // per-direction pulses, NOT the merged fault_*_violation wires
         .wr_violation(wr_fault_addr_violation | wr_fault_perm_violation),
@@ -199,15 +204,17 @@ module axi_firewall_tb;
     //                cannot reach: it is a different branch of both FSMs and
     //                had zero coverage before tests Q/R existed.
     //
-    // `honour_reset` models a peripheral wired to m_axi_resetn (the supported
-    // configuration). Its counterpart is proven in
-    // verification/orphan_response_tb.sv.
+    // `periph_rst` is driven by the testbench, standing in for the system
+    // integrator resetting the protected peripheral - which in v2.0 is step 3
+    // of the documented recovery sequence rather than something the core
+    // does. verification/orphan_response_tb.sv measures what happens when
+    // that step is skipped.
     // ------------------------------------------------------------------
     typedef enum logic [1:0] { HANG_NONE, HANG_ADDR, HANG_RESP } hang_mode_e;
 
     logic [31:0] mem [16];
-    hang_mode_e  hang_mode    = HANG_NONE;
-    logic        honour_reset = 1'b1;
+    hang_mode_e  hang_mode  = HANG_NONE;
+    logic        periph_rst = 1'b0;
 
     // NOTE: must be `logic` + `assign`, never `logic slave_rst = <expr>;`.
     // In Verilog, `wire x = expr;` is a continuous assignment. In
@@ -217,7 +224,7 @@ module axi_firewall_tb;
     // low => slave permanently held in reset), so every downstream
     // transaction timed out and the whole suite returned SLVERR.
     logic slave_rst;
-    assign slave_rst = !resetn || (honour_reset && !m_axi_resetn);
+    assign slave_rst = !resetn || periph_rst;
 
     always_ff @(posedge clk) begin
         if (slave_rst) begin
@@ -265,32 +272,34 @@ module axi_firewall_tb;
     // ==================================================================
     // AXI protocol checker on the MASTER (m_axi) side.
     // Rule: once *VALID is asserted it must stay asserted until the
-    // matching *READY handshake. Dropping it while the peripheral is held
-    // in reset (m_axi_resetn low) is the one legitimate exception.
+    // matching *READY handshake. The one legitimate exception is the cycle
+    // after RECOVERY.UNBLOCK, where software has declared the peripheral
+    // reset and its AXI state discarded (v2.0; up to v1.2 the exception was
+    // "while the core held the peripheral in reset").
     // ==================================================================
     int m_awvalid_drops = 0, m_wvalid_drops = 0, m_arvalid_drops = 0;
-    logic m_awv_q, m_wv_q, m_arv_q, m_awr_q, m_wr_q, m_arr_q, m_rstn_q;
+    logic m_awv_q, m_wv_q, m_arv_q, m_awr_q, m_wr_q, m_arr_q, m_unblk_q;
 
     always_ff @(posedge clk) begin
         if (!resetn) begin
-            m_awv_q<=0; m_wv_q<=0; m_arv_q<=0; m_awr_q<=0; m_wr_q<=0; m_arr_q<=0; m_rstn_q<=0;
+            m_awv_q<=0; m_wv_q<=0; m_arv_q<=0; m_awr_q<=0; m_wr_q<=0; m_arr_q<=0; m_unblk_q<=0;
         end else begin
-            if (m_awv_q && !m_axi_awvalid && !m_awr_q && m_rstn_q) begin
+            if (m_awv_q && !m_axi_awvalid && !m_awr_q && !m_unblk_q) begin
                 m_awvalid_drops++;
                 $display("  >> AXI VIOLATION t=%0t: m_axi_AWVALID dropped without AWREADY", $time);
             end
-            if (m_wv_q && !m_axi_wvalid && !m_wr_q && m_rstn_q) begin
+            if (m_wv_q && !m_axi_wvalid && !m_wr_q && !m_unblk_q) begin
                 m_wvalid_drops++;
                 $display("  >> AXI VIOLATION t=%0t: m_axi_WVALID dropped without WREADY", $time);
             end
-            if (m_arv_q && !m_axi_arvalid && !m_arr_q && m_rstn_q) begin
+            if (m_arv_q && !m_axi_arvalid && !m_arr_q && !m_unblk_q) begin
                 m_arvalid_drops++;
                 $display("  >> AXI VIOLATION t=%0t: m_axi_ARVALID dropped without ARREADY", $time);
             end
             m_awv_q<=m_axi_awvalid; m_awr_q<=m_axi_awready;
             m_wv_q <=m_axi_wvalid;  m_wr_q <=m_axi_wready;
             m_arv_q<=m_axi_arvalid; m_arr_q<=m_axi_arready;
-            m_rstn_q<=m_axi_resetn;
+            m_unblk_q<=dut.unblock;   // DUT-internal: the discard window
         end
     end
 
@@ -395,7 +404,54 @@ module axi_firewall_tb;
     localparam logic [CTRL_ADDR_WIDTH-1:0]
         OFF_CTRL  = 'h00, OFF_STATUS = 'h04, OFF_IRQEN = 'h08,
         OFF_TMOUT = 'h0C, OFF_FADDR  = 'h10, OFF_FINFO = 'h14,
-        OFF_INFO  = 'h18;
+        OFF_INFO  = 'h18, OFF_RECOV = 'h1C;
+
+    // STATUS bit positions
+    localparam int ST_ADDR_VIOL = 0, ST_PERM_VIOL = 1, ST_TIMEOUT = 2,
+                   ST_ISOLATED  = 3, ST_BLOCKED   = 4,
+                   ST_WR_BUSY   = 5, ST_RD_BUSY   = 6,
+                   ST_WR_STUCK  = 7, ST_RD_STUCK  = 8;
+
+    // The v2.0 recovery sequence, as a driver would implement it.
+    //
+    // The busy poll is BOUNDED, and that is not laziness. A peripheral that
+    // accepted a command and then died owes a response that will never
+    // arrive, so RESP_BUSY never clears - polling it unconditionally
+    // deadlocks exactly when recovery matters most. The bits are advisory:
+    // busy clear means no late response can still be in flight, so the reset
+    // is unambiguously safe. Busy stuck means you reset anyway and accept
+    // that UNBLOCK is what discards the owed response.
+    //
+    // Step 3 - resetting the peripheral - is the integrator's job in v2.0.
+    // Skipping it is the hazard measured in verification/orphan_response_tb.sv.
+    task automatic recover_downstream(input bit reset_peripheral = 1);
+        logic [31:0] st;
+        int          spins;
+        begin
+            // 1. acknowledge the fault. Clears the sticky bits and releases
+            //    the auto-isolate latch - without this the core is still
+            //    ISOLATED after the unblock and keeps answering SLVERR.
+            ctrl_write(OFF_STATUS, 32'h7);
+
+            // 2. wait for the downstream to go quiet, bounded
+            spins = 0;
+            ctrl_read(OFF_STATUS, st);
+            while ((st[ST_WR_BUSY] || st[ST_RD_BUSY]) && spins < 20) begin
+                ctrl_read(OFF_STATUS, st);
+                spins++;
+            end
+            // 3. reset the protected peripheral - the integrator's job
+            if (reset_peripheral) begin
+                periph_rst = 1'b1;
+                wait_cycles(16);          // AMD's PG293 suggests >= 16 clocks
+                periph_rst = 1'b0;
+                wait_cycles(2);
+            end
+
+            // 4. declare the downstream AXI state discarded and reopen
+            ctrl_write(OFF_RECOV, 32'h1);
+        end
+    endtask
 
     function automatic logic [CTRL_ADDR_WIDTH-1:0] rule_off(input int idx, input int sub);
         return CTRL_ADDR_WIDTH'('h40 + idx*16 + sub);
@@ -688,6 +744,54 @@ module axi_firewall_tb;
     endtask
 
     // ==================================================================
+    // Coverage Test 8: UNBLOCK semantics (v2.0).
+    //
+    // The three things a driver can get wrong, made explicit:
+    //   - UNBLOCK on a healthy core must be a no-op, not a disruption
+    //   - a stuck VALID is withdrawn by UNBLOCK and by nothing else
+    //   - a global reset also clears the block, as a last resort
+    // ==================================================================
+    task automatic test_unblock_semantics;
+        logic [31:0] st;
+        logic [1:0]  rsp;
+        begin
+            $display("\n--- Coverage Test 8: UNBLOCK semantics ---");
+            hang_mode = HANG_NONE;
+
+            // harmless when nothing is blocked
+            ctrl_write(OFF_RECOV, 32'h1);
+            wait_cycles(2);
+            data_write(32'h0000_1004, 32'h1234_ABCD, rsp);
+            check_eq(rsp, 2'b00, "unblock: no-op when the core is not blocked");
+
+            // provoke an address-phase timeout, then confirm the stuck VALID
+            // is held right up until the unblock
+            hang_mode = HANG_ADDR;
+            data_write(32'h0000_1004, 32'hDEAD_0001, rsp);
+            check_eq(rsp, 2'b10, "unblock: timeout gives SLVERR");
+            hang_mode = HANG_NONE;
+
+            check_eq(m_axi_awvalid, 1'b1, "unblock: AWVALID still asserted while blocked");
+            wait_cycles(20);
+            check_eq(m_axi_awvalid, 1'b1,
+                     "unblock: AWVALID stays asserted - nothing else drops it");
+            ctrl_read(OFF_STATUS, st);
+            check_eq(st[ST_WR_STUCK], 1'b1, "unblock: WR_CMD_STUCK reports it");
+
+            recover_downstream();
+            check_eq(m_axi_awvalid, 1'b0, "unblock: AWVALID withdrawn by UNBLOCK");
+            check_eq(m_axi_wvalid,  1'b0, "unblock: WVALID withdrawn by UNBLOCK");
+            ctrl_read(OFF_STATUS, st);
+            check_eq(st[ST_BLOCKED],  1'b0, "unblock: BLOCKED cleared");
+            check_eq(st[ST_WR_STUCK], 1'b0, "unblock: WR_CMD_STUCK cleared");
+
+            data_write(32'h0000_1004, 32'h600D_0002, rsp);
+            check_eq(rsp, 2'b00, "unblock: traffic resumes");
+            ctrl_write(OFF_STATUS, 32'h7);
+        end
+    endtask
+
+    // ==================================================================
     // Reset asserted mid-transaction.
     //
     // Closes the four FSM transitions Questa reported as uncovered:
@@ -695,6 +799,9 @@ module axi_firewall_tb;
     // Drives the raw signals rather than the BFM tasks, because a task
     // waiting on a response that reset just cancelled would never return.
     // ==================================================================
+    // A blocked downstream survives across a global reset? No - global reset
+    // clears everything, including downstream_broken. That is the escape
+    // hatch of last resort for a peripheral that never recovers.
     task automatic test_reset_mid_transaction(input int delay, input hang_mode_e mode);
         begin
             hang_mode = mode;
@@ -864,9 +971,16 @@ module axi_firewall_tb;
         join
 
         // --- clear timeout status -> releases auto-isolate ---
+        //
+        // v2.0: this clears the sticky bit and the ISOLATED latch, but the
+        // downstream stays blocked until RECOVERY.UNBLOCK. A v1.x driver
+        // stopped here and resumed traffic; that is exactly the behaviour
+        // change this version is about.
         ctrl_write(OFF_STATUS, 32'h4);
         ctrl_read(OFF_STATUS, rdata);
-        check_eq(rdata[3], 1'b0, "clearing TIMEOUT_ERROR releases ISOLATED");
+        check_eq(rdata[ST_ISOLATED], 1'b0, "clearing TIMEOUT_ERROR releases ISOLATED");
+        check_eq(rdata[ST_BLOCKED],  1'b1, "but the downstream stays blocked");
+        recover_downstream();
 
         // --- Test H: normal access now succeeds again ---
         data_write(32'h0000_1000, 32'h5A5A_5A5A, resp);
@@ -922,12 +1036,29 @@ module axi_firewall_tb;
         ctrl_write(OFF_STATUS, 32'h7);
 
         // --- Test L: denied read returns zeroed RDATA (no stale/leaked data)
-        // Preload a known value at an allowed address first, then confirm a
-        // denied read elsewhere does not return it.
+        //
+        // The preload must be a successful READ, not a write. Writing the
+        // value only puts it in the slave model; s_axi_rdata is untouched, so
+        // if the DECERR path stopped zeroing RDATA the register would still
+        // hold whatever the last read left there - which happened to be zero,
+        // and the check passed against deliberately broken RTL. Reading it
+        // back first puts a non-zero value in s_axi_rdata, so the following
+        // denied read has something real to leak.
         data_write(32'h0000_1000, 32'hDEADC0DE, resp);
+        data_read (32'h0000_1000, rdata, resp);
+        check_eq(rdata, 32'hDEADC0DE, "L: preload - RDATA holds a non-zero value");
+
         data_read(32'h0000_7004, rdata, resp);
-        check_eq(resp,  2'b11,       "L: second unmapped read -> DECERR");
+        check_eq(resp,  2'b11,         "L: second unmapped read -> DECERR");
         check_eq(rdata, 32'h0000_0000, "L: denied read returns zeros, not stale data");
+
+        // Same again for the permission-denied path, which is a different
+        // branch of the read FSM and was never checked for leakage at all.
+        data_read (32'h0000_1000, rdata, resp);
+        check_eq(rdata, 32'hDEADC0DE, "L: preload before permission denial");
+        data_read(32'h0000_3004, rdata, resp);   // rule 2 is write-only
+        check_eq(resp,  2'b10,         "L: permission-denied read -> SLVERR");
+        check_eq(rdata, 32'h0000_0000, "L: permission-denied read returns zeros");
         ctrl_write(OFF_STATUS, 32'h7);
 
         // --- Test M: read while ISOLATED is blocked without reaching m_axi
@@ -953,10 +1084,11 @@ module axi_firewall_tb;
         check_eq(rdata, 32'hDEADC0DE, "M: correct data after recovery");
 
         // ==================================================================
-        // Tests N-P: READ-SIDE TIMEOUT and DOWNSTREAM RECOVERY  (v1.1)
-        // The read path's timeout branch was never exercised, so its
-        // protocol behaviour was untested. These also cover the new
-        // m_axi_resetn recovery sequence.
+        // Tests N-P: READ-SIDE TIMEOUT and DOWNSTREAM RECOVERY
+        //
+        // v2.0: recovery is now the documented software sequence - poll the
+        // busy bits, reset the peripheral, write RECOVERY.UNBLOCK - instead
+        // of a peripheral reset the core drove itself.
         // ==================================================================
         ctrl_write(OFF_STATUS, 32'h7);
         ctrl_write(OFF_CTRL,   32'b011);   // enable + auto-isolate
@@ -971,8 +1103,13 @@ module axi_firewall_tb;
         check_eq(rdata[0], 1'b0, "N: FAULT_INFO.WAS_WRITE = 0 for read timeout");
         check_eq(rdata[3:1], 3'd3, "N: FAULT_INFO type = TIMEOUT(3)");
 
-        // --- Test O: peripheral reset is asserted while broken
-        check_eq(m_axi_resetn, 1'b0, "O: m_axi_resetn asserted low while downstream broken");
+        // --- Test O: the downstream is blocked, and says so in STATUS
+        ctrl_read(OFF_STATUS, rdata);
+        check_eq(rdata[ST_BLOCKED],  1'b1, "O: STATUS.BLOCKED set after timeout");
+        check_eq(rdata[ST_RD_STUCK], 1'b1,
+                 "O: STATUS.RD_CMD_STUCK set - ARVALID never accepted");
+        check_eq(rdata[ST_RD_BUSY],  1'b0,
+                 "O: STATUS.RD_RESP_BUSY clear - no response was ever owed");
 
         // forwarding must stay blocked even though AUTO_ISOLATE only governs
         // the visible ISOLATED bit
@@ -988,13 +1125,24 @@ module axi_firewall_tb;
                 disable o_watch;
             end
         join
+
+        // Acknowledging the fault must NOT resume forwarding on its own -
+        // that changed in v2.0, and a driver written against v1.x would
+        // otherwise restart traffic toward an unreset peripheral.
+        ctrl_write(OFF_STATUS, 32'h4);
+        ctrl_read(OFF_STATUS, rdata);
+        check_eq(rdata[ST_TIMEOUT], 1'b0, "O: W1C clears TIMEOUT_ERROR");
+        check_eq(rdata[ST_BLOCKED], 1'b1,
+                 "O: W1C alone does NOT unblock the downstream");
         hang_mode = HANG_NONE;
 
-        // --- Test P: acknowledge the fault -> reset pulse -> traffic resumes
-        ctrl_write(OFF_STATUS, 32'h4);     // W1C TIMEOUT_ERROR -> starts recovery
-        // wait out the peripheral reset pulse
-        wait_cycles(40);
-        check_eq(m_axi_resetn, 1'b1, "P: m_axi_resetn released after recovery");
+        // --- Test P: full recovery sequence -> traffic resumes
+        check_eq(m_axi_arvalid, 1'b1,
+                 "P: ARVALID still asserted before unblock (AXI requires it)");
+        recover_downstream();
+        check_eq(m_axi_arvalid, 1'b0, "P: UNBLOCK withdrew the stuck ARVALID");
+        ctrl_read(OFF_STATUS, rdata);
+        check_eq(rdata[ST_BLOCKED], 1'b0, "P: STATUS.BLOCKED clear after UNBLOCK");
 
         data_write(32'h0000_1000, 32'h600D_600D, resp);
         check_eq(resp, 2'b00, "P: write works after downstream recovery");
@@ -1025,11 +1173,18 @@ module axi_firewall_tb;
         ctrl_read(OFF_FINFO, rdata);
         check_eq(rdata[0],   1'b1, "Q: FAULT_INFO.WAS_WRITE = 1");
         check_eq(rdata[3:1], 3'd3, "Q: FAULT_INFO type = TIMEOUT(3)");
-        check_eq(m_axi_resetn, 1'b0, "Q: peripheral held in reset after timeout");
+        // The distinguishing bit: HANG_RESP accepted the command, so a
+        // response really is owed - unlike test O, where nothing was.
+        ctrl_read(OFF_STATUS, rdata);
+        check_eq(rdata[ST_WR_BUSY],  1'b1,
+                 "Q: STATUS.WR_RESP_BUSY set - peripheral owes a response");
+        check_eq(rdata[ST_WR_STUCK], 1'b0,
+                 "Q: STATUS.WR_CMD_STUCK clear - the command was accepted");
         hang_mode = HANG_NONE;
-        ctrl_write(OFF_STATUS, 32'h4);     // acknowledge -> recovery pulse
-        wait_cycles(40);
-        check_eq(m_axi_resetn, 1'b1, "Q: peripheral reset released");
+        // A driver polling busy would spin forever here: the owed response
+        // never arrives. Resetting the peripheral is what clears it, and the
+        // model's reset is what makes the busy bit drop.
+        recover_downstream();
         data_write(32'h0000_1010, 32'hBEEF_0002, resp);
         check_eq(resp, 2'b00, "Q: write works after response-phase recovery");
         ctrl_write(OFF_STATUS, 32'h7);
@@ -1042,9 +1197,14 @@ module axi_firewall_tb;
         ctrl_read(OFF_FINFO, rdata);
         check_eq(rdata[0],   1'b0, "R: FAULT_INFO.WAS_WRITE = 0");
         check_eq(rdata[3:1], 3'd3, "R: FAULT_INFO type = TIMEOUT(3)");
+        ctrl_read(OFF_STATUS, rdata);
+        check_eq(rdata[ST_RD_BUSY], 1'b1,
+                 "R: STATUS.RD_RESP_BUSY set - peripheral owes a read response");
         hang_mode = HANG_NONE;
         ctrl_write(OFF_STATUS, 32'h4);
-        wait_cycles(40);
+        recover_downstream();
+        ctrl_read(OFF_STATUS, rdata);
+        check_eq(rdata[ST_RD_BUSY], 1'b0, "R: RD_RESP_BUSY cleared by UNBLOCK");
         data_read(32'h0000_1010, rdata, resp);
         check_eq(resp,  2'b00,         "R: read works after response-phase recovery");
         check_eq(rdata, 32'hBEEF_0002, "R: correct data after recovery");
@@ -1078,6 +1238,7 @@ module axi_firewall_tb;
         test_write_backpressure();
         test_read_backpressure();
         test_response_backpressure();
+        test_unblock_semantics();
         measure_latency();
 
         $display("=== RESULTS: %0d passed, %0d failed ===", pass_count, fail_count);
