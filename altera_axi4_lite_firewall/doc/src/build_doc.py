@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Build the AXI4-Lite Firewall block-diagram + description document (.odg)."""
 
+import os
+
 from odg_lib import Odg, PAGE_W, PAGE_H
 
 CORE = "AXI4-Lite Firewall"
@@ -932,5 +934,10 @@ d.text(M, 18.3, CW, 0.0, [
      "an off-by-one would hide.", "tSmallI"),
 ], pstyle="pLg")
 
-d.save("axi4_lite_firewall_block_diagrams.odg")
-print(f"written: {len(d.pages)} pages")
+# Write to doc/, the canonical location, rather than beside the script.
+# A separate copy step is a step someone forgets, and then the
+# published PDF and the generator disagree.
+out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                   "axi4_lite_firewall_block_diagrams.odg")
+d.save(out)
+print(f"written: {len(d.pages)} pages -> {os.path.normpath(out)}")

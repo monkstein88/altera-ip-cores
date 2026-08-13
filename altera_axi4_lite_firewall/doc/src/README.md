@@ -6,9 +6,14 @@ shapes in LibreOffice.
 
 ```bash
 cd doc/src
-python3 build_doc.py                 # writes the .odg here
+python3 build_doc.py     # writes ../axi4_lite_firewall_block_diagrams.odg
+cd ..
 soffice --headless --convert-to pdf axi4_lite_firewall_block_diagrams.odg
 ```
+
+Both outputs live in `doc/`; the script writes there directly so there is no
+copy step to forget. Regenerate the PDF whenever you regenerate the .odg -
+they are two views of the same content and nothing checks that they agree.
 
 `odg_lib.py` is a small OpenDocument Graphics writer - boxes, lines,
 polylines, text frames and tables, all positioned in centimetres on a

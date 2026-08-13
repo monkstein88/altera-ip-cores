@@ -66,10 +66,18 @@ altera_axi4_lite_firewall/
 │   ├── questa/run_sim.tcl        Compile + run + coverage (incl. assertions)
 │   ├── verilator/run_sim.sh      Licence-free regression (assertions, no coverage)
 │   └── verilator/slangcheck.py   Strict LRM elaboration gate (see Toolchain)
-└── verification/
-    ├── orphan_response_tb.sv     Measures the cost of skipping the peripheral
-    │                             reset during recovery - see Timeout recovery
-    └── README.md                 How to run it, and what its result means
+├── verification/
+│   ├── orphan_response_tb.sv     Measures the cost of skipping the peripheral
+│   │                             reset during recovery - see Timeout recovery
+│   └── README.md                 How to run it, and what its result means
+└── doc/
+    ├── axi4_lite_firewall_block_diagrams.odg   Nine-page A4 block-diagram and
+    ├── axi4_lite_firewall_block_diagrams.pdf   description document, same
+    │                                           content in both formats
+    └── src/                      Generator - the .odg is built, not drawn
+        ├── build_doc.py          Page content and layout
+        ├── odg_lib.py            Minimal OpenDocument Graphics writer
+        └── README.md             How to regenerate
 
 Simulation outputs (`work/`, `obj_dir/`, `*.ucdb`, `coverage_report.txt`,
 `modelsim.ini`, `run.log`, `transcript`, `*.wlf`) are build artifacts, listed
@@ -773,6 +781,14 @@ void firewall_recover(void)
   sits in front of the firewall. See *Performance*.
 - **Per-master (per-ID) filtering** — requires full AXI4 or a sideband ID
   signal; not expressible in AXI4-Lite.
+- **Autonomous flushing**, to remove the bounded-poll caveat. AMD's firewall
+  synthesises the missing responses itself when blocked, so its `RESP_BUSY`
+  bits are guaranteed to reach zero and a driver can poll them unconditionally.
+  Ours means *the peripheral owes us a response*, which for a dead peripheral
+  is never satisfied — hence the bound. Absorbing the owed response internally
+  would make the bit mean what a driver naturally assumes. The tracking
+  registers already exist; this is a contained change and the most valuable
+  one for anyone writing against this core.
 - Synthesis numbers (LE/register count, Fmax vs `NUM_RULES`) — currently the
   largest unmeasured item.
 - `AWPROT`/`ARPROT`-based filtering (privileged / secure / instruction-vs-data).
