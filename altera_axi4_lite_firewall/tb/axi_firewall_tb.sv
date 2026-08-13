@@ -205,7 +205,7 @@ module axi_firewall_tb;
     //                had zero coverage before tests Q/R existed.
     //
     // `periph_rst` is driven by the testbench, standing in for the system
-    // integrator resetting the protected peripheral - which in v2.0 is step 3
+    // integrator resetting the protected peripheral - which in v2.0 is step 4
     // of the documented recovery sequence rather than something the core
     // does. verification/orphan_response_tb.sv measures what happens when
     // that step is skipped.
@@ -422,7 +422,7 @@ module axi_firewall_tb;
     // is unambiguously safe. Busy stuck means you reset anyway and accept
     // that UNBLOCK is what discards the owed response.
     //
-    // Step 3 - resetting the peripheral - is the integrator's job in v2.0.
+    // Step 4 - resetting the peripheral - is the integrator's job in v2.0.
     // Skipping it is the hazard measured in verification/orphan_response_tb.sv.
     task automatic recover_downstream(input bit reset_peripheral = 1);
         logic [31:0] st;

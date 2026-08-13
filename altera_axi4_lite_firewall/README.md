@@ -210,12 +210,14 @@ recovery*.
 - **`m_axi_bready` / `m_axi_rready` are tied high permanently.** The point of
   an isolation core is that a wedged peripheral can never stall anything
   upstream — including itself. A late response is absorbed rather than
-  leaving a channel stuck. See *Timeout recovery* for how the core avoids
-  mistaking an absorbed late response for a current one.
-- **Timeout recovery never withdraws an asserted `m_axi_*VALID`** (v1.1).
-  AXI requires VALID to hold until READY; withdrawing it can wedge the
-  interconnect between the firewall and the peripheral, not just the
-  peripheral. See below.
+  leaving a channel stuck. Nothing in the core distinguishes an absorbed late
+  response from a current one, which is why the recovery sequence exists —
+  see *Timeout recovery*.
+- **A timeout never withdraws an asserted `m_axi_*VALID`.** AXI requires VALID
+  to hold until READY; withdrawing it can wedge the interconnect between the
+  firewall and the peripheral, not just the peripheral. The stuck VALID is
+  withdrawn at exactly one point — the `RECOVERY.UNBLOCK` write, which means
+  software has reset the peripheral and its AXI state is gone. See below.
 - **Timeout covers the whole round trip** (address issue → response), so it
   also catches a peripheral that never even raises AWREADY/ARREADY, not just
   one that accepts and then goes quiet.
@@ -383,16 +385,23 @@ Coverage:
 
 `tb/axi_firewall_sva.sv` is bound into `axi_firewall_top` and checks:
 
-- **Containment** — a violation never leaks `AWVALID`/`ARVALID` downstream
-- **Liveness** — each violation gets an error response *on its own channel*
-  (B for writes, R for reads) within 10 cycles
-- **Handshake stability** — VALID holds until READY on all four `s_axi`
-  channels **and on the `m_axi` side** (added v1.1: the master side was
-  previously unchecked, which is why the timeout path's protocol violation
-  survived a full assertion + coverage run)
-- **No transaction issued while the peripheral is held in reset**
-- **Cover points** — that the write- and read-denial paths were actually
-  *reached*, not merely never violated
+Fourteen assertions and six cover points:
+
+| Property | Checks |
+|---|---|
+| `a_suppress_illegal_write` / `a_suppress_illegal_read` | a violation never leaks `AWVALID`/`ARVALID` downstream |
+| `a_err_on_blocked_write` / `a_err_on_blocked_read` | each violation gets an error response *on its own channel* (B for writes, R for reads) within 10 cycles |
+| `a_awvalid_stability` … `a_rvalid_stability` | VALID holds until READY on all four `s_axi` channels |
+| `a_m_awvalid_stability` / `a_m_wvalid_stability` / `a_m_arvalid_stability` | same on the `m_axi` side, with the `RECOVERY.UNBLOCK` cycle as the one permitted exception (added v1.1: the master side was previously unchecked, which is why the timeout path's protocol violation survived a full assertion + coverage run) |
+| `a_no_issue_while_blocked` / `a_no_read_issue_while_blocked` | no *new* command is issued downstream while blocked — a VALID left over from the abandoned transaction may stay asserted, as AXI requires |
+| `a_block_holds_until_unblock` | the block latches: only `UNBLOCK` clears it |
+
+| Cover point | Proves |
+|---|---|
+| `c_write_denied` / `c_read_denied` | the denial paths were actually *reached*, not merely never violated |
+| `c_write_decerr` / `c_read_decerr` | both DECERR paths were reached |
+| `c_block_and_recover` | a full block-then-release episode occurred |
+| `c_unblock_with_stuck_cmd` | an unblock that had to discard a stuck command — the case where polling the busy bits alone would never have sufficed |
 
 The bind passes the **per-direction** fault pulses:
 

@@ -705,10 +705,11 @@ d.text(M, 2.5, 13.3, 0.0, [
      "protection bits, data and strobes are captured on entry to EVAL.",
      "tBody"),
     ("", "tTiny"),
-    ("EVAL   one cycle, unless a peripheral reset pulse is in progress, in "
-     "which case it stalls until the pulse ends. The rule lookup result for "
-     "the captured address is already available combinationally, so the "
-     "verdict costs no extra cycle.", "tBody"),
+    ("EVAL   always one cycle. The rule lookup result for the captured "
+     "address is already available combinationally, so the verdict costs no "
+     "extra cycle. If the downstream is blocked the answer is SLVERR - v2.0 "
+     "removed the reset pulse and with it the window in which arrivals were "
+     "stalled instead.", "tBody"),
     ("", "tTiny"),
     ("FWD   drives the master side and runs the timeout counter. The counter "
      "starts when forwarding starts and covers the whole round trip, so a "

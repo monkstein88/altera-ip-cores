@@ -11,7 +11,7 @@
 // the entire defence: it is what guarantees nothing stale is still in flight.
 //
 // v2.0: the core no longer owns a peripheral reset. Resetting the protected
-// peripheral is step 3 of the documented software recovery sequence, and this
+// peripheral is step 4 of the documented software recovery sequence, and this
 // bench now measures the cost of skipping it - RESET_PERIPHERAL=0 - rather
 // than the cost of leaving a reset output unconnected.
 //
@@ -157,7 +157,7 @@ module orphan_tb #(
             // ---- recovery: the v2.0 software sequence
             ctrl_write('h04, 32'h7);          // acknowledge the fault
             hang = 0;
-            if (RESET_PERIPHERAL) begin       // step 3 - or skip it, and see
+            if (RESET_PERIPHERAL) begin       // step 4 - or skip it, and see
                 periph_rst = 1'b1;
                 wait_cycles(16);
                 periph_rst = 1'b0;

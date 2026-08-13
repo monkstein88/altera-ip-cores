@@ -44,24 +44,26 @@
 //     requirement:
 //
 //       1. stop issuing transactions to s_axi
-//       2. poll STATUS until WR_RESP_BUSY and RD_RESP_BUSY clear, WITH A
+//       2. write 1 to the sticky STATUS bits (acknowledge; this is also what
+//          releases the auto-isolate latch)
+//       3. poll STATUS until WR_RESP_BUSY and RD_RESP_BUSY clear, WITH A
 //          BOUND - see below
-//       3. RESET THE PROTECTED PERIPHERAL (>= 16 clocks is the usual advice)
-//       4. write RECOVERY.UNBLOCK
-//       5. resume
+//       4. RESET THE PROTECTED PERIPHERAL (>= 16 clocks is the usual advice)
+//       5. write RECOVERY.UNBLOCK
+//       6. resume
 //
-//     Step 4 is the single point at which downstream AXI state is declared
+//     Step 5 is the single point at which downstream AXI state is declared
 //     discarded: it releases `downstream_broken` and is the only place a
 //     stuck m_axi_*VALID may be dropped without a handshake.
 //
-//     Bound the poll in step 2. The busy bits mean "the peripheral owes us a
+//     Bound the poll in step 3. The busy bits mean "the peripheral owes us a
 //     response", and a peripheral that accepted a command and then died owes
 //     one forever - so an unbounded poll hangs precisely when recovery is
 //     needed. Treat them as advisory: clear means no late response can still
 //     be in flight and the reset is unambiguously safe; stuck means reset
 //     anyway and let UNBLOCK discard what is owed.
 //
-//   - !! Step 3 is not optional. UNBLOCK causes this core to withdraw an
+//   - !! Step 4 is not optional. UNBLOCK causes this core to withdraw an
 //     asserted VALID. If the peripheral has not been reset, that is a
 //     protocol violation on a live bus, and the peripheral may additionally
 //     have latched a transaction that this core already reported to the
