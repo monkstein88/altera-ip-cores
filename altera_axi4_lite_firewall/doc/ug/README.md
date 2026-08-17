@@ -1,15 +1,21 @@
 # User guide sources
 
-`axi4_lite_firewall_user_guide.md` is the source of truth; the PDF is generated
-from it. Edit the Markdown, never the PDF.
+The two deliverables live one level up in `doc/`, next to the block-diagram
+document:
+
+* `../axi4_lite_firewall_user_guide.md` — the source of truth, readable on GitHub
+* `../axi4_lite_firewall_user_guide.pdf` — typeset output, 37 pages
+
+Edit the Markdown, never the PDF. Image paths in the Markdown are relative to
+`doc/`, so they read `ug/figures/...`.
+
+This directory holds only the machinery that produces them.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `axi4_lite_firewall_user_guide.md` | The document. Readable as-is on GitHub. |
-| `axi4_lite_firewall_user_guide.pdf` | Typeset output, 37 pages |
-| `build_ug.py` | Markdown → HTML → PDF. Title page, TOC with page numbers, headers/footers, captions, Note/Caution callouts. |
+| `build_ug.py` | Markdown → HTML → PDF. Title page, TOC with page numbers, headers/footers, captions, Note/Caution callouts. Writes to `../`. |
 | `check_facts.py` | Re-derives every number in the guide from the RTL and re-run artefacts, and fails if any has drifted |
 | `wave_tb.sv` | Scenario bench producing the four timing captures |
 | `wavedraw.py` | VCD parser and SVG waveform renderer |
@@ -21,7 +27,7 @@ from it. Edit the Markdown, never the PDF.
 
 ```bash
 pip install weasyprint markdown --break-system-packages
-python3 build_ug.py
+python3 build_ug.py          # writes ../axi4_lite_firewall_user_guide.pdf
 ```
 
 ## Regenerating the timing figures
@@ -67,7 +73,7 @@ port count, assertion pass count, cover hit and FSM transition count quoted in
 the guide, from `rtl/*.sv`, `axi_firewall_hw.tcl` and the Questa artefacts —
 and fails if any of them no longer agrees.
 
-224 checks pass at the time of writing. The simulation-result group is skipped
+225 checks pass at the time of writing. The simulation-result group is skipped
 with a message if `simulation/questa/coverage_report.txt` and `run.log` are
 absent, since both are gitignored build artefacts; run
 `simulation/questa/run_sim.tcl` first to enable them.

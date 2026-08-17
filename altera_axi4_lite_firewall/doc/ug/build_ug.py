@@ -13,7 +13,12 @@ figure SVGs render with the same engine that produced them, and so the styling
 is legible to anyone who wants to change it.
 
 Usage:  python3 build_ug.py
-Output: axi4_lite_firewall_user_guide.pdf   (beside this script)
+Output: ../axi4_lite_firewall_user_guide.pdf
+
+The two deliverables live one level up in doc/, alongside the block-diagram
+document; this directory holds only the machinery that produces them. Figure
+paths in the Markdown are therefore relative to doc/ (ug/figures/...), and
+WeasyPrint is given doc/ as its base URL so they resolve.
 """
 
 import html
@@ -25,8 +30,9 @@ import markdown
 from weasyprint import HTML
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SRC = os.path.join(HERE, "axi4_lite_firewall_user_guide.md")
-OUT = os.path.join(HERE, "axi4_lite_firewall_user_guide.pdf")
+DOC = os.path.dirname(HERE)
+SRC = os.path.join(DOC, "axi4_lite_firewall_user_guide.md")
+OUT = os.path.join(DOC, "axi4_lite_firewall_user_guide.pdf")
 
 TITLE = "AXI4-Lite Firewall IP Core"
 SUBTITLE = "User Guide"
@@ -110,7 +116,7 @@ def is_wide(img_tag):
     src = re.search(r'src="([^"]+)"', img_tag)
     if not src:
         return False
-    path = os.path.join(HERE, src.group(1))
+    path = os.path.join(DOC, src.group(1))
     try:
         if path.endswith(".svg"):
             head = open(path, encoding="utf-8").read(400)
@@ -325,7 +331,7 @@ def main():
 
     debug = os.path.join(HERE, ".ug_render.html")
     open(debug, "w", encoding="utf-8").write(doc)
-    HTML(string=doc, base_url=HERE).write_pdf(OUT)
+    HTML(string=doc, base_url=DOC).write_pdf(OUT)
     print(f"written: {OUT}")
 
 

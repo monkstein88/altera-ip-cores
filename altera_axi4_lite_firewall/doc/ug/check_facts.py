@@ -17,7 +17,7 @@ import re
 import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
-UG   = open(f"{ROOT}/doc/ug/axi4_lite_firewall_user_guide.md").read()
+UG   = open(f"{ROOT}/doc/axi4_lite_firewall_user_guide.md").read()
 TOP  = open(f"{ROOT}/rtl/axi_firewall_top.sv").read()
 REGS = open(f"{ROOT}/rtl/axi_firewall_regs.sv").read()
 TCL  = open(f"{ROOT}/axi_firewall_hw.tcl").read()
@@ -216,8 +216,13 @@ else:
       chk(f"| {ug} | {w} | {r} |" in UG, f"UG FSM row '{ug}' not found as {w}/{r}")
 
 # ---- 15. figures exist and are referenced -------------------------------
-for f in re.findall(r"\((figures/[\w.]+)\)", UG):
-    chk(os.path.exists(f"{ROOT}/doc/ug/{f}"), f"referenced figure missing: {f}")
+# Image paths are relative to doc/, where the guide lives. Assert the expected
+# count as well as existence: a path pattern that silently stops matching
+# turns this whole section into a no-op that still reports success.
+figs = re.findall(r"\(((?:\w+/)*figures/[\w.]+)\)", UG)
+chk(len(figs) == 6, f"expected 6 figure references in the guide, found {len(figs)}")
+for f in figs:
+    chk(os.path.exists(f"{ROOT}/doc/{f}"), f"referenced figure missing: {f}")
 
 # ---- 16. every Table n / Figure n number is used once, in order ---------
 nums = [int(n) for n in re.findall(r"\*\*Table (\d+)\.", UG)]

@@ -14,8 +14,8 @@ both a Questa flow with coverage collection and a licence-free Verilator flow.
 
 | Document | What it is |
 |---|---|
-| [User guide (PDF)](doc/ug/axi4_lite_firewall_user_guide.pdf) | 37 pages, Altera-style: getting started, functional description with timing diagrams, parameters, signals, register map, programming model, verification, limitations |
-| [User guide (Markdown)](doc/ug/axi4_lite_firewall_user_guide.md) | Same document, readable in the browser |
+| [User guide (PDF)](doc/axi4_lite_firewall_user_guide.pdf) | 37 pages, Altera-style: getting started, functional description with timing diagrams, parameters, signals, register map, programming model, verification, limitations |
+| [User guide (Markdown)](doc/axi4_lite_firewall_user_guide.md) | Same document, readable in the browser |
 | [Block diagrams (PDF)](doc/axi4_lite_firewall_block_diagrams.pdf) | Nine A4 pages: system context, internal architecture, FSMs, register map |
 | This README | Design rationale and the reasoning behind the decisions — the parts a user guide has no room for |
 
@@ -79,18 +79,18 @@ altera_axi4_lite_firewall/
 │   ├── orphan_response_tb.sv     Measures the cost of skipping the peripheral
 │   │                             reset during recovery - see Timeout recovery
 │   └── README.md                 How to run it, and what its result means
-└── doc/
+└── doc/                         Deliverables here; generators in the subdirs
+    ├── axi4_lite_firewall_user_guide.md    User guide, Altera-style - source
+    ├── axi4_lite_firewall_user_guide.pdf   of truth and typeset, 37 pages
     ├── axi4_lite_firewall_block_diagrams.odg   Nine-page A4 block-diagram and
     ├── axi4_lite_firewall_block_diagrams.pdf   description document, same
     │                                           content in both formats
-    ├── src/                      Generator - the .odg is built, not drawn
+    ├── src/                      Block-diagram generator - built, not drawn
     │   ├── build_doc.py          Page content and layout
     │   ├── odg_lib.py            Minimal OpenDocument Graphics writer
     │   └── README.md             How to regenerate
-    └── ug/                       User guide, Altera-style
-        ├── axi4_lite_firewall_user_guide.md    Source of truth
-        ├── axi4_lite_firewall_user_guide.pdf   Typeset, 37 pages
-        ├── build_ug.py           Markdown -> HTML -> PDF
+    └── ug/                       User-guide generator
+        ├── build_ug.py           Markdown -> HTML -> PDF, writes to doc/
         ├── check_facts.py        Re-derives every number in the guide from
         │                         the RTL and fails if any has drifted
         ├── wave_tb.sv            Scenario bench for the timing figures
