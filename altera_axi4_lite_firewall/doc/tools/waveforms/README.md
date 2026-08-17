@@ -4,6 +4,11 @@ The four timing diagrams are rendered from a real simulation rather than drawn,
 so they cannot drift away from the RTL: change the design and either the figure
 changes with it or the scenario stops matching and the build fails loudly.
 
+**The bench that produces the trace is not here.** It is
+[`verification/wave_capture_tb.sv`](../../../verification), with the repository's
+other standalone benches — all SystemVerilog lives under `rtl/`, `tb/` or
+`verification/`. This directory holds only the renderer and its checker.
+
 ## What this makes
 
 | Figure | Scenario |
@@ -19,28 +24,37 @@ All four appear in the user guide.
 
 | File | Purpose |
 |---|---|
-| `wave_tb.sv` | Scenario bench. Drives an `int marker` signal tagging four windows: 1 permitted write, 2 denied read, 3 timeout, 4 recovery. |
 | `wavedraw.py` | VCD parser and SVG waveform renderer |
 | `mkwaves.py` | Cuts the four scenarios out of a VCD |
 | `check_figures.py` | Reads the SVGs back and compares their geometry against the VCD |
 
 ## Rebuilding
 
-```bash
-verilator --binary --trace --top-module wave_tb \
-    ../../../rtl/axi_firewall_regs.sv ../../../rtl/axi_firewall_top.sv wave_tb.sv
-./obj_dir/Vwave_tb                    # writes wave.vcd
+First produce the trace, from `verification/`:
 
-python3 mkwaves.py wave.vcd           # -> ../../figures/
+```bash
+cd ../../../verification
+verilator --binary --trace --top-module wave_capture_tb \
+    ../rtl/axi_firewall_regs.sv ../rtl/axi_firewall_top.sv wave_capture_tb.sv
+./obj_dir/Vwave_capture_tb            # writes wave.vcd
 ```
 
-Any simulator that writes a VCD will do; Verilator is just the licence-free
-option.
+Then render:
+
+```bash
+cd ../doc/tools/waveforms
+python3 mkwaves.py ../../../verification/wave.vcd     # -> ../../figures/
+```
+
+`wave_capture_tb.sv` drives an `int marker` signal tagging the four windows
+this renderer looks for: 1 permitted write, 2 denied read, 3 timeout,
+4 recovery. Any simulator that writes a VCD will do; Verilator is just the
+licence-free option.
 
 ## Checking
 
 ```bash
-python3 check_figures.py wave.vcd     # 548 sampled points
+python3 check_figures.py ../../../verification/wave.vcd    # 548 sampled points
 ```
 
 It parses each SVG's path geometry back into logic levels and compares them

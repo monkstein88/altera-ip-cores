@@ -32,44 +32,44 @@ FIGS = sys.argv[2] if len(sys.argv) > 2 else os.path.join(DOC, "figures")
 # is compared separately below.
 CASES = {
     "fig_write_ok.svg": (1, 12, [
-        ("s_axi_awvalid", "wave_tb.s_awvalid"),
-        ("s_axi_awready", "wave_tb.s_awready"),
-        ("s_axi_wvalid",  "wave_tb.s_wvalid"),
-        ("s_axi_wready",  "wave_tb.s_wready"),
-        ("m_axi_awvalid", "wave_tb.m_awvalid"),
-        ("m_axi_awready", "wave_tb.m_awready"),
-        ("m_axi_bvalid",  "wave_tb.m_bvalid"),
-        ("s_axi_bvalid",  "wave_tb.s_bvalid"),
+        ("s_axi_awvalid", "wave_capture_tb.s_awvalid"),
+        ("s_axi_awready", "wave_capture_tb.s_awready"),
+        ("s_axi_wvalid",  "wave_capture_tb.s_wvalid"),
+        ("s_axi_wready",  "wave_capture_tb.s_wready"),
+        ("m_axi_awvalid", "wave_capture_tb.m_awvalid"),
+        ("m_axi_awready", "wave_capture_tb.m_awready"),
+        ("m_axi_bvalid",  "wave_capture_tb.m_bvalid"),
+        ("s_axi_bvalid",  "wave_capture_tb.s_bvalid"),
     ]),
     "fig_read_denied.svg": (2, 12, [
-        ("s_axi_arvalid", "wave_tb.s_arvalid"),
-        ("s_axi_arready", "wave_tb.s_arready"),
-        ("m_axi_arvalid", "wave_tb.m_arvalid"),
-        ("s_axi_rvalid",  "wave_tb.s_rvalid"),
-        ("irq",           "wave_tb.irq"),
+        ("s_axi_arvalid", "wave_capture_tb.s_arvalid"),
+        ("s_axi_arready", "wave_capture_tb.s_arready"),
+        ("m_axi_arvalid", "wave_capture_tb.m_arvalid"),
+        ("s_axi_rvalid",  "wave_capture_tb.s_rvalid"),
+        ("irq",           "wave_capture_tb.irq"),
     ]),
     "fig_timeout.svg": (3, 22, [
-        ("s_axi_awvalid",     "wave_tb.s_awvalid"),
-        ("s_axi_awready",     "wave_tb.s_awready"),
-        ("m_axi_awvalid",     "wave_tb.m_awvalid"),
-        ("m_axi_awready",     "wave_tb.m_awready"),
-        ("s_axi_bvalid",      "wave_tb.s_bvalid"),
-        ("downstream_broken", "wave_tb.dut.downstream_broken"),
-        ("irq",               "wave_tb.irq"),
+        ("s_axi_awvalid",     "wave_capture_tb.s_awvalid"),
+        ("s_axi_awready",     "wave_capture_tb.s_awready"),
+        ("m_axi_awvalid",     "wave_capture_tb.m_awvalid"),
+        ("m_axi_awready",     "wave_capture_tb.m_awready"),
+        ("s_axi_bvalid",      "wave_capture_tb.s_bvalid"),
+        ("downstream_broken", "wave_capture_tb.dut.downstream_broken"),
+        ("irq",               "wave_capture_tb.irq"),
     ]),
     "fig_recovery.svg": (4, 34, [
-        ("downstream_broken",  "wave_tb.dut.downstream_broken"),
-        ("m_axi_awvalid",      "wave_tb.m_awvalid"),
-        ("periph_rst (yours)", "wave_tb.periph_rst"),
-        ("s_axi_ctrl_awvalid", "wave_tb.c_awvalid"),
-        ("unblock",            "wave_tb.dut.unblock"),
-        ("irq",                "wave_tb.irq"),
-        ("s_axi_bvalid",       "wave_tb.s_bvalid"),
+        ("downstream_broken",  "wave_capture_tb.dut.downstream_broken"),
+        ("m_axi_awvalid",      "wave_capture_tb.m_awvalid"),
+        ("periph_rst (yours)", "wave_capture_tb.periph_rst"),
+        ("s_axi_ctrl_awvalid", "wave_capture_tb.c_awvalid"),
+        ("unblock",            "wave_capture_tb.dut.unblock"),
+        ("irq",                "wave_capture_tb.irq"),
+        ("s_axi_bvalid",       "wave_capture_tb.s_bvalid"),
     ]),
 }
 
 ALL = sorted({sig for _, _, rows in CASES.values() for _, sig in rows} |
-             {"wave_tb.marker"})
+             {"wave_capture_tb.marker"})
 
 
 def row_index(svg, label):
@@ -122,7 +122,7 @@ def main():
         return 0
     v = Vcd(VCD)
     s = v.sample(ALL, 5000, 1436000, 10000)
-    marker = [val(d.get("wave_tb.marker"), 32) for _, d in s]
+    marker = [val(d.get("wave_capture_tb.marker"), 32) for _, d in s]
 
     checked = mismatched = 0
     problems = []

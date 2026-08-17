@@ -14,7 +14,7 @@ both a Questa flow with coverage collection and a licence-free Verilator flow.
 
 | Document | What it is |
 |---|---|
-| [User guide (PDF)](doc/axi4_lite_firewall_user_guide.pdf) | 37 pages, Altera-style: getting started, functional description with timing diagrams, parameters, signals, register map, programming model, verification, limitations |
+| [User guide (PDF)](doc/axi4_lite_firewall_user_guide.pdf) | 40 pages, Altera-style: getting started, functional description with timing diagrams, parameters, signals, register map, programming model, verification, limitations |
 | [User guide (Markdown)](doc/axi4_lite_firewall_user_guide.md) | Same document, readable in the browser |
 | [Block diagrams (PDF)](doc/axi4_lite_firewall_block_diagrams.pdf) | Architecture companion: system context, internal architecture, FSMs, register map |
 | [Block diagrams (Markdown)](doc/axi4_lite_firewall_block_diagrams.md) | Same document, readable in the browser |
@@ -76,10 +76,12 @@ altera_axi4_lite_firewall/
 │   ├── questa/run_sim.tcl        Compile + run + coverage (incl. assertions)
 │   ├── verilator/run_sim.sh      Licence-free regression (assertions, no coverage)
 │   └── verilator/slangcheck.py   Strict LRM elaboration gate (see Toolchain)
-├── verification/
+├── verification/                 Standalone benches, outside the main suite
 │   ├── orphan_response_tb.sv     Measures the cost of skipping the peripheral
 │   │                             reset during recovery - see Timeout recovery
-│   └── README.md                 How to run it, and what its result means
+│   ├── wave_capture_tb.sv        Drives the scenarios the user guide's timing
+│   │                             figures are rendered from
+│   └── README.md                 How to run them, and what they produce
 └── doc/                         Documents here; everything else is generated
     ├── axi4_lite_firewall_user_guide.md    User guide, Altera-style - source
     ├── axi4_lite_firewall_user_guide.pdf   of truth and typeset, 40 pages
@@ -96,11 +98,10 @@ altera_axi4_lite_firewall/
         │   ├── svg_lib.py        SVG canvas with real-font text layout
         │   └── README.md
         └── waveforms/            Timing diagrams, captured from simulation
-            ├── wave_tb.sv        Scenario bench
             ├── wavedraw.py       VCD parser and SVG waveform renderer
             ├── mkwaves.py        Cuts four scenarios out of a VCD
             ├── check_figures.py  Compares the SVGs back against the VCD
-            └── README.md
+            └── README.md         The bench itself is in verification/
 
 Simulation outputs (`work/`, `obj_dir/`, `*.ucdb`, `coverage_report.txt`,
 `modelsim.ini`, `run.log`, `transcript`, `*.wlf`) are build artifacts, listed

@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 // Scenario bench used only to capture waveforms for the user manual figures.
 // Deliberately minimal and sequential so each figure is a clean window.
-module wave_tb;
+module wave_capture_tb;
   localparam int AW=32, DW=32, CAW=12, NR=8, TW=20;
   logic clk=0, resetn=0; always #5 clk=~clk;
 
@@ -81,7 +81,7 @@ module wave_tb;
   endtask
 
   initial begin
-    $dumpfile("wave.vcd"); $dumpvars(0, wave_tb);
+    $dumpfile("wave.vcd"); $dumpvars(0, wave_capture_tb);
     resetn=0; wait_n(5); resetn=1; wait_n(2);
     cw('h0C, 32'd12);                       // short timeout
     cw('h40, 32'h0000_1000); cw('h44, 32'h0000_1FFF); cw('h48, 32'b111);  // rule 0 rw
