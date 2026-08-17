@@ -31,6 +31,10 @@ obj_dir/
 __pycache__/
 *.pyc
 
+# User-guide build intermediates. The .md and the .pdf are tracked; the HTML
+# WeasyPrint is handed is a debugging aid only.
+doc/ug/.ug_render.html
+
 # Editor / OS
 *~
 .DS_Store

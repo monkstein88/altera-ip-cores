@@ -10,6 +10,15 @@ both a Questa flow with coverage collection and a licence-free Verilator flow.
 **Component:** `altera_axi4_lite_firewall` · displayed in the IP Catalog as
 **"AXI4-Lite Firewall"** under *Bridges and Adapters / Custom* · v2.0
 
+### Documentation
+
+| Document | What it is |
+|---|---|
+| [User guide (PDF)](doc/ug/axi4_lite_firewall_user_guide.pdf) | 37 pages, Altera-style: getting started, functional description with timing diagrams, parameters, signals, register map, programming model, verification, limitations |
+| [User guide (Markdown)](doc/ug/axi4_lite_firewall_user_guide.md) | Same document, readable in the browser |
+| [Block diagrams (PDF)](doc/axi4_lite_firewall_block_diagrams.pdf) | Nine A4 pages: system context, internal architecture, FSMs, register map |
+| This README | Design rationale and the reasoning behind the decisions — the parts a user guide has no room for |
+
 ---
 
 ## What it does
@@ -74,10 +83,22 @@ altera_axi4_lite_firewall/
     ├── axi4_lite_firewall_block_diagrams.odg   Nine-page A4 block-diagram and
     ├── axi4_lite_firewall_block_diagrams.pdf   description document, same
     │                                           content in both formats
-    └── src/                      Generator - the .odg is built, not drawn
-        ├── build_doc.py          Page content and layout
-        ├── odg_lib.py            Minimal OpenDocument Graphics writer
-        └── README.md             How to regenerate
+    ├── src/                      Generator - the .odg is built, not drawn
+    │   ├── build_doc.py          Page content and layout
+    │   ├── odg_lib.py            Minimal OpenDocument Graphics writer
+    │   └── README.md             How to regenerate
+    └── ug/                       User guide, Altera-style
+        ├── axi4_lite_firewall_user_guide.md    Source of truth
+        ├── axi4_lite_firewall_user_guide.pdf   Typeset, 37 pages
+        ├── build_ug.py           Markdown -> HTML -> PDF
+        ├── check_facts.py        Re-derives every number in the guide from
+        │                         the RTL and fails if any has drifted
+        ├── wave_tb.sv            Scenario bench for the timing figures
+        ├── wavedraw.py           VCD parser and SVG waveform renderer
+        ├── mkwaves.py            Cuts four scenarios out of a VCD
+        ├── check_figures.py      Compares the SVGs back against the VCD
+        ├── figures/              Generated; nothing here is hand-drawn
+        └── README.md             How to regenerate all of it
 
 Simulation outputs (`work/`, `obj_dir/`, `*.ucdb`, `coverage_report.txt`,
 `modelsim.ini`, `run.log`, `transcript`, `*.wlf`) are build artifacts, listed

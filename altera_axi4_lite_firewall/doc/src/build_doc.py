@@ -202,9 +202,9 @@ d.text(19.0, 6.2, 9.0, 0.0, [
     ("Verification status", "tH2g"),
     ("Questa 2024.1 and Verilator 5.48", "tSmall"),
     ("", "tTiny"),
-    ("Self-checking tests        80 / 80", "tMonoS"),
-    ("Assertions                 12 / 12", "tMonoS"),
-    ("Cover directives            5 /  5", "tMonoS"),
+    ("Self-checking tests      103 / 103", "tMonoS"),
+    ("Assertions                 14 / 14", "tMonoS"),
+    ("Cover directives            6 /  6", "tMonoS"),
     ("FSM states                  8 /  8", "tMonoS"),
     ("FSM transitions            14 / 14", "tMonoS"),
     ("m_axi protocol violations        0", "tMonoS"),
@@ -229,8 +229,8 @@ d.text(M, 13.1, 16.5, 0.0, [
 ], pstyle="pLg")
 
 d.text(M, PAGE_H - 1.9, CW, 0.8,
-       [("altera_axi4_lite_firewall   -   component version 1.2   -   "
-         "CORE_INFO reports 0x0102", "tTiny")], pstyle="pL")
+       [("altera_axi4_lite_firewall   -   component version 2.0   -   "
+         "CORE_INFO reports 0x0200", "tTiny")], pstyle="pL")
 
 # ================================================================ PAGE 2
 d.page("System context")
@@ -311,7 +311,7 @@ d.text(21.9, 12.4, 6.8, 0.0,
        [("Peripheral reset (yours)", "tAmber"),
         ("Recovering from a timeout requires resetting the protected "
          "peripheral before writing RECOVERY.UNBLOCK. v2.0 removed the reset "
-         "output, so this is now a software step - see page 5.", "tTiny")],
+         "output, so this is now a software step.", "tTiny")],
        pstyle="pLg")
 d.polyline([(25.3, 12.2), (25.3, 11.0)], "aRst")
 
@@ -422,7 +422,7 @@ chrome("2.  Internal architecture", 4,
        "Inside axi_firewall_top: two independent datapaths, one register "
        "block, one recovery controller.")
 
-OX, OY, OW, OH = 0.8, 3.4, 28.1, 14.2
+OX, OY, OW, OH = 0.8, 3.4, 28.1, 14.7
 d.rect(OX, OY, OW, OH, "gCoreT", None)
 d.text(OX + 0.35, OY + 0.12, 8.0, 0.6, [("axi_firewall_top", "tH2c")],
        pstyle="pL")
@@ -434,7 +434,7 @@ d.text(OX + 0.35, OY + 0.12, 8.0, 0.6, [("axi_firewall_top", "tH2c")],
 WX, WY, WW, WH = 4.3, 4.5, 8.3, 4.6      # write datapath
 RX, RY = 4.3, 9.5                         # read datapath
 GX, GY, GW, GH = 16.9, 4.5, 11.2, 9.4     # register block
-VX, VY, VW, VH = 4.3, 14.5, 8.3, 2.5      # recovery
+VX, VY, VW, VH = 4.3, 14.5, 8.3, 3.0      # recovery
 
 d.rect(WX, WY, WW, WH, "gBlkT", [("Write datapath", "tH2")])
 d.text(WX + 0.3, WY + 0.8, WW - 0.6, 0.0, [
@@ -515,7 +515,7 @@ d.text(12.75, 15.32, 1.9, 0.5, [("unblock", "tMonoS")], pstyle="pL")
 
 d.polyline([(VX + VW, 16.55), (16.6, 16.55), (16.6, 7.55), (RX + WW, 7.55)],
            "aCtrl")
-d.text(4.5, 17.12, 11.4, 0.5,
+d.text(4.5, 17.62, 11.4, 0.5,
        [("forward_blocked, global_enable, isolate_effective, timeout_value",
          "tMonoS")], pstyle="pL")
 
@@ -543,16 +543,14 @@ d.text(17.4, 13.87, 11.0, 0.5,
 d.text(17.4, 16.45, 11.0, 0.5,
        [("(v2.0: no peripheral reset output)", "tSmallI")], pstyle="pL")
 
-d.text(0.8, 17.95, 28.1, 0.0, [
+d.text(0.8, 18.35, 28.1, 0.0, [
     ("chk_*_  is the rule-lookup bundle:  chk_*_addr out to the register "
      "block, chk_*_match and chk_*_allow back, all combinational within one "
      "cycle.", "tMonoS"),
-    ("", "tTiny"),
-    ("The two datapaths are fully independent: separate FSMs, separate "
-     "capture registers, separate lookup ports, separate fault pulses. A read "
-     "and a write can be in flight at the same time. Only FAULT_ADDR / "
-     "FAULT_INFO are shared, and if both fault in the same cycle the write "
-     "side wins - a documented, deterministic tie-break.", "tSmall"),
+    ("The datapaths are fully independent - separate FSMs, capture registers, "
+     "lookup ports and fault pulses - so a read and a write can be in flight "
+     "at once. Only FAULT_ADDR / FAULT_INFO are shared; if both fault in the "
+     "same cycle the write side wins, a deterministic tie-break.", "tSmall"),
 ], pstyle="pLg")
 
 # ================================================================ PAGE 5
@@ -754,15 +752,15 @@ d.text(15.4, 7.35, 13.0, 0.0, [
 y = 14.3
 d.text(M, y, CW, 0.5, [("FSM transition coverage  (Questa 2024.1)", "tH2")],
        pstyle="pL")
-table(M, y + 0.6, [7.0, 4.2, 15.9], [
-    ["Transition", "Hits", "Exercised by"],
-    ["IDLE → EVAL", "19 / 19", "every transaction"],
-    ["EVAL → FWD", "13 / 13", "every permitted transaction"],
-    ["EVAL → RESP", "5 / 5", "denial tests C, E, J, K, L, M"],
-    ["EVAL → IDLE", "1 / 1", "test S - reset asserted during EVAL"],
-    ["FWD → RESP", "10 / 10", "normal completion and timeout tests F, N, Q, R"],
-    ["FWD → IDLE", "3 / 3", "test S - reset asserted during FWD"],
-    ["RESP → IDLE", "15 / 15", "every completed response"],
+table(M, y + 0.6, [6.3, 2.6, 2.6, 15.6], [
+    ["Transition", "WR", "RD", "Exercised by"],
+    ["IDLE → EVAL", "23", "23", "every transaction reaching the core"],
+    ["EVAL → FWD", "17", "16", "every permitted transaction"],
+    ["EVAL → RESP", "5", "6", "denied, out-of-range and blocked transactions"],
+    ["EVAL → IDLE", "1", "1", "reset asserted during EVAL"],
+    ["FWD → RESP", "14", "13", "normal completion and timeout"],
+    ["FWD → IDLE", "3", "3", "reset asserted during FWD"],
+    ["RESP → IDLE", "19", "19", "every completed response"],
 ], rh=0.56)
 
 # ================================================================ PAGE 8
@@ -844,7 +842,7 @@ bitfield(BFX, 9.9, "RULE_PERM[i]  (0x48 + i·0x10)", [
 ])
 
 bitfield(BFX, 12.2, "CORE_INFO  (0x18)", [
-    ("31:16", "version  0x0102 = v1.2", 0.44),
+    ("31:16", "version  0x0200 = v2.0", 0.44),
     ("15:8", "reserved", 0.28),
     ("7:0", "NUM_RULES", 0.28),
 ])
