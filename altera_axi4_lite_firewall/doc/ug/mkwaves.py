@@ -14,7 +14,7 @@ Producing the VCD (Verilator; any simulator that writes a VCD will do):
 
 Then:
 
-    python3 mkwaves.py wave.vcd figures/
+    python3 mkwaves.py wave.vcd ../figures/
 
 wave_tb.sv drives an `int marker` signal that tags the four windows this
 script cuts out: 1 permitted write, 2 denied read, 3 timeout, 4 recovery.
@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wavedraw import Vcd, val, draw          # noqa: E402
 
 VCD = sys.argv[1] if len(sys.argv) > 1 else "wave.vcd"
-OUT = os.path.abspath(sys.argv[2] if len(sys.argv) > 2 else "figures")
+OUT = os.path.abspath(sys.argv[2] if len(sys.argv) > 2 else "../figures")
 V = Vcd(VCD)
 os.makedirs(OUT, exist_ok=True)
 

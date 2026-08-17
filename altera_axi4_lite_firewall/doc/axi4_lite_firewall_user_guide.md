@@ -288,7 +288,7 @@ The core presents three AXI4-Lite interfaces and one interrupt output.
 
 **Figure 1. System Context**
 
-![System context](ug/figures/fig_context.png)
+![System context](figures/fig_context.svg)
 
 Traffic flows from the master into `s_axi`, is checked, and is either
 forwarded to the peripheral through `m_axi` or answered locally with an error
@@ -297,7 +297,7 @@ independent of the data path.
 
 **Figure 2. Internal Architecture**
 
-![Internal architecture](ug/figures/fig_internal.png)
+![Internal architecture](figures/fig_internal.svg)
 
 The core contains two independent datapaths — one for writes, one for reads —
 and a shared register block. Each datapath has its own state machine, its own
@@ -340,11 +340,11 @@ one.
 
 **Figure 3. Permitted Write**
 
-![Permitted write](ug/figures/fig_write_ok.svg)
+![Permitted write](figures/fig_write_ok.svg)
 
 **Figure 4. Permission-Denied Read**
 
-![Denied read](ug/figures/fig_read_denied.svg)
+![Denied read](figures/fig_read_denied.svg)
 
 In Figure 4, note that `m_axi_arvalid` never asserts. The peripheral is not
 touched at all, `RDATA` is driven to zero, and `irq` asserts because the
@@ -381,7 +381,7 @@ On expiry the core:
 
 **Figure 5. Downstream Timeout**
 
-![Timeout](ug/figures/fig_timeout.svg)
+![Timeout](figures/fig_timeout.svg)
 
 > **Caution:** Withdrawing an asserted VALID before its handshake is an AXI
 > protocol violation that can wedge the interconnect between the core and the
@@ -412,7 +412,7 @@ reset the monitored side before unblocking.
 
 **Figure 6. Recovery Sequence**
 
-![Recovery](ug/figures/fig_recovery.svg)
+![Recovery](figures/fig_recovery.svg)
 
 > **Caution:** Step 4 is not optional. `UNBLOCK` causes the core to withdraw
 > an asserted VALID. If the peripheral has not been reset, that is a protocol

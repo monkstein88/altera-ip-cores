@@ -8,7 +8,7 @@ reads each SVG back, recovers the logic level the renderer drew in each cycle
 from the path geometry, and compares it against the same sample taken straight
 from the VCD.
 
-Usage:  python3 check_figures.py [wave.vcd] [figures/]
+Usage:  python3 check_figures.py [wave.vcd] [../figures/]
 Exit:   0 if every sampled point matches, 1 otherwise.
 """
 
@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wavedraw import Vcd, val, ROW, LEFT, CW, TOP   # noqa: E402
 
 VCD = sys.argv[1] if len(sys.argv) > 1 else "wave.vcd"
-FIGS = sys.argv[2] if len(sys.argv) > 2 else "figures"
+FIGS = sys.argv[2] if len(sys.argv) > 2 else "../figures"
 
 # figure -> (marker, cycles, [(row label, VCD signal)])
 # Only single-bit rows are checked; bus rows are verified by their text, which

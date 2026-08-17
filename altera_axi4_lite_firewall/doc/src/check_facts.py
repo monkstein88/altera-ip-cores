@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """
-Cross-check every factual table in the user guide against its source.
+Cross-check every factual table in doc/ against its source.
 
-A user guide that has quietly gone out of date is worse than no user guide,
-and none of this is checkable by reading. Every register offset, bit position,
+A document that has quietly gone out of date is worse than no document, and
+none of this is checkable by reading. Every register offset, bit position,
 reset value, parameter range, port count, assertion pass count, cover hit and
-FSM transition count quoted in the guide is re-derived here from the RTL,
+FSM transition count quoted in either document is re-derived here from the RTL,
 axi_firewall_hw.tcl, the committed Questa coverage report and run log - and
 compared. Anything that drifts fails the run.
+
+This is the reason the block-diagram document is Markdown rather than ODF. It
+used to be a zip of XML, and it sat at "v1.2 / 0x0102 / 80 tests" long after the
+core reached v2.0 because nothing could see inside it to notice.
 
 Usage:  python3 check_facts.py
 Exit:   0 if every claim still matches its source, 1 otherwise.
@@ -18,6 +22,7 @@ import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 UG   = open(f"{ROOT}/doc/axi4_lite_firewall_user_guide.md").read()
+BD   = open(f"{ROOT}/doc/axi4_lite_firewall_block_diagrams.md").read()
 TOP  = open(f"{ROOT}/rtl/axi_firewall_top.sv").read()
 REGS = open(f"{ROOT}/rtl/axi_firewall_regs.sv").read()
 TCL  = open(f"{ROOT}/axi_firewall_hw.tcl").read()
@@ -97,7 +102,8 @@ chk("| 0x0C | `TIMEOUT_VALUE` | R/W | all ones |" in UG, "UG TIMEOUT reset wrong
 
 # ---- 6. RULE_PERM layout ------------------------------------------------
 chk("rule_perm = {valid, wr_en, rd_en}" in
-    open(f"{ROOT}/doc/src/build_doc.py").read(), "block diagram perm layout note gone")
+    open(f"{ROOT}/doc/src/build_figures.py").read(),
+    "block diagram perm layout note gone")
 chk("| 2 | `VALID` | R/W | 0 |" in UG, "UG RULE_PERM VALID is not bit 2")
 chk("| 1 | `WRITE_ALLOW` | R/W | 0 |" in UG, "UG RULE_PERM WRITE_ALLOW is not bit 1")
 chk("| 0 | `READ_ALLOW` | R/W | 0 |" in UG, "UG RULE_PERM READ_ALLOW is not bit 0")
@@ -237,6 +243,62 @@ for h in re.findall(r"^#{1,3} (.+)$", UG, re.M):
     heads.add(re.sub(r"[\s-]+", "-", t).strip("-"))
 for a in re.findall(r"\]\(#([\w-]+)\)", UG):
     chk(a in heads, f"dangling internal link: #{a}")
+
+
+# ---- 18. the block-diagram document agrees with the same sources --------
+# It is a second document making the same claims; the whole point of moving it
+# off ODF is that those claims can now be checked instead of trusted.
+bd_off = dict((n, o) for o, n in
+              re.findall(r"\|\s*(0x[0-9A-F]{2})\s*\|\s*`(\w+)`\s*\|", BD))
+chk(len(bd_off) == 8, f"block diagrams list {len(bd_off)} fixed registers, expected 8")
+for name, off in bd_off.items():
+    key = alias.get(name, name)
+    chk(key in rtl_off and int(rtl_off[key], 16) == int(off, 16),
+        f"block diagrams: {name} at {off}, RTL says 0x{rtl_off.get(key, '??')}")
+
+for txt in ("| 0x00 | `CTRL` | R/W | 0x3 (enabled, auto-isolate on) |",
+            "| 0x08 | `IRQ_ENABLE` | R/W | 0x7 (all enabled) |",
+            "| 0x40 + i\u00b70x10 | `RULE_BASE[i]` |",
+            "| 0x48 + i\u00b70x10 | `RULE_PERM[i]` |"):
+    chk(txt in BD, f"block diagrams: missing or changed row {txt!r}")
+
+chk("`0x0200`" in BD, "block diagrams do not state CORE_INFO 0x0200")
+chk("| Version | 2.0 |" in UG, "UG release table no longer states version 2.0")
+chk("**Version:** 2.0" in BD, "block diagrams do not state version 2.0")
+
+# The two documents must not disagree with each other about the results.
+for metric in ("103 / 103", "14 / 14", "6 / 6", "8 / 8"):
+    chk(metric in BD and metric in UG,
+        f"verification figure {metric!r} missing from one of the two documents")
+
+# FSM transition counts appear in both; they must match each other.
+for tr, w, r in [("IDLE \u2192 EVAL", 23, 23), ("EVAL \u2192 FWD", 17, 16),
+                 ("EVAL \u2192 RESP", 5, 6), ("EVAL \u2192 IDLE", 1, 1),
+                 ("FWD \u2192 RESP", 14, 13), ("FWD \u2192 IDLE", 3, 3),
+                 ("RESP \u2192 IDLE", 19, 19)]:
+    chk(f"| {tr} | {w} | {r} |" in BD,
+        f"block diagrams FSM row {tr!r} disagrees with the user guide")
+
+# Latency: both documents quote 6 cycles, and the RTL guard is still 8.
+chk("| Single write | 6 |" in BD and "| Single read | 6 |" in BD,
+    "block diagrams no longer quote 6-cycle latency")
+chk("| Single write, request asserted to `BVALID` | 6 |" in UG,
+    "UG no longer quotes 6-cycle write latency")
+
+# Every figure the block-diagram document references must exist.
+bd_figs = re.findall(r"\((figures/[\w.]+)\)", BD)
+chk(len(bd_figs) == 4, f"expected 4 figures in the block diagrams, found {len(bd_figs)}")
+for f in bd_figs:
+    chk(os.path.exists(f"{ROOT}/doc/{f}"), f"block-diagram figure missing: {f}")
+    chk(f.endswith(".svg"), f"block-diagram figure {f} is not vector")
+
+# Internal links in the block-diagram document resolve.
+bd_heads = set()
+for h in re.findall(r"^#{1,3} (.+)$", BD, re.M):
+    t = re.sub(r"[^\w\s-]", "", h.lower())
+    bd_heads.add(re.sub(r"[\s-]+", "-", t).strip("-"))
+for a in re.findall(r"\]\(#([\w-]+)\)", BD):
+    chk(a in bd_heads, f"block diagrams: dangling internal link #{a}")
 
 print("\n".join("  FAIL: " + b for b in bad) or "  (no failures)")
 if skipped:

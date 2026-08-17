@@ -1,24 +1,22 @@
 #!/usr/bin/env python3
 """
-Typeset the user guide: Markdown -> HTML -> PDF.
+Typeset a document: Markdown -> HTML -> PDF.
 
-The PDF is the deliverable, but the Markdown is the source of truth. Nothing
-in this script invents content - it only adds the page furniture an Intel user
-guide has and Markdown does not: a title page, a table of contents with page
-numbers, running headers and footers, numbered figure and table captions, and
-Note / Caution callouts.
+The PDF is the deliverable, the Markdown is the source of truth. Nothing here
+invents content - it only adds the page furniture an Intel-style manual has and
+Markdown does not: a title page, a table of contents with page numbers, running
+headers and footers, numbered figure and table captions, and Note / Caution
+callouts.
 
-Layout is done with CSS paged media (WeasyPrint) rather than LaTeX so the
-figure SVGs render with the same engine that produced them, and so the styling
-is legible to anyone who wants to change it.
+Layout is CSS paged media (WeasyPrint) rather than LaTeX, so the figure SVGs
+render with a real browser engine and the styling is legible to anyone who
+wants to change it.
 
-Usage:  python3 build_ug.py
-Output: ../axi4_lite_firewall_user_guide.pdf
+Both documents in doc/ go through this one script, because they should look
+like two chapters of the same manual rather than two unrelated PDFs.
 
-The two deliverables live one level up in doc/, alongside the block-diagram
-document; this directory holds only the machinery that produces them. Figure
-paths in the Markdown are therefore relative to doc/ (ug/figures/...), and
-WeasyPrint is given doc/ as its base URL so they resolve.
+Usage:  python3 build_pdf.py [ug|diagrams|all]      default all
+Output: ../<document>.pdf
 """
 
 import html
@@ -31,27 +29,31 @@ from weasyprint import HTML
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DOC = os.path.dirname(HERE)
-SRC = os.path.join(DOC, "axi4_lite_firewall_user_guide.md")
-OUT = os.path.join(DOC, "axi4_lite_firewall_user_guide.pdf")
+
+CORE_VER = "2.0"
+DOC_DATE = "August 2026"
+
+# name -> (markdown stem, subtitle, doc version, first heading of the body)
+#
+# `body_start` is where the front matter ends: everything above it - the title
+# block and the hand-written contents list - exists for GitHub, which has no
+# title page or TOC machinery, and is replaced here by the real thing.
+DOCS = {
+    "ug": ("axi4_lite_firewall_user_guide", "User Guide", "1.0",
+           "\n# 1. About"),
+    "diagrams": ("axi4_lite_firewall_block_diagrams",
+                 "Block Diagrams and Descriptions", "1.0",
+                 "\n# 1. System context"),
+}
 
 TITLE = "AXI4-Lite Firewall IP Core"
-SUBTITLE = "User Guide"
-CORE_VER = "2.0"
-DOC_VER = "1.0"
-DOC_DATE = "August 2026"
 
 # ---------------------------------------------------------------- preprocess
 
 
-def split_front_matter(md):
-    """Drop the Markdown title block and hand-written contents list.
-
-    The PDF grows a real title page and an auto-numbered TOC, so keeping the
-    Markdown ones would duplicate both. The Markdown keeps them because it is
-    also read directly on GitHub, where there is no such machinery.
-    """
-    i = md.index("\n# 1. About")
-    return md[i:]
+def split_front_matter(md, body_start):
+    """Drop the Markdown title block and hand-written contents list."""
+    return md[md.index(body_start):]
 
 
 CALLOUT = re.compile(
@@ -162,12 +164,13 @@ def build_toc(html_text):
     return toc, html_text
 
 
-CSS = """
+def css(subtitle):
+    return """
 @page {
     size: A4;
     margin: 22mm 18mm 20mm 18mm;
     @top-left {
-        content: "AXI4-Lite Firewall IP Core — User Guide";
+        content: "AXI4-Lite Firewall IP Core — """ + subtitle + """";
         font: 8pt "Liberation Sans", sans-serif; color: #5A6B85;
         vertical-align: bottom; padding-bottom: 3mm;
         border-bottom: 0.4pt solid #C9D3E4; width: 100%;
@@ -297,9 +300,13 @@ strong { font-weight: bold; }
 """
 
 
-def main():
-    md = open(SRC, encoding="utf-8").read()
-    body_md = callouts(split_front_matter(md))
+def build(key):
+    stem, subtitle, doc_ver, body_start = DOCS[key]
+    src = os.path.join(DOC, stem + ".md")
+    out = os.path.join(DOC, stem + ".pdf")
+
+    md = open(src, encoding="utf-8").read()
+    body_md = callouts(split_front_matter(md, body_start))
     body = markdown.markdown(
         body_md, extensions=["tables", "fenced_code", "attr_list", "toc"])
     body = captions(body)
@@ -309,12 +316,12 @@ def main():
 <div class="title-page">
   <div class="title-band">
     <h1>{TITLE}</h1>
-    <div class="sub">{SUBTITLE}</div>
+    <div class="sub">{subtitle}</div>
   </div>
   <div class="title-meta"><table>
     <tr><td>IP core</td><td><code>altera_axi4_lite_firewall</code></td></tr>
     <tr><td>Core version</td><td>{CORE_VER}</td></tr>
-    <tr><td>Document version</td><td>{DOC_VER}</td></tr>
+    <tr><td>Document version</td><td>{doc_ver}</td></tr>
     <tr><td>Date</td><td>{DOC_DATE}</td></tr>
     <tr><td>Target</td><td>Intel FPGA / Quartus Prime, Platform Designer</td></tr>
   </table></div>
@@ -325,14 +332,20 @@ def main():
 </div>"""
 
     doc = (f'<!DOCTYPE html><html><head><meta charset="utf-8">'
-           f'<title>{TITLE} User Guide</title>'
-           f"<style>{CSS}</style></head><body>"
+           f'<title>{TITLE} \u2014 {subtitle}</title>'
+           f"<style>{css(subtitle)}</style></head><body>"
            f"{title_page}{toc}{body}</body></html>")
 
-    debug = os.path.join(HERE, ".ug_render.html")
-    open(debug, "w", encoding="utf-8").write(doc)
-    HTML(string=doc, base_url=DOC).write_pdf(OUT)
-    print(f"written: {OUT}")
+    open(os.path.join(HERE, f".render_{key}.html"), "w",
+         encoding="utf-8").write(doc)
+    HTML(string=doc, base_url=DOC).write_pdf(out)
+    print(f"written: {out}")
+
+
+def main():
+    which = sys.argv[1] if len(sys.argv) > 1 else "all"
+    for key in (DOCS if which == "all" else [which]):
+        build(key)
 
 
 if __name__ == "__main__":
