@@ -33,7 +33,7 @@ __pycache__/
 
 # Document build intermediates. The .md and the .pdf are tracked; the HTML
 # WeasyPrint is handed is a debugging aid only.
-doc/src/.render_*.html
+doc/tools/.render_*.html
 
 # Editor / OS
 *~

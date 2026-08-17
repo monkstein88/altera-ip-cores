@@ -80,25 +80,27 @@ altera_axi4_lite_firewall/
 │   ├── orphan_response_tb.sv     Measures the cost of skipping the peripheral
 │   │                             reset during recovery - see Timeout recovery
 │   └── README.md                 How to run it, and what its result means
-└── doc/                         Documents here; generators in the subdirs
+└── doc/                         Documents here; everything else is generated
     ├── axi4_lite_firewall_user_guide.md    User guide, Altera-style - source
     ├── axi4_lite_firewall_user_guide.pdf   of truth and typeset, 40 pages
     ├── axi4_lite_firewall_block_diagrams.md    Architecture companion -
-    ├── axi4_lite_firewall_block_diagrams.pdf   same, 18 pages
-    ├── figures/                  All figures, all generated, all SVG
-    ├── src/                      Document generators
-    │   ├── build_pdf.py          Markdown -> HTML -> PDF, both documents
-    │   ├── build_figures.py      Draws the four block diagrams as SVG
-    │   ├── svg_lib.py            Minimal SVG canvas with real-font text layout
-    │   ├── check_facts.py        Re-derives every number in both documents
-    │   │                         from the RTL; fails if any has drifted
-    │   └── README.md             How to regenerate, and why not ODF
-    └── ug/                       Timing-figure toolchain
-        ├── wave_tb.sv            Scenario bench for the timing figures
-        ├── wavedraw.py           VCD parser and SVG waveform renderer
-        ├── mkwaves.py            Cuts four scenarios out of a VCD
-        ├── check_figures.py      Compares the SVGs back against the VCD
-        └── README.md             How to regenerate them
+    ├── axi4_lite_firewall_block_diagrams.pdf   same, 15 pages
+    ├── figures/                  All 8 figures, all SVG, all generated
+    └── tools/                    The generators
+        ├── build_pdf.py          Markdown -> HTML -> PDF, both documents
+        ├── check_facts.py        Re-derives every number in both documents
+        │                         from the RTL; fails if any has drifted
+        ├── README.md             How to regenerate, and why not ODF
+        ├── diagrams/             Block diagrams, drawn from code
+        │   ├── build_figures.py  Content and layout of all four
+        │   ├── svg_lib.py        SVG canvas with real-font text layout
+        │   └── README.md
+        └── waveforms/            Timing diagrams, captured from simulation
+            ├── wave_tb.sv        Scenario bench
+            ├── wavedraw.py       VCD parser and SVG waveform renderer
+            ├── mkwaves.py        Cuts four scenarios out of a VCD
+            ├── check_figures.py  Compares the SVGs back against the VCD
+            └── README.md
 
 Simulation outputs (`work/`, `obj_dir/`, `*.ucdb`, `coverage_report.txt`,
 `modelsim.ini`, `run.log`, `transcript`, `*.wlf`) are build artifacts, listed

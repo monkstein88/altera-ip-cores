@@ -9,12 +9,12 @@ it or the scenario stops matching and this script fails loudly.
 Producing the VCD (Verilator; any simulator that writes a VCD will do):
 
     verilator --binary --trace --top-module wave_tb \\
-        ../../rtl/axi_firewall_regs.sv ../../rtl/axi_firewall_top.sv wave_tb.sv
+        ../../../rtl/axi_firewall_regs.sv ../../../rtl/axi_firewall_top.sv wave_tb.sv
     ./obj_dir/Vwave_tb            # writes wave.vcd
 
 Then:
 
-    python3 mkwaves.py wave.vcd ../figures/
+    python3 mkwaves.py wave.vcd
 
 wave_tb.sv drives an `int marker` signal that tags the four windows this
 script cuts out: 1 permitted write, 2 denied read, 3 timeout, 4 recovery.
@@ -23,11 +23,17 @@ script cuts out: 1 permitted write, 2 denied read, 3 timeout, 4 recovery.
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
 from wavedraw import Vcd, val, draw          # noqa: E402
 
+# Every tool under doc/tools resolves paths from its own location rather than
+# the caller's cwd, so it works the same run from anywhere.
+DOC = os.path.abspath(os.path.join(HERE, "..", ".."))
+
 VCD = sys.argv[1] if len(sys.argv) > 1 else "wave.vcd"
-OUT = os.path.abspath(sys.argv[2] if len(sys.argv) > 2 else "../figures")
+OUT = os.path.abspath(sys.argv[2] if len(sys.argv) > 2
+                      else os.path.join(DOC, "figures"))
 V = Vcd(VCD)
 os.makedirs(OUT, exist_ok=True)
 

@@ -102,7 +102,7 @@ chk("| 0x0C | `TIMEOUT_VALUE` | R/W | all ones |" in UG, "UG TIMEOUT reset wrong
 
 # ---- 6. RULE_PERM layout ------------------------------------------------
 chk("rule_perm = {valid, wr_en, rd_en}" in
-    open(f"{ROOT}/doc/src/build_figures.py").read(),
+    open(f"{ROOT}/doc/tools/diagrams/build_figures.py").read(),
     "block diagram perm layout note gone")
 chk("| 2 | `VALID` | R/W | 0 |" in UG, "UG RULE_PERM VALID is not bit 2")
 chk("| 1 | `WRITE_ALLOW` | R/W | 0 |" in UG, "UG RULE_PERM WRITE_ALLOW is not bit 1")

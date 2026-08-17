@@ -11,7 +11,7 @@ doc/axi4_lite_firewall_block_diagrams.md rather than on facing pages.
 The page chrome (title band, footer, page number) is gone: it belonged to a
 printed page, and these are figures embedded in a document that has its own.
 
-Usage:  python3 build_figures.py [outdir]      default ../figures
+Usage:  python3 build_figures.py [outdir]      default doc/figures
 """
 
 import os
@@ -529,7 +529,10 @@ bitfield(BFX, 12.2, "CORE_INFO  (0x18)", [
 ])
 # ------------------------------------------------------------------ output
 NAMES = {0: "fig_context", 1: "fig_internal", 2: "fig_fsm", 3: "fig_registers"}
-outdir = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "figures")
+# Every tool under doc/tools resolves paths from its own location rather than
+# the caller's cwd, so it works the same run from anywhere.
+DOC = os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+outdir = sys.argv[1] if len(sys.argv) > 1 else os.path.join(DOC, "figures")
 for p in d.save(outdir, NAMES):
     print("written:", os.path.normpath(p))
