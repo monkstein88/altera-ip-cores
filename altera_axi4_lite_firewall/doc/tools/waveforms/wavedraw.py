@@ -90,10 +90,12 @@ def val(raw, width):
 
 INK, GRID, BUS, HL = "#1F3864", "#C9D3E4", "#DCE6F1", "#C00000"
 ROW, LEFT, CW = 30, 210, 34          # row pitch, label column, cycle width
-TOP, PAD = 48, 10       # TOP leaves room for the title above the cycle ruler
+# No title inside the figure: the document numbers and captions it, and two
+# titles for one object is one too many. TOP now only clears the cycle ruler.
+TOP, PAD = 22, 10
 
 
-def draw(path, title, rows, ncycles, notes=None, highlight=None):
+def draw(path, rows, ncycles, notes=None, highlight=None):
     """rows: list of (label, kind, [values]) - kind 'clk' | 'bit' | 'bus'."""
     w = LEFT + ncycles * CW + 150
     # Bottom padding = the note block (first baseline at +20, 16 px pitch)
@@ -102,8 +104,7 @@ def draw(path, title, rows, ncycles, notes=None, highlight=None):
     h = TOP + len(rows) * ROW + 26 + (16 * len(notes or []))
     o = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" '
          f'viewBox="0 0 {w} {h}" font-family="Liberation Sans, DejaVu Sans, sans-serif">',
-         f'<rect width="{w}" height="{h}" fill="white"/>',
-         f'<text x="{PAD}" y="20" font-size="13" font-weight="bold" fill="{INK}">{escape(title)}</text>']
+         f'<rect width="{w}" height="{h}" fill="white"/>']
 
     # Alternating row bands. Without them a signal's low level sits at the
     # same height as the next row's label and the eye cannot tell which

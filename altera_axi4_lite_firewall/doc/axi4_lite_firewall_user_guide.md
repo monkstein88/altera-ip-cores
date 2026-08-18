@@ -286,23 +286,27 @@ vvp tb.out
 
 The core presents three AXI4-Lite interfaces and one interrupt output.
 
+Traffic flows from the master into `s_axi`, is checked, and is either
+forwarded to the peripheral through `m_axi` or answered locally with an error
+response. Configuration and status are reached through `s_axi_ctrl`, which is
+independent of the data path — so configuring or inspecting the core is never
+subject to a firewall rule, and never blockable by a peripheral that has
+stopped answering. Figure 1 shows how the core wires into a system.
+
+Internally the core contains two independent datapaths — one for writes, one
+for reads — and a shared register block. Each datapath has its own state
+machine, its own capture registers, its own rule-lookup port and its own fault
+signals, so a read and a write may be in flight simultaneously. The only shared
+state is the fault capture pair `FAULT_ADDR` and `FAULT_INFO`. Figure 2 shows
+the internal structure.
+
 **Figure 1. System Context**
 
 ![System context](figures/fig_context.svg)
 
-Traffic flows from the master into `s_axi`, is checked, and is either
-forwarded to the peripheral through `m_axi` or answered locally with an error
-response. Configuration and status are reached through `s_axi_ctrl`, which is
-independent of the data path.
-
 **Figure 2. Internal Architecture**
 
 ![Internal architecture](figures/fig_internal.svg)
-
-The core contains two independent datapaths — one for writes, one for reads —
-and a shared register block. Each datapath has its own state machine, its own
-capture registers, its own rule-lookup port and its own fault signals. A read
-and a write may be in flight simultaneously.
 
 ## 3.2 Access Control
 
@@ -338,11 +342,11 @@ A denied read drives `RDATA` to zero rather than leaving the previous value on
 the bus, so a rejected read cannot leak the result of an earlier permitted
 one.
 
-**Figure 3. Permitted Write**
+**Figure 3. Permitted Write — Request to Response, 6 Cycles**
 
 ![Permitted write](figures/fig_write_ok.svg)
 
-**Figure 4. Permission-Denied Read**
+**Figure 4. Permission-Denied Read — Answered Locally, Nothing Reaches the Peripheral**
 
 ![Denied read](figures/fig_read_denied.svg)
 
@@ -379,7 +383,7 @@ On expiry the core:
 3. **leaves any asserted `m_axi_*VALID` asserted**, because AXI requires VALID
    to remain asserted until READY.
 
-**Figure 5. Downstream Timeout**
+**Figure 5. Downstream Timeout — Master Answered Immediately, VALID Left Asserted**
 
 ![Timeout](figures/fig_timeout.svg)
 
@@ -410,7 +414,7 @@ reset the monitored side before unblocking.
 | 5 | Write 1 to `RECOVERY.UNBLOCK` | Reopens forwarding and withdraws the stuck VALID |
 | 6 | Resume, retrying anything that failed | Transactions attempted while blocked returned SLVERR |
 
-**Figure 6. Recovery Sequence**
+**Figure 6. Recovery Sequence — Acknowledge, Reset the Peripheral, UNBLOCK**
 
 ![Recovery](figures/fig_recovery.svg)
 

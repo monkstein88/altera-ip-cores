@@ -70,7 +70,6 @@ WR={0:"IDLE",1:"EVAL",2:"FWD",3:"RESP"}
 # ---------------- Figure: permitted write ----------------
 lo, n = marker_cycle(1)+1, 12
 draw(f"{OUT}/fig_write_ok.svg",
-  "Permitted write - request to response, 6 cycles",
   [("clk","clk",[]),
    ("s_axi_awvalid","bit",bits("wave_capture_tb.s_awvalid",lo,n)),
    ("s_axi_awready","bit",bits("wave_capture_tb.s_awready",lo,n)),
@@ -89,7 +88,6 @@ draw(f"{OUT}/fig_write_ok.svg",
 # ---------------- Figure: denied read ----------------
 lo, n = marker_cycle(2)+1, 12
 draw(f"{OUT}/fig_read_denied.svg",
-  "Permission-denied read - answered locally, nothing reaches the peripheral",
   [("clk","clk",[]),
    ("s_axi_arvalid","bit",bits("wave_capture_tb.s_arvalid",lo,n)),
    ("s_axi_arready","bit",bits("wave_capture_tb.s_arready",lo,n)),
@@ -107,7 +105,6 @@ draw(f"{OUT}/fig_read_denied.svg",
 # ---------------- Figure: timeout ----------------
 lo, n = marker_cycle(3)+1, 22
 draw(f"{OUT}/fig_timeout.svg",
-  "Downstream timeout - master answered immediately, VALID left asserted",
   [("clk","clk",[]),
    ("s_axi_awvalid","bit",bits("wave_capture_tb.s_awvalid",lo,n)),
    ("s_axi_awready","bit",bits("wave_capture_tb.s_awready",lo,n)),
@@ -126,7 +123,6 @@ draw(f"{OUT}/fig_timeout.svg",
 # ---------------- Figure: recovery ----------------
 lo, n = marker_cycle(4)+1, 34
 draw(f"{OUT}/fig_recovery.svg",
-  "Recovery sequence - acknowledge, reset the peripheral, UNBLOCK",
   [("clk","clk",[]),
    ("downstream_broken","bit",bits("wave_capture_tb.dut.downstream_broken",lo,n)),
    ("m_axi_awvalid","bit",bits("wave_capture_tb.m_awvalid",lo,n)),

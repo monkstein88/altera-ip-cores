@@ -231,10 +231,21 @@ for f in figs:
     chk(os.path.exists(f"{ROOT}/doc/{f}"), f"referenced figure missing: {f}")
 
 # ---- 16. every Table n / Figure n number is used once, in order ---------
-nums = [int(n) for n in re.findall(r"\*\*Table (\d+)\.", UG)]
-chk(nums == list(range(1, len(nums) + 1)), f"table numbering not sequential: {nums}")
-fnums = [int(n) for n in re.findall(r"\*\*Figure (\d+)\.", UG)]
-chk(fnums == list(range(1, len(fnums) + 1)), f"figure numbering not sequential: {fnums}")
+# Both documents, so the two stay consistent with each other in style as well
+# as in content. Also asserts every table is captioned: an uncaptioned table
+# is how the block-diagram document ended up with ten unbalanced </div>.
+for label, doc in (("user guide", UG), ("block diagrams", BD)):
+    nums = [int(n) for n in re.findall(r"\*\*Table (\d+)\.", doc)]
+    chk(nums == list(range(1, len(nums) + 1)),
+        f"{label}: table numbering not sequential: {nums}")
+    fnums = [int(n) for n in re.findall(r"\*\*Figure (\d+)\.", doc)]
+    chk(fnums == list(range(1, len(fnums) + 1)),
+        f"{label}: figure numbering not sequential: {fnums}")
+    # a header row is a line of pipes followed by a |---| separator
+    n_tables = len(re.findall(r"^\|.*\|\n\|[-\s|]+\|$", doc, re.M))
+    chk(n_tables == len(nums),
+        f"{label}: {n_tables} tables but {len(nums)} captions - every table "
+        f"must be captioned")
 
 # ---- 17. internal anchors resolve --------------------------------------
 heads = set()

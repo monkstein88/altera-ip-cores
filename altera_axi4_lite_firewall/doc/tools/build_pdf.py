@@ -84,14 +84,24 @@ def callouts(md):
 
 def captions(html_text):
     """Attach the '**Table n. ...**' / '**Figure n. ...**' paragraphs to their
-    object, so a caption is never orphaned at the foot of a page."""
-    # Table captions precede their table.
+    object, so a caption is never orphaned at the foot of a page.
+
+    Every table is wrapped, captioned or not. An earlier version opened the
+    wrapper only for captioned tables but closed one after every </table>,
+    which left ten unbalanced </div> in the block-diagram document - it has no
+    table captions at all - and one in the user guide. Browsers and WeasyPrint
+    recover from a stray close, so it rendered nearly right; what it actually
+    cost was the wrapper's bottom margin, which is why prose there ran flush
+    against the table above it.
+    """
+    def wrap(m):
+        cap, table = m.group(1), m.group(2)
+        head = f'<p class="caption">{cap}</p>' if cap else ""
+        return f'<div class="tblock">{head}{table}</div>'
+
     html_text = re.sub(
-        r"<p><strong>(Table \d+\..*?)</strong></p>\s*<table>",
-        lambda m: (f'<div class="tblock"><p class="caption">'
-                   f'{m.group(1)}</p><table>'),
-        html_text, flags=re.S)
-    html_text = html_text.replace("</table>", "</table></div>")
+        r"(?:<p><strong>(Table \d+\..*?)</strong></p>\s*)?(<table>.*?</table>)",
+        wrap, html_text, flags=re.S)
 
     # Figure captions precede their image. Python-Markdown emits the img
     # attributes alphabetically (alt before src), so match on the whole tag
@@ -295,7 +305,13 @@ pre { background: #F7F9FC; border: 0.4pt solid #DCE4F0; border-left: 1.6mm solid
 pre code { background: none; padding: 0; font-size: 8.2pt; line-height: 1.35; }
 a { color: #2E4A7D; text-decoration: none; }
 hr { display: none; }
-sub, sup { font-size: 70%; }
+/* A code span inside a superscript would otherwise take the absolute font-size
+   from the code rule, cancelling the 70% and flattening 2^TIMEOUT_WIDTH into
+   "2 TIMEOUT_WIDTH". Raise/lower explicitly and let the span inherit. */
+sub, sup { font-size: 70%; line-height: 0; position: relative; }
+sup { vertical-align: super; }
+sub { vertical-align: sub; }
+sup code, sub code { font-size: inherit; padding: 0; background: none; }
 strong { font-weight: bold; }
 """
 

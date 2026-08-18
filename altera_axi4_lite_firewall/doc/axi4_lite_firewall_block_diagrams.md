@@ -48,6 +48,8 @@ independent read and write permission. The lowest-index valid rule containing
 the address wins; ranges need not be disjoint, so put more specific rules at
 lower indices. Default-deny applies:
 
+**Table 1. Default-Deny Response Encoding**
+
 | Condition | Response |
 |---|---|
 | No rule matches | `DECERR` |
@@ -95,6 +97,8 @@ reachable from software — a Platform Designer reset bridge under software
 control, or a PIO output, both work.
 
 ## 1.4 Interface summary
+
+**Table 2. Interface Summary**
 
 | Interface | Connects to |
 |---|---|
@@ -175,6 +179,8 @@ protocol safety and happens either way.
 
 ## 2.3 Key internal signals
 
+**Table 3. Key Internal Signals**
+
 | Signal | Meaning |
 |---|---|
 | `chk_w_addr` / `chk_r_addr` | Address presented to the rule lookup, one port per datapath |
@@ -228,6 +234,8 @@ permitted read.
 
 ## 3.1 Response encoding
 
+**Table 4. Response Encoding**
+
 | Condition | Response |
 |---|---|
 | Allowed, peripheral answers | As returned by the peripheral |
@@ -246,6 +254,8 @@ that caused it.
 Measured against a zero-wait-state peripheral, counting clock edges from
 request assertion to response valid:
 
+**Table 5. Latency, Zero-Wait-State Peripheral**
+
 | Operation | Cycles |
 |---|---|
 | Single write | 6 |
@@ -258,6 +268,8 @@ non-pipelined.
 ## 3.3 FSM transition coverage
 
 Questa 2024.1, from the version 2.0 regression.
+
+**Table 6. FSM Transition Coverage**
 
 | Transition | Write FSM | Read FSM | Exercised by |
 |---|---|---|---|
@@ -278,6 +290,8 @@ shown; the core comes up secure by default.
 
 ## 4.1 Fixed registers
 
+**Table 7. Fixed Registers**
+
 | Offset | Name | Access | Reset |
 |---|---|---|---|
 | 0x00 | `CTRL` | R/W | 0x3 (enabled, auto-isolate on) |
@@ -290,6 +304,8 @@ shown; the core comes up secure by default.
 | 0x1C | `RECOVERY` | W | bit 0 `UNBLOCK`, self-clearing |
 
 ## 4.2 Rule table
+
+**Table 8. Rule Table**
 
 | Offset | Name | Description |
 |---|---|---|
@@ -366,6 +382,8 @@ Measured before the fix: two writes produced one response. After: two for two.
 
 Questa 2024.1, Verilator 5.48 and slang 11, against the version 2.0 sources.
 
+**Table 9. Verification Results**
+
 | Metric | Result |
 |---|---|
 | Self-checking tests | 103 / 103 |
@@ -381,7 +399,7 @@ Every assertion has a non-zero non-vacuous pass count.
 
 Quartus analysis of the `_hw.tcl` component, synthesis results (logic element
 count, f<sub>MAX</sub>), and behaviour inside a generated Platform Designer
-interconnect. See section 8.4 of the
+interconnect. See Section 8.4 of the
 [user guide](axi4_lite_firewall_user_guide.md) for the full list.
 
 The rule-table decode is checked by lint across nine parameter configurations,
