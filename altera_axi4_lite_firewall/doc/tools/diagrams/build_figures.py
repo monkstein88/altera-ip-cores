@@ -408,12 +408,18 @@ d.line(GX + 1.7, GY, GX + 1.7, OY - 0.3, "aIrq")
 
 # m_axi is one physical port, so both datapaths merge onto a single bus that
 # leaves along the bottom right - under the register block, where there is
-# clear horizontal room for a full-length label.
-d.polyline([(WX + WW, 8.75), (LANE_M, 8.75), (LANE_M, 14.45), (28.9, 14.45)],
-           "aBus")
+# clear horizontal room for the channel list.
+#
+# It gets a port stub like every other interface. It previously had only a
+# text label on the line, which made it the one interface drawn differently
+# from the rest and read as though the core had no master port at all.
+M_AXI_Y = 14.45
+m_w = port(28.9, M_AXI_Y - 0.475, "m_axi")
+d.polyline([(WX + WW, 8.75), (LANE_M, 8.75), (LANE_M, M_AXI_Y),
+            (28.9 - m_w / 2, M_AXI_Y)], "aBus")
 d.polyline([(RX + WW, 13.75), (LANE_M, 13.75)], "aBus")
-d.text(17.4, 13.87, 11.0, 0.5,
-       [("m_axi   (AW, W, B, AR, R)", "tMonoS")], pstyle="pL")
+d.text(17.4, 13.87, 9.6, 0.5,
+       [("(AW, W, B, AR, R)", "tMonoS")], pstyle="pL")
 d.text(17.4, 16.45, 11.0, 0.5,
        [("(v2.0: no peripheral reset output)", "tSmallI")], pstyle="pL")
 

@@ -300,6 +300,34 @@ for h in re.findall(r"^#{1,3} (.+)$", BD, re.M):
 for a in re.findall(r"\]\(#([\w-]+)\)", BD):
     chk(a in bd_heads, f"block diagrams: dangling internal link #{a}")
 
+
+# ---- 19. every interface is actually drawn ------------------------------
+# The internal-architecture figure once showed m_axi as a bare text label on a
+# line while every other interface had a port stub, so the core appeared to
+# have no master port. Nobody spotted it for four commits. The figures are SVG
+# text, so this is checkable - which was the whole argument for moving off ODF.
+IFACES = re.findall(r"^add_interface (\w+) ", TCL, re.M)
+chk(sorted(IFACES) == ["clock", "irq", "m_axi", "reset", "s_axi", "s_axi_ctrl"],
+    f"hw.tcl interface list changed: {IFACES}")
+
+BUS_IFACES = [i for i in IFACES if i.startswith(("s_axi", "m_axi"))] + ["irq"]
+for fig in ("fig_context.svg", "fig_internal.svg"):
+    try:
+        svg = open(f"{ROOT}/doc/figures/{fig}").read()
+    except OSError:
+        bad.append(f"{fig} missing")
+        continue
+    for iface in BUS_IFACES:
+        # A port stub renders the bare name as its own <text> element. A
+        # passing mention inside a sentence does not, which is the distinction
+        # that matters here.
+        chk(f">{iface}<" in svg, f"{fig}: interface {iface} has no port stub")
+
+# clk/resetn appear as prose in the context figure only; the internal figure
+# omits them deliberately to keep the signal channel readable.
+ctx = open(f"{ROOT}/doc/figures/fig_context.svg").read()
+chk("clk, resetn" in ctx, "fig_context.svg no longer shows clk/resetn")
+
 print("\n".join("  FAIL: " + b for b in bad) or "  (no failures)")
 if skipped:
     print("  SKIPPED: simulation-result checks - run simulation/questa/run_sim.tcl\n"
