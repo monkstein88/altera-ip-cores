@@ -339,6 +339,69 @@ for fig in ("fig_context.svg", "fig_internal.svg"):
 ctx = open(f"{ROOT}/doc/figures/fig_context.svg").read()
 chk("clk, resetn" in ctx, "fig_context.svg no longer shows clk/resetn")
 
+
+# ---- 20. behavioural claims the prose makes -----------------------------
+# check_facts historically verified only discrete facts - offsets, widths,
+# counts. The prose describing what the design *does* was unchecked, and one
+# claim in it was wrong: the fault-capture tie-break. These pin the specific
+# behaviours the documents assert, so the prose fails with the RTL.
+
+# The two fault-capture fields are resolved by different rules. Address and
+# direction take the write side, combinationally:
+chk("assign fault_addr_value = wr_fault_any ? captured_awaddr : captured_araddr;"
+    in TOP, "fault_addr_value no longer prefers the write side")
+chk("assign fault_was_write  = wr_fault_any;" in TOP,
+    "fault_was_write no longer tracks the write side")
+
+# ...while the type is decided by assignment order in one always_ff, so the
+# last block executed wins: TIMEOUT > PERM > ADDR, across BOTH datapaths.
+cap = REGS[REGS.index("hardware fault capture"):REGS.index("---- write channel ----")]
+order = re.findall(r"reg_fault_type\s*<=\s*FAULT_(\w+);", cap)
+chk(order == ["ADDR", "PERM", "TIMEOUT"],
+    f"fault-type precedence changed: {order} (docs say TIMEOUT > PERM > ADDR)")
+chk("`TIMEOUT` > `PERM` > `ADDR`" in UG and "`TIMEOUT` > `PERM` > `ADDR`" in BD,
+    "the documents no longer state the fault-type precedence")
+
+# Forwarding is gated by two independently-cleared conditions. This is why
+# STATUS must be acknowledged before RECOVERY.UNBLOCK, and the guide says so.
+chk("assign forward_blocked = isolate_effective | downstream_broken;" in TOP,
+    "forward_blocked is no longer the OR of isolate and blocked")
+chk("assign isolate_effective = reg_manual_isolate | auto_isolate_latch;" in REGS,
+    "isolate_effective composition changed")
+chk(re.search(r"if \(s_axi_ctrl_wdata\[2\]\) begin.*?auto_isolate_latch <= 1'b0;",
+              REGS, re.S) is not None,
+    "W1C on TIMEOUT_ERROR no longer releases the auto-isolate latch")
+chk("**Required before step 5**" in UG,
+    "the guide no longer flags step 2 as required before step 5")
+
+# UNBLOCK is the only place a master-side VALID is dropped outside a handshake.
+discards = re.findall(r"if \(unblock\) begin\s*(.*?)\s*end", TOP, re.S)
+chk(len(discards) == 2, f"expected 2 unblock discard blocks, found {len(discards)}")
+chk(all("m_axi_" in d and "valid <= 1'b0" in d for d in discards),
+    "the unblock discard no longer clears the master-side VALIDs")
+
+# Rule matching: lowest index wins, both bounds inclusive.
+chk(REGS.count("if (!chk_w_match && rule_perm[i].valid &&") == 1 and
+    REGS.count("if (!chk_r_match && rule_perm[i].valid &&") == 1,
+    "the rule-lookup priority chain changed shape")
+chk(REGS.count(">= rule_base[i]) && (chk_w_addr <= rule_limit[i])") == 1,
+    "write rule bounds are no longer inclusive on both ends")
+chk("lowest-index valid rule" in UG, "the guide no longer states lowest-index-wins")
+
+# AWPROT/ARPROT are transported but never evaluated.
+chk("assign m_axi_awprot = captured_awprot;" in TOP, "AWPROT no longer forwarded")
+# The lookup is fed the captured address and nothing else - no PROT bits.
+chk("assign chk_w_addr = captured_awaddr;" in TOP,
+    "the write rule lookup input is no longer just the captured address")
+chk("assign chk_r_addr = captured_araddr;" in TOP,
+    "the read rule lookup input is no longer just the captured address")
+chk("not used in rule evaluation" in UG,
+    "the guide no longer states that PROT is unevaluated")
+
+# The write path needs both AWVALID and WVALID before asserting either READY.
+chk("if (s_axi_awvalid && s_axi_wvalid) begin" in TOP,
+    "the write path no longer waits for both AWVALID and WVALID")
+
 print("\n".join("  FAIL: " + b for b in bad) or "  (no failures)")
 if skipped:
     print("  SKIPPED: simulation-result checks - run simulation/questa/run_sim.tcl\n"

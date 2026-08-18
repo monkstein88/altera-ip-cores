@@ -408,7 +408,7 @@ reset the monitored side before unblocking.
 | Step | Action | Why |
 |---|---|---|
 | 1 | Stop issuing transactions to `s_axi` | New transactions are rejected while blocked |
-| 2 | Write 1 to the sticky `STATUS` bits | Acknowledges the fault and releases the auto-isolate latch |
+| 2 | Write 1 to the sticky `STATUS` bits | Acknowledges the fault and releases the auto-isolate latch. **Required before step 5** — see below |
 | 3 | Poll `STATUS` until `WR_RESP_BUSY` and `RD_RESP_BUSY` clear — **with a bound** | Tells you no late response is still in flight |
 | 4 | **Reset the protected peripheral** (≥ 16 clocks) | Discards the peripheral's AXI state |
 | 5 | Write 1 to `RECOVERY.UNBLOCK` | Reopens forwarding and withdraws the stuck VALID |
@@ -424,6 +424,16 @@ reset the monitored side before unblocking.
 > transaction the core already reported to the master as failed. Measured: 0
 > of 25 tested timing offsets mis-attribute a stale response when the sequence
 > is followed; 1 of 25 does when step 4 is skipped.
+
+> **Caution:** Step 2 must precede step 5, and the order is load-bearing.
+> Forwarding is gated by *two* independent conditions — the blocked state and
+> the isolate state — and each is cleared by a different write. `UNBLOCK`
+> clears only the blocked state. If `AUTO_ISOLATE_EN` was set when the timeout
+> occurred, the auto-isolate latch is also set, and only the W1C in step 2
+> releases it. Writing `UNBLOCK` without having acknowledged `STATUS` first
+> leaves the core isolated, and every transaction still returns SLVERR.
+> `STATUS` then reads `BLOCKED = 0` with `ISOLATED = 1`, which is the
+> signature of this mistake.
 
 ### 3.5.1 Bounding the Busy Poll
 
@@ -465,9 +475,21 @@ memory-mapped-peripheral idiom and works directly with the Nios II HAL ISR
 pattern.
 
 `FAULT_ADDR` and `FAULT_INFO` capture the address and type of the most recent
-fault of any kind. If a read fault and a write fault occur in the same cycle,
-both sticky bits are set correctly but the capture registers take the write
-side — a documented, deterministic tie-break.
+fault of any kind.
+
+> **Caution:** If the read and write datapaths fault in the *same cycle* with
+> *different* fault types, the capture registers can disagree with each other.
+> `FAULT_ADDR` and `FAULT_INFO.WAS_WRITE` always take the write side.
+> `FAULT_INFO.FAULT_TYPE` is resolved separately, by type precedence across
+> both datapaths — `TIMEOUT` beats `PERM` beats `ADDR`. So a simultaneous
+> write-`ADDR` and read-`PERM` fault reports `WAS_WRITE = 1` with the write's
+> address, but `FAULT_TYPE = PERM`, which belongs to the read.
+>
+> The sticky `STATUS` bits are unaffected — every fault sets its own bit
+> correctly. Only the single shared capture pair is ambiguous. Software that
+> must attribute every fault individually should correlate with its own
+> transaction log rather than rely on `FAULT_INFO` alone; see
+> [Section 9.7](#97-shared-fault-capture).
 
 ## 3.7 Control Port Behaviour
 
@@ -1259,9 +1281,27 @@ f<sub>MAX</sub>, register the lookup result and accept one more cycle in EVAL.
 
 `FAULT_ADDR` and `FAULT_INFO` are single registers shared by both datapaths.
 Simultaneous read and write faults both set their sticky `STATUS` bits
-correctly, but only the write side's address and type are captured. Software
-that must attribute every fault individually needs to correlate with its own
-transaction log.
+correctly, but only one address and one type are captured — and the two are
+resolved by *different* rules:
+
+**Table 38. Fault Capture Resolution**
+
+| Field | Resolved by |
+|---|---|
+| `FAULT_ADDR` | Write side wins |
+| `FAULT_INFO.WAS_WRITE` | Write side wins |
+| `FAULT_INFO.FAULT_TYPE` | Type precedence across both datapaths: `TIMEOUT` > `PERM` > `ADDR` |
+
+The two rules agree whenever both datapaths fault with the same type, or when
+only one faults. They disagree when the datapaths fault in the same cycle with
+different types: the address and direction then describe the write while the
+type may describe the read.
+
+This is a consequence of the capture being one register pair fed by three
+independent fault sources, and it is not currently arbitrated. Software that
+must attribute every fault individually needs to correlate with its own
+transaction log. Giving each datapath its own capture pair would remove the
+ambiguity and is a candidate for a future revision.
 
 ## 9.8 Synchronous Reset Only
 
@@ -1273,13 +1313,13 @@ this for you.
 
 # 10. Document Revision History
 
-**Table 38. Document Revision History**
+**Table 39. Document Revision History**
 
 | Document version | Core version | Date | Changes |
 |---|---|---|---|
 | 1.0 | 2.0 | August 2026 | Initial release of this user guide |
 
-**Table 39. Core Revision History**
+**Table 40. Core Revision History**
 
 | Core version | `CORE_INFO` | Changes |
 |---|---|---|

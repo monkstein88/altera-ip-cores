@@ -121,8 +121,11 @@ recovery controller.
 
 The datapaths are fully independent — separate FSMs, capture registers, lookup
 ports and fault pulses — so a read and a write can be in flight at once. Only
-`FAULT_ADDR` and `FAULT_INFO` are shared; if both fault in the same cycle the
-write side wins, a deterministic tie-break.
+`FAULT_ADDR` and `FAULT_INFO` are shared. If both datapaths fault in the same
+cycle, `FAULT_ADDR` and `WAS_WRITE` take the write side, while `FAULT_TYPE` is
+resolved by type precedence across both — `TIMEOUT` > `PERM` > `ADDR` — so the
+two fields can describe different transactions. The sticky `STATUS` bits are
+unaffected. See section 9.7 of the [user guide](axi4_lite_firewall_user_guide.md).
 
 `chk_*_` is the rule-lookup bundle: `chk_*_addr` out to the register block,
 `chk_*_match` and `chk_*_allow` back, all combinational within one cycle. Each
