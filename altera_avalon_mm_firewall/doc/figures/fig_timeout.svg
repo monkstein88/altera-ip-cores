@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="426" viewBox="0 0 1040 426" font-family="Liberation Sans, DejaVu Sans, sans-serif">
+<rect width="1040" height="426" fill="white"/>
+<rect x="210" y="52" width="680" height="30" fill="#F4F7FB"/>
+<rect x="210" y="112" width="680" height="30" fill="#F4F7FB"/>
+<rect x="210" y="172" width="680" height="30" fill="#F4F7FB"/>
+<rect x="210" y="232" width="680" height="30" fill="#F4F7FB"/>
+<rect x="210" y="292" width="680" height="30" fill="#F4F7FB"/>
+<line x1="210" y1="16" x2="210" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="227.0" y="12" font-size="9" fill="#808080" text-anchor="middle">0</text>
+<line x1="244" y1="16" x2="244" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="261.0" y="12" font-size="9" fill="#808080" text-anchor="middle">1</text>
+<line x1="278" y1="16" x2="278" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="295.0" y="12" font-size="9" fill="#808080" text-anchor="middle">2</text>
+<line x1="312" y1="16" x2="312" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="329.0" y="12" font-size="9" fill="#808080" text-anchor="middle">3</text>
+<line x1="346" y1="16" x2="346" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="363.0" y="12" font-size="9" fill="#808080" text-anchor="middle">4</text>
+<line x1="380" y1="16" x2="380" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="397.0" y="12" font-size="9" fill="#808080" text-anchor="middle">5</text>
+<line x1="414" y1="16" x2="414" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="431.0" y="12" font-size="9" fill="#808080" text-anchor="middle">6</text>
+<line x1="448" y1="16" x2="448" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="465.0" y="12" font-size="9" fill="#808080" text-anchor="middle">7</text>
+<line x1="482" y1="16" x2="482" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="499.0" y="12" font-size="9" fill="#808080" text-anchor="middle">8</text>
+<line x1="516" y1="16" x2="516" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="533.0" y="12" font-size="9" fill="#808080" text-anchor="middle">9</text>
+<line x1="550" y1="16" x2="550" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="567.0" y="12" font-size="9" fill="#808080" text-anchor="middle">10</text>
+<line x1="584" y1="16" x2="584" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="601.0" y="12" font-size="9" fill="#808080" text-anchor="middle">11</text>
+<line x1="618" y1="16" x2="618" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="635.0" y="12" font-size="9" fill="#808080" text-anchor="middle">12</text>
+<line x1="652" y1="16" x2="652" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="669.0" y="12" font-size="9" fill="#808080" text-anchor="middle">13</text>
+<line x1="686" y1="16" x2="686" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="703.0" y="12" font-size="9" fill="#808080" text-anchor="middle">14</text>
+<line x1="720" y1="16" x2="720" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="737.0" y="12" font-size="9" fill="#808080" text-anchor="middle">15</text>
+<line x1="754" y1="16" x2="754" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="771.0" y="12" font-size="9" fill="#808080" text-anchor="middle">16</text>
+<line x1="788" y1="16" x2="788" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="805.0" y="12" font-size="9" fill="#808080" text-anchor="middle">17</text>
+<line x1="822" y1="16" x2="822" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="839.0" y="12" font-size="9" fill="#808080" text-anchor="middle">18</text>
+<line x1="856" y1="16" x2="856" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="873.0" y="12" font-size="9" fill="#808080" text-anchor="middle">19</text>
+<line x1="890" y1="16" x2="890" y2="352" stroke="#C9D3E4" stroke-width="1"/>
+<text x="202" y="41.0" font-size="10.5" text-anchor="end" fill="#000">clk</text>
+<path d="M210,44 L210,27 L227.0,27 L227.0,44 L244,44 M244,44 L244,27 L261.0,27 L261.0,44 L278,44 M278,44 L278,27 L295.0,27 L295.0,44 L312,44 M312,44 L312,27 L329.0,27 L329.0,44 L346,44 M346,44 L346,27 L363.0,27 L363.0,44 L380,44 M380,44 L380,27 L397.0,27 L397.0,44 L414,44 M414,44 L414,27 L431.0,27 L431.0,44 L448,44 M448,44 L448,27 L465.0,27 L465.0,44 L482,44 M482,44 L482,27 L499.0,27 L499.0,44 L516,44 M516,44 L516,27 L533.0,27 L533.0,44 L550,44 M550,44 L550,27 L567.0,27 L567.0,44 L584,44 M584,44 L584,27 L601.0,27 L601.0,44 L618,44 M618,44 L618,27 L635.0,27 L635.0,44 L652,44 M652,44 L652,27 L669.0,27 L669.0,44 L686,44 M686,44 L686,27 L703.0,27 L703.0,44 L720,44 M720,44 L720,27 L737.0,27 L737.0,44 L754,44 M754,44 L754,27 L771.0,27 L771.0,44 L788,44 M788,44 L788,27 L805.0,27 L805.0,44 L822,44 M822,44 L822,27 L839.0,27 L839.0,44 L856,44 M856,44 L856,27 L873.0,27 L873.0,44 L890,44" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="71.0" font-size="10.5" text-anchor="end" fill="#000">s0_read</text>
+<path d="M210,74 L244,74 L244,57 L278,57 L312,57 L346,57 L380,57 L414,57 L448,57 L482,57 L516,57 L550,57 L584,57 L618,57 L652,57 L652,74 L686,74 L720,74 L754,74 L788,74 L822,74 L856,74 L890,74" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="101.0" font-size="10.5" text-anchor="end" fill="#000">s0_waitrequest</text>
+<path d="M210,104 L244,104 L244,87 L278,87 L312,87 L346,87 L380,87 L414,87 L448,87 L482,87 L516,87 L550,87 L584,87 L618,87 L618,104 L652,104 L686,104 L720,104 L754,104 L788,104 L822,104 L856,104 L890,104" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="131.0" font-size="10.5" text-anchor="end" fill="#000">m0_read</text>
+<path d="M210,134 L244,134 L244,117 L278,117 L312,117 L346,117 L380,117 L414,117 L448,117 L482,117 L516,117 L550,117 L584,117 L618,117 L652,117 L686,117 L720,117 L754,117 L788,117 L822,117 L856,117 L890,117" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="161.0" font-size="10.5" text-anchor="end" fill="#000">m0_waitrequest</text>
+<path d="M210,147 L244,147 L278,147 L312,147 L346,147 L380,147 L414,147 L448,147 L482,147 L516,147 L550,147 L584,147 L618,147 L652,147 L686,147 L720,147 L754,147 L788,147 L822,147 L856,147 L890,147" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="191.0" font-size="10.5" text-anchor="end" fill="#000">downstream_broken</text>
+<path d="M210,194 L244,194 L278,194 L312,194 L346,194 L380,194 L414,194 L448,194 L482,194 L516,194 L550,194 L584,194 L618,194 L618,177 L652,177 L686,177 L720,177 L754,177 L788,177 L822,177 L856,177 L890,177" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="221.0" font-size="10.5" text-anchor="end" fill="#000">rd_stuck</text>
+<path d="M210,224 L244,224 L278,224 L312,224 L346,224 L380,224 L414,224 L448,224 L482,224 L516,224 L550,224 L584,224 L618,224 L618,207 L652,207 L686,207 L720,207 L754,207 L788,207 L822,207 L856,207 L890,207" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="251.0" font-size="10.5" text-anchor="end" fill="#000">rd_deny_beats</text>
+<path d="M210,245.5 L214,237 L648,237 L652,245.5 L648,254 L214,254 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="431.0" y="249.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">0</text>
+<path d="M652,245.5 L656,237 L682,237 L686,245.5 L682,254 L656,254 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="669.0" y="249.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">4</text>
+<path d="M686,245.5 L690,237 L716,237 L720,245.5 L716,254 L690,254 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="703.0" y="249.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">3</text>
+<path d="M720,245.5 L724,237 L750,237 L754,245.5 L750,254 L724,254 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="737.0" y="249.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">2</text>
+<path d="M754,245.5 L758,237 L784,237 L788,245.5 L784,254 L758,254 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="771.0" y="249.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">1</text>
+<path d="M788,245.5 L792,237 L886,237 L890,245.5 L886,254 L792,254 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="839.0" y="249.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">0</text>
+<text x="202" y="281.0" font-size="10.5" text-anchor="end" fill="#000">s0_readdatavalid</text>
+<path d="M210,284 L244,284 L278,284 L312,284 L346,284 L380,284 L414,284 L448,284 L482,284 L516,284 L550,284 L584,284 L618,284 L652,284 L652,267 L686,267 L720,267 L754,267 L788,267 L788,284 L822,284 L856,284 L890,284" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="311.0" font-size="10.5" text-anchor="end" fill="#000">s0_response</text>
+<path d="M210,305.5 L214,297 L648,297 L652,305.5 L648,314 L214,314 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="431.0" y="309.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">OKAY</text>
+<path d="M652,305.5 L656,297 L784,297 L788,305.5 L784,314 L656,314 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="720.0" y="309.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">SLVERR</text>
+<path d="M788,305.5 L792,297 L886,297 L890,305.5 L886,314 L792,314 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="839.0" y="309.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">OKAY</text>
+<text x="202" y="341.0" font-size="10.5" text-anchor="end" fill="#000">irq</text>
+<path d="M210,344 L244,344 L278,344 L312,344 L346,344 L380,344 L414,344 L448,344 L482,344 L516,344 L550,344 L584,344 L618,344 L652,344 L652,327 L686,327 L720,327 L754,327 L788,327 L822,327 L856,327 L890,327" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="10" y="372" font-size="10" fill="#404040">The peripheral holds m0_waitrequest high forever. TIMEOUT_VALUE is 10 cycles in this capture; a real system uses thousands.</text>
+<text x="10" y="388" font-size="10" fill="#404040">On expiry the core completes the transaction upstream itself - four SLAVEERROR beats - so the master never hangs, and latches downstream_broken.</text>
+<text x="10" y="404" font-size="10" fill="#404040">m0_read STAYS ASSERTED. Avalon-MM forbids withdrawing a command before waitrequest falls; rd_stuck records that the core is holding one. Only RECOVERY.UNBLOCK may drop it.</text>
+</svg>

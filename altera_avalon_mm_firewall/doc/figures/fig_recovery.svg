@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1516" height="412" viewBox="0 0 1516 412" font-family="Liberation Sans, DejaVu Sans, sans-serif">
+<rect width="1516" height="412" fill="white"/>
+<rect x="210" y="52" width="1156" height="30" fill="#F4F7FB"/>
+<rect x="210" y="112" width="1156" height="30" fill="#F4F7FB"/>
+<rect x="210" y="172" width="1156" height="30" fill="#F4F7FB"/>
+<rect x="210" y="232" width="1156" height="30" fill="#F4F7FB"/>
+<rect x="210" y="292" width="1156" height="30" fill="#F4F7FB"/>
+<line x1="210" y1="16" x2="210" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="227.0" y="12" font-size="9" fill="#808080" text-anchor="middle">0</text>
+<line x1="244" y1="16" x2="244" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="261.0" y="12" font-size="9" fill="#808080" text-anchor="middle">1</text>
+<line x1="278" y1="16" x2="278" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="295.0" y="12" font-size="9" fill="#808080" text-anchor="middle">2</text>
+<line x1="312" y1="16" x2="312" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="329.0" y="12" font-size="9" fill="#808080" text-anchor="middle">3</text>
+<line x1="346" y1="16" x2="346" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="363.0" y="12" font-size="9" fill="#808080" text-anchor="middle">4</text>
+<line x1="380" y1="16" x2="380" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="397.0" y="12" font-size="9" fill="#808080" text-anchor="middle">5</text>
+<line x1="414" y1="16" x2="414" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="431.0" y="12" font-size="9" fill="#808080" text-anchor="middle">6</text>
+<line x1="448" y1="16" x2="448" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="465.0" y="12" font-size="9" fill="#808080" text-anchor="middle">7</text>
+<line x1="482" y1="16" x2="482" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="499.0" y="12" font-size="9" fill="#808080" text-anchor="middle">8</text>
+<line x1="516" y1="16" x2="516" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="533.0" y="12" font-size="9" fill="#808080" text-anchor="middle">9</text>
+<line x1="550" y1="16" x2="550" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="567.0" y="12" font-size="9" fill="#808080" text-anchor="middle">10</text>
+<line x1="584" y1="16" x2="584" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="601.0" y="12" font-size="9" fill="#808080" text-anchor="middle">11</text>
+<line x1="618" y1="16" x2="618" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="635.0" y="12" font-size="9" fill="#808080" text-anchor="middle">12</text>
+<line x1="652" y1="16" x2="652" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="669.0" y="12" font-size="9" fill="#808080" text-anchor="middle">13</text>
+<line x1="686" y1="16" x2="686" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="703.0" y="12" font-size="9" fill="#808080" text-anchor="middle">14</text>
+<line x1="720" y1="16" x2="720" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="737.0" y="12" font-size="9" fill="#808080" text-anchor="middle">15</text>
+<line x1="754" y1="16" x2="754" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="771.0" y="12" font-size="9" fill="#808080" text-anchor="middle">16</text>
+<line x1="788" y1="16" x2="788" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="805.0" y="12" font-size="9" fill="#808080" text-anchor="middle">17</text>
+<line x1="822" y1="16" x2="822" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="839.0" y="12" font-size="9" fill="#808080" text-anchor="middle">18</text>
+<line x1="856" y1="16" x2="856" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="873.0" y="12" font-size="9" fill="#808080" text-anchor="middle">19</text>
+<line x1="890" y1="16" x2="890" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="907.0" y="12" font-size="9" fill="#808080" text-anchor="middle">20</text>
+<line x1="924" y1="16" x2="924" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="941.0" y="12" font-size="9" fill="#808080" text-anchor="middle">21</text>
+<line x1="958" y1="16" x2="958" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="975.0" y="12" font-size="9" fill="#808080" text-anchor="middle">22</text>
+<line x1="992" y1="16" x2="992" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="1009.0" y="12" font-size="9" fill="#808080" text-anchor="middle">23</text>
+<line x1="1026" y1="16" x2="1026" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="1043.0" y="12" font-size="9" fill="#808080" text-anchor="middle">24</text>
+<line x1="1060" y1="16" x2="1060" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="1077.0" y="12" font-size="9" fill="#808080" text-anchor="middle">25</text>
+<line x1="1094" y1="16" x2="1094" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="1111.0" y="12" font-size="9" fill="#808080" text-anchor="middle">26</text>
+<line x1="1128" y1="16" x2="1128" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="1145.0" y="12" font-size="9" fill="#808080" text-anchor="middle">27</text>
+<line x1="1162" y1="16" x2="1162" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="1179.0" y="12" font-size="9" fill="#808080" text-anchor="middle">28</text>
+<line x1="1196" y1="16" x2="1196" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="1213.0" y="12" font-size="9" fill="#808080" text-anchor="middle">29</text>
+<line x1="1230" y1="16" x2="1230" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="1247.0" y="12" font-size="9" fill="#808080" text-anchor="middle">30</text>
+<line x1="1264" y1="16" x2="1264" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="1281.0" y="12" font-size="9" fill="#808080" text-anchor="middle">31</text>
+<line x1="1298" y1="16" x2="1298" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="1315.0" y="12" font-size="9" fill="#808080" text-anchor="middle">32</text>
+<line x1="1332" y1="16" x2="1332" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="1349.0" y="12" font-size="9" fill="#808080" text-anchor="middle">33</text>
+<line x1="1366" y1="16" x2="1366" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="202" y="41.0" font-size="10.5" text-anchor="end" fill="#000">clk</text>
+<path d="M210,44 L210,27 L227.0,27 L227.0,44 L244,44 M244,44 L244,27 L261.0,27 L261.0,44 L278,44 M278,44 L278,27 L295.0,27 L295.0,44 L312,44 M312,44 L312,27 L329.0,27 L329.0,44 L346,44 M346,44 L346,27 L363.0,27 L363.0,44 L380,44 M380,44 L380,27 L397.0,27 L397.0,44 L414,44 M414,44 L414,27 L431.0,27 L431.0,44 L448,44 M448,44 L448,27 L465.0,27 L465.0,44 L482,44 M482,44 L482,27 L499.0,27 L499.0,44 L516,44 M516,44 L516,27 L533.0,27 L533.0,44 L550,44 M550,44 L550,27 L567.0,27 L567.0,44 L584,44 M584,44 L584,27 L601.0,27 L601.0,44 L618,44 M618,44 L618,27 L635.0,27 L635.0,44 L652,44 M652,44 L652,27 L669.0,27 L669.0,44 L686,44 M686,44 L686,27 L703.0,27 L703.0,44 L720,44 M720,44 L720,27 L737.0,27 L737.0,44 L754,44 M754,44 L754,27 L771.0,27 L771.0,44 L788,44 M788,44 L788,27 L805.0,27 L805.0,44 L822,44 M822,44 L822,27 L839.0,27 L839.0,44 L856,44 M856,44 L856,27 L873.0,27 L873.0,44 L890,44 M890,44 L890,27 L907.0,27 L907.0,44 L924,44 M924,44 L924,27 L941.0,27 L941.0,44 L958,44 M958,44 L958,27 L975.0,27 L975.0,44 L992,44 M992,44 L992,27 L1009.0,27 L1009.0,44 L1026,44 M1026,44 L1026,27 L1043.0,27 L1043.0,44 L1060,44 M1060,44 L1060,27 L1077.0,27 L1077.0,44 L1094,44 M1094,44 L1094,27 L1111.0,27 L1111.0,44 L1128,44 M1128,44 L1128,27 L1145.0,27 L1145.0,44 L1162,44 M1162,44 L1162,27 L1179.0,27 L1179.0,44 L1196,44 M1196,44 L1196,27 L1213.0,27 L1213.0,44 L1230,44 M1230,44 L1230,27 L1247.0,27 L1247.0,44 L1264,44 M1264,44 L1264,27 L1281.0,27 L1281.0,44 L1298,44 M1298,44 L1298,27 L1315.0,27 L1315.0,44 L1332,44 M1332,44 L1332,27 L1349.0,27 L1349.0,44 L1366,44" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="71.0" font-size="10.5" text-anchor="end" fill="#000">downstream_broken</text>
+<path d="M210,57 L244,57 L278,57 L312,57 L346,57 L380,57 L414,57 L448,57 L482,57 L516,57 L550,57 L584,57 L618,57 L652,57 L652,74 L686,74 L720,74 L754,74 L788,74 L822,74 L856,74 L890,74 L924,74 L958,74 L992,74 L1026,74 L1060,74 L1094,74 L1128,74 L1162,74 L1196,74 L1230,74 L1264,74 L1298,74 L1332,74 L1366,74" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="101.0" font-size="10.5" text-anchor="end" fill="#000">rd_stuck</text>
+<path d="M210,87 L244,87 L244,104 L278,104 L312,104 L346,104 L380,104 L414,104 L448,104 L482,104 L516,104 L550,104 L584,104 L618,104 L652,104 L686,104 L720,104 L754,104 L788,104 L822,104 L856,104 L890,104 L924,104 L958,104 L992,104 L1026,104 L1060,104 L1094,104 L1128,104 L1162,104 L1196,104 L1230,104 L1264,104 L1298,104 L1332,104 L1366,104" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="131.0" font-size="10.5" text-anchor="end" fill="#000">m0_read</text>
+<path d="M210,117 L244,117 L244,134 L278,134 L312,134 L346,134 L380,134 L414,134 L448,134 L482,134 L516,134 L550,134 L584,134 L618,134 L652,134 L686,134 L720,134 L754,134 L788,134 L822,134 L856,134 L890,134 L924,134 L958,134 L992,134 L1026,134 L1060,134 L1094,134 L1128,134 L1162,134 L1196,134 L1230,134 L1264,134 L1298,134 L1332,134 L1366,134" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="161.0" font-size="10.5" text-anchor="end" fill="#000">periph reset (yours)</text>
+<path d="M210,147 L244,147 L278,147 L312,147 L346,147 L346,164 L380,164 L414,164 L448,164 L482,164 L516,164 L550,164 L584,164 L618,164 L652,164 L686,164 L686,147 L720,147 L754,147 L788,147 L822,147 L856,147 L890,147 L924,147 L958,147 L992,147 L1026,147 L1060,147 L1094,147 L1128,147 L1162,147 L1196,147 L1230,147 L1264,147 L1298,147 L1332,147 L1366,147" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="191.0" font-size="10.5" text-anchor="end" fill="#000">csr_write</text>
+<path d="M210,194 L244,194 L244,177 L278,177 L278,194 L312,194 L346,194 L380,194 L414,194 L448,194 L482,194 L516,194 L550,194 L584,194 L584,177 L618,177 L618,194 L652,194 L686,194 L720,194 L754,194 L788,194 L822,194 L856,194 L890,194 L924,194 L958,194 L992,194 L1026,194 L1060,194 L1094,194 L1128,194 L1162,194 L1196,194 L1230,194 L1264,194 L1298,194 L1332,194 L1366,194" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="221.0" font-size="10.5" text-anchor="end" fill="#000">csr_address</text>
+<path d="M210,215.5 L214,207 L580,207 L584,215.5 L580,224 L214,224 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="397.0" y="219.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">0x01</text>
+<path d="M584,215.5 L588,207 L1362,207 L1366,215.5 L1362,224 L588,224 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="975.0" y="219.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">0x07</text>
+<text x="202" y="251.0" font-size="10.5" text-anchor="end" fill="#000">unblock</text>
+<path d="M210,254 L244,254 L278,254 L312,254 L346,254 L380,254 L414,254 L448,254 L482,254 L516,254 L550,254 L584,254 L618,254 L618,237 L652,237 L652,254 L686,254 L720,254 L754,254 L788,254 L822,254 L856,254 L890,254 L924,254 L958,254 L992,254 L1026,254 L1060,254 L1094,254 L1128,254 L1162,254 L1196,254 L1230,254 L1264,254 L1298,254 L1332,254 L1366,254" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="281.0" font-size="10.5" text-anchor="end" fill="#000">irq</text>
+<path d="M210,267 L244,267 L278,267 L278,284 L312,284 L346,284 L380,284 L414,284 L448,284 L482,284 L516,284 L550,284 L584,284 L618,284 L652,284 L686,284 L720,284 L754,284 L788,284 L822,284 L856,284 L890,284 L924,284 L958,284 L992,284 L1026,284 L1060,284 L1094,284 L1128,284 L1162,284 L1196,284 L1230,284 L1264,284 L1298,284 L1332,284 L1366,284" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="311.0" font-size="10.5" text-anchor="end" fill="#000">m0_write</text>
+<path d="M210,314 L244,314 L278,314 L312,314 L346,314 L380,314 L414,314 L448,314 L482,314 L516,314 L550,314 L584,314 L618,314 L652,314 L686,314 L720,314 L754,314 L788,314 L822,314 L856,314 L856,297 L890,297 L924,297 L924,314 L958,314 L992,314 L1026,314 L1060,314 L1094,314 L1128,314 L1162,314 L1196,314 L1230,314 L1264,314 L1298,314 L1332,314 L1366,314" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="10" y="342" font-size="10" fill="#404040">Word 0x01 (byte 0x04) acknowledges the fault and irq drops. The peripheral reset is driven by the system, not by the core.</text>
+<text x="10" y="358" font-size="10" fill="#404040">Word 0x07 (byte 0x1C) pulses unblock WHILE THE PERIPHERAL IS STILL IN RESET. downstream_broken and rd_stuck clear together, and the held m0_read is withdrawn where the peripheral cannot observe it.</text>
+<text x="10" y="374" font-size="10" fill="#404040">Doing this after releasing the reset would let the peripheral handshake the held command first - latching a transaction already reported as failed.</text>
+<text x="10" y="390" font-size="10" fill="#404040">The write burst at the end shows forwarding has reopened.</text>
+</svg>

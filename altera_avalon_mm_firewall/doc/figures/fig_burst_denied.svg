@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="836" height="396" viewBox="0 0 836 396" font-family="Liberation Sans, DejaVu Sans, sans-serif">
+<rect width="836" height="396" fill="white"/>
+<rect x="210" y="52" width="476" height="30" fill="#F4F7FB"/>
+<rect x="210" y="112" width="476" height="30" fill="#F4F7FB"/>
+<rect x="210" y="172" width="476" height="30" fill="#F4F7FB"/>
+<rect x="210" y="232" width="476" height="30" fill="#F4F7FB"/>
+<rect x="210" y="292" width="476" height="30" fill="#F4F7FB"/>
+<line x1="210" y1="16" x2="210" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="227.0" y="12" font-size="9" fill="#808080" text-anchor="middle">0</text>
+<line x1="244" y1="16" x2="244" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="261.0" y="12" font-size="9" fill="#808080" text-anchor="middle">1</text>
+<line x1="278" y1="16" x2="278" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="295.0" y="12" font-size="9" fill="#808080" text-anchor="middle">2</text>
+<line x1="312" y1="16" x2="312" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="329.0" y="12" font-size="9" fill="#808080" text-anchor="middle">3</text>
+<line x1="346" y1="16" x2="346" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="363.0" y="12" font-size="9" fill="#808080" text-anchor="middle">4</text>
+<line x1="380" y1="16" x2="380" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="397.0" y="12" font-size="9" fill="#808080" text-anchor="middle">5</text>
+<line x1="414" y1="16" x2="414" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="431.0" y="12" font-size="9" fill="#808080" text-anchor="middle">6</text>
+<line x1="448" y1="16" x2="448" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="465.0" y="12" font-size="9" fill="#808080" text-anchor="middle">7</text>
+<line x1="482" y1="16" x2="482" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="499.0" y="12" font-size="9" fill="#808080" text-anchor="middle">8</text>
+<line x1="516" y1="16" x2="516" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="533.0" y="12" font-size="9" fill="#808080" text-anchor="middle">9</text>
+<line x1="550" y1="16" x2="550" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="567.0" y="12" font-size="9" fill="#808080" text-anchor="middle">10</text>
+<line x1="584" y1="16" x2="584" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="601.0" y="12" font-size="9" fill="#808080" text-anchor="middle">11</text>
+<line x1="618" y1="16" x2="618" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="635.0" y="12" font-size="9" fill="#808080" text-anchor="middle">12</text>
+<line x1="652" y1="16" x2="652" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="669.0" y="12" font-size="9" fill="#808080" text-anchor="middle">13</text>
+<line x1="686" y1="16" x2="686" y2="322" stroke="#C9D3E4" stroke-width="1"/>
+<text x="202" y="41.0" font-size="10.5" text-anchor="end" fill="#000">clk</text>
+<path d="M210,44 L210,27 L227.0,27 L227.0,44 L244,44 M244,44 L244,27 L261.0,27 L261.0,44 L278,44 M278,44 L278,27 L295.0,27 L295.0,44 L312,44 M312,44 L312,27 L329.0,27 L329.0,44 L346,44 M346,44 L346,27 L363.0,27 L363.0,44 L380,44 M380,44 L380,27 L397.0,27 L397.0,44 L414,44 M414,44 L414,27 L431.0,27 L431.0,44 L448,44 M448,44 L448,27 L465.0,27 L465.0,44 L482,44 M482,44 L482,27 L499.0,27 L499.0,44 L516,44 M516,44 L516,27 L533.0,27 L533.0,44 L550,44 M550,44 L550,27 L567.0,27 L567.0,44 L584,44 M584,44 L584,27 L601.0,27 L601.0,44 L618,44 M618,44 L618,27 L635.0,27 L635.0,44 L652,44 M652,44 L652,27 L669.0,27 L669.0,44 L686,44" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="71.0" font-size="10.5" text-anchor="end" fill="#000">s0_read</text>
+<path d="M210,74 L244,74 L244,57 L278,57 L278,74 L312,74 L346,74 L380,74 L414,74 L448,74 L482,74 L516,74 L550,74 L584,74 L618,74 L652,74 L686,74" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="101.0" font-size="10.5" text-anchor="end" fill="#000">s0_burstcount</text>
+<path d="M210,95.5 L214,87 L682,87 L686,95.5 L682,104 L214,104 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="448.0" y="99.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">4</text>
+<text x="202" y="131.0" font-size="10.5" text-anchor="end" fill="#000">s0_waitrequest</text>
+<path d="M210,134 L244,134 L278,134 L312,134 L346,134 L380,134 L414,134 L448,134 L482,134 L516,134 L550,134 L584,134 L618,134 L652,134 L686,134" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="161.0" font-size="10.5" text-anchor="end" fill="#000">m0_read</text>
+<path d="M210,164 L244,164 L278,164 L312,164 L346,164 L380,164 L414,164 L448,164 L482,164 L516,164 L550,164 L584,164 L618,164 L652,164 L686,164" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="191.0" font-size="10.5" text-anchor="end" fill="#000">rd_deny_beats</text>
+<path d="M210,185.5 L214,177 L274,177 L278,185.5 L274,194 L214,194 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="244.0" y="189.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">0</text>
+<path d="M278,185.5 L282,177 L308,177 L312,185.5 L308,194 L282,194 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="295.0" y="189.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">4</text>
+<path d="M312,185.5 L316,177 L342,177 L346,185.5 L342,194 L316,194 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="329.0" y="189.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">3</text>
+<path d="M346,185.5 L350,177 L376,177 L380,185.5 L376,194 L350,194 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="363.0" y="189.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">2</text>
+<path d="M380,185.5 L384,177 L410,177 L414,185.5 L410,194 L384,194 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="397.0" y="189.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">1</text>
+<path d="M414,185.5 L418,177 L682,177 L686,185.5 L682,194 L418,194 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="550.0" y="189.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">0</text>
+<text x="202" y="221.0" font-size="10.5" text-anchor="end" fill="#000">s0_readdatavalid</text>
+<path d="M210,224 L244,224 L278,224 L278,207 L312,207 L346,207 L380,207 L414,207 L414,224 L448,224 L482,224 L516,224 L550,224 L584,224 L618,224 L652,224 L686,224" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="202" y="251.0" font-size="10.5" text-anchor="end" fill="#000">s0_readdata</text>
+<path d="M210,245.5 L214,237 L682,237 L686,245.5 L682,254 L214,254 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="448.0" y="249.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">0x00000000</text>
+<text x="202" y="281.0" font-size="10.5" text-anchor="end" fill="#000">s0_response</text>
+<path d="M210,275.5 L214,267 L274,267 L278,275.5 L274,284 L214,284 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="244.0" y="279.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">OKAY</text>
+<path d="M278,275.5 L282,267 L410,267 L414,275.5 L410,284 L282,284 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="346.0" y="279.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">SLVERR</text>
+<path d="M414,275.5 L418,267 L682,267 L686,275.5 L682,284 L418,284 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="550.0" y="279.5" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">OKAY</text>
+<text x="202" y="311.0" font-size="10.5" text-anchor="end" fill="#000">irq</text>
+<path d="M210,314 L244,314 L278,314 L312,314 L312,297 L346,297 L380,297 L414,297 L448,297 L482,297 L516,297 L550,297 L584,297 L618,297 L652,297 L686,297" fill="none" stroke="#1F3864" stroke-width="1.6"/>
+<text x="10" y="342" font-size="10" fill="#404040">A 4-beat read burst into a write-only window. m0_read never asserts - the protected peripheral is not touched at all.</text>
+<text x="10" y="358" font-size="10" fill="#404040">The command is ACCEPTED immediately (waitrequest stays low) rather than stalled: stalling it would move the hang from the peripheral into the firewall.</text>
+<text x="10" y="374" font-size="10" fill="#404040">Avalon-MM has no way to refuse, so the core owes the master four beats and synthesises them itself. rd_deny_beats is that debt counting down. Data is driven to zero, not left stale.</text>
+</svg>
