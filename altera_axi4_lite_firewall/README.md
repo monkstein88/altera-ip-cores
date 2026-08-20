@@ -18,6 +18,8 @@ both a Questa flow with coverage collection and a licence-free Verilator flow.
 | [User guide (Markdown)](doc/axi4_lite_firewall_user_guide.md) | Same document, readable in the browser |
 | [Block diagrams (PDF)](doc/axi4_lite_firewall_block_diagrams.pdf) | Architecture companion: system context, internal architecture, FSMs, register map |
 | [Block diagrams (Markdown)](doc/axi4_lite_firewall_block_diagrams.md) | Same document, readable in the browser |
+| [DE10-Lite RTL demo](example/de10_lite_rtl/README.md) | Self-checking hardware demonstration: 16 scenarios, no CPU or software. **Verified on a physical board.** Where this core's synthesis and Fmax numbers come from |
+| [DE10-Lite Nios II demo](example/de10_lite_nios/README.md) | The same core driven by C on a Nios II/f at 100 MHz, inside a generated Platform Designer system. **33/33 checks pass on hardware** |
 | This README | Design rationale and the reasoning behind the decisions — the parts a user guide has no room for |
 
 ---
@@ -76,6 +78,13 @@ altera_axi4_lite_firewall/
 │   ├── questa/run_sim.tcl        Compile + run + coverage (incl. assertions)
 │   ├── verilator/run_sim.sh      Licence-free regression (assertions, no coverage)
 │   └── verilator/slangcheck.py   Strict LRM elaboration gate (see Toolchain)
+├── example/                      Two DE10-Lite (MAX 10) demonstrations, both
+│   │                             verified on physical hardware
+│   ├── common/                   The protected peripheral, shared by both
+│   ├── de10_lite_rtl/            No CPU: a hardware sequencer runs 16 self-
+│   │                             checking scenarios. 50 MHz
+│   └── de10_lite_nios/           Nios II/f at 100 MHz in a Platform Designer
+│                                 system, with the v2.0 C driver. 33 checks
 ├── verification/                 Standalone benches, outside the main suite
 │   ├── orphan_response_tb.sv     Measures the cost of skipping the peripheral
 │   │                             reset during recovery - see Timeout recovery
@@ -303,12 +312,20 @@ unambiguously safe; stuck means reset anyway and let `UNBLOCK` discard what is
 owed. `WR_CMD_STUCK`/`RD_CMD_STUCK` tell you the other case — a command the
 peripheral never even accepted, which only `UNBLOCK` can clear.
 
-> **Step 4 is not optional.** `UNBLOCK` is what withdraws the stuck
-> `m_axi_*VALID`. If the peripheral has not been reset, that is a protocol
+> **Step 4 is not optional, and it must still be in force during step 5.**
+> `UNBLOCK` is what withdraws the stuck `m_axi_*VALID`. If the peripheral has not been reset, that is a protocol
 > violation on a live bus, and the peripheral may additionally have latched a
 > transaction this core already reported to the master as failed. Measured:
 > following the sequence, 0 of 25 tested timing offsets mis-attribute a stale
 > response; skipping the reset, 1 of 25 does.
+>
+> Hold the peripheral in reset *across* the `UNBLOCK` write rather than
+> pulsing it beforehand. If the reset is released first, the orphaned command
+> is still asserted and the freshly-reset peripheral will accept it — not
+> occasionally, but every time. The [DE10-Lite example](example/de10_lite_rtl/README.md)
+> reproduces both orderings as adjacent scenarios (`b` and `C`), and
+> [its driver](example/de10_lite_nios/software/axi4_lite_firewall.c) implements the
+> safe one.
 
 A transaction arriving while blocked is **rejected with SLVERR**, not stalled.
 Up to v1.2 the reset pulse gave a bounded window in which arrivals could be
@@ -352,8 +369,8 @@ use a burst-capable AXI4 variant instead (see *Roadmap*).
 
 ### Test suite — 103/103 passing
 
-`tb/axi_firewall_tb.sv` is self-checking and needs no Quartus licence; it runs
-under Questa, Verilator 5.x (`--timing --assert`), and Icarus Verilog. The SVA
+`tb/axi_firewall_tb.sv` is self-checking and runs under Questa,
+Verilator 5.x (`--timing --assert`), and Icarus Verilog. The SVA
 bind is wrapped in `` `ifndef ICARUS ``, so the Icarus command below works
 unmodified.
 
@@ -731,9 +748,10 @@ void firewall_recover(void)
 | Control-port single-outstanding backpressure | **Measured** — regression test fails on the pre-v1.2 RTL and passes on v1.2 |
 | Cost of skipping the peripheral reset (0/25 vs 1/25) | **Measured** — `verification/orphan_response_tb.sv`, both parameterisations |
 | Code coverage figures | **Not quoted** — regenerate with the Questa flow. Toggle and condition coverage in particular are far from 100%, and a single number here would rot |
-| Synthesis results (LE/register count, Fmax) | **Not measured.** The combinational rule lookup scales with `NUM_RULES` and is the likeliest critical path; if it limits Fmax, registering that lookup with an extra pipeline stage is the standard fix |
-| Behaviour inside a real Platform Designer system | **Not verified end to end.** The testbench models a well-behaved AXI4-Lite slave, not Platform Designer's generated interconnect |
-| `hw.tcl` import into a specific Quartus release | **Not verified.** See *Integration*, step 2 |
+| Synthesis results (LE/register count, Fmax) | **Measured at `NUM_RULES = 8`** by the [DE10-Lite example](example/de10_lite_rtl/README.md): 1,869 LEs and 768 registers for `axi_firewall_top`, and 59.0 MHz Fmax on a MAX 10 `10M50DAF484C7G` (`C7`, slow 1200 mV 85 °C). The critical path is `captured_awaddr → wr_timeout_cnt` — the combinational rule lookup, as predicted below. **Fmax as a function of `NUM_RULES` is still unmeasured**, as is any other device family |
+| Behaviour inside a real Platform Designer system | **Verified.** The [Nios II example](example/de10_lite_nios/README.md) runs the core behind generated Qsys interconnect and an Avalon-to-AXI bridge, on hardware |
+| `hw.tcl` import into a specific Quartus release | **Verified for Quartus 18.1.1 Standard.** All six interfaces and five parameters are recognised by Platform Designer |
+| Behaviour on physical hardware | **Verified on a Terasic DE10-Lite** (MAX 10 `10M50DAF484C7G`): 16/16 scenarios in the RTL example, 33/33 checks in the Nios II example |
 
 ## Changelog
 
@@ -813,8 +831,13 @@ void firewall_recover(void)
   would make the bit mean what a driver naturally assumes. The tracking
   registers already exist; this is a contained change and the most valuable
   one for anyone writing against this core.
-- Synthesis numbers (LE/register count, Fmax vs `NUM_RULES`) — currently the
-  largest unmeasured item.
+- **Registering the rule lookup.** Now measured rather than suspected: at
+  `NUM_RULES = 8` on a MAX 10 `C7` the critical path is
+  `captured_awaddr → wr_timeout_cnt`, and Fmax is 59.0 MHz — about 18% of
+  margin at 50 MHz, and less as the rule table grows. An extra pipeline stage
+  on that lookup is the standard fix, at the cost of one cycle of latency.
+  What is still unmeasured is the shape of the curve: Fmax as a function of
+  `NUM_RULES`, and on other device families.
 - `AWPROT`/`ARPROT`-based filtering (privileged / secure / instruction-vs-data).
   Both are already captured and forwarded; a per-rule qualifier would be cheap.
 - Separate fault-address latches per fault type instead of one shared latch.

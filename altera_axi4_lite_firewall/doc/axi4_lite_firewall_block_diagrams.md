@@ -82,14 +82,21 @@ ports may be driven by the same master.
 ## 1.3 Recovery is a software sequence
 
 ```
-ack the fault  →  poll the busy bits (bounded)  →  RESET THE PERIPHERAL
-               →  write RECOVERY.UNBLOCK
+ack the fault  →  poll the busy bits (bounded)  →  ASSERT THE PERIPHERAL RESET
+               →  write RECOVERY.UNBLOCK  →  release the reset
 ```
 
 > **Caution:** `UNBLOCK` is what withdraws a stuck `VALID`. Skipping the reset
 > makes that a protocol violation on a live bus: measured, 1 of 25 timing
 > offsets then mis-attributes a stale response, against 0 of 25 when the
 > sequence is followed.
+
+> **Caution:** The reset is a state held across the `UNBLOCK` write, not a
+> pulse fired before it. Until `UNBLOCK` retracts it, the command abandoned by
+> the timeout is still asserted on `m_axi`; a peripheral released from reset
+> before that point accepts it and commits a transaction the master was
+> already told had failed. That failure is deterministic, not timing
+> dependent.
 
 Version 2.0 removed the `m_axi_resetn` output the core used to drive, so
 resetting the protected peripheral is now the integrator's job. It must be
@@ -153,9 +160,11 @@ EVAL is where policy is decided, in strict priority order:
 exposes two independent purely combinational lookup ports so both datapaths get
 an answer in the same cycle without contending.
 
-The lookup is a priority chain over `NUM_RULES` entries. It is the likeliest
-critical path, and the standard fix if it limits f<sub>MAX</sub> is to register
-it with an extra pipeline stage.
+The lookup is a priority chain over `NUM_RULES` entries. It is the critical
+path — measured, not merely suspected: on MAX 10 at `NUM_RULES` = 8 the worst
+path runs `captured_awaddr` → `wr_timeout_cnt`, and f<sub>MAX</sub> is
+59.0 MHz. The standard fix if it limits f<sub>MAX</sub> in your system is to
+register the lookup with an extra pipeline stage.
 
 ## 2.2 Timeout and recovery
 

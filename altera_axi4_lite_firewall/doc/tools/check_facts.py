@@ -40,7 +40,11 @@ COV = _load(f"{ROOT}/simulation/questa/coverage_report.txt")
 LOG = _load(f"{ROOT}/simulation/questa/run.log")
 HAVE_RUN = COV is not None and LOG is not None
 
-bad, ok, skipped = [], 0, 0
+bad, ok = [], 0
+# One human-readable reason per skipped group. This used to be a bare
+# counter with the reason hardcoded in the summary, which meant a second
+# skippable group reported the first one's explanation.
+skips = []
 def chk(cond, msg):
     global ok
     if cond: ok += 1
@@ -76,7 +80,12 @@ want = ["23'b0", "dstat_rd_cmd_stuck", "dstat_wr_cmd_stuck", "dstat_rd_resp_busy
         "dstat_wr_resp_busy", "dstat_blocked", "isolate_effective",
         "reg_timeout_error", "reg_perm_violation", "reg_addr_violation"]
 chk(fields == want, f"STATUS read mux changed: {fields}")
-status_tbl = UG.split("**Table 19. STATUS**")[1].split("**Table 20")[0]
+# Located by caption text, not by number. Inserting a table earlier in the
+# document renumbers every later one, and this used to fail with an
+# IndexError when that happened - which reads like a broken checker rather
+# than like "the guide changed".
+status_tbl = re.split(r"\*\*Table \d+\. STATUS\*\*", UG)[1]
+status_tbl = re.split(r"\*\*Table \d+\.", status_tbl)[0]
 ug_status = dict((int(b), n) for b, n in
                  re.findall(r"\|\s*(\d)\s*\|\s*`(\w+)`\s*\|", status_tbl))
 for bit, name in [(8, "RD_CMD_STUCK"), (7, "WR_CMD_STUCK"), (6, "RD_RESP_BUSY"),
@@ -170,7 +179,8 @@ chk("assign m_axi_rready = 1'b1;" in TOP, "m_axi_rready is no longer tied high")
 
 # ---- 14. verification numbers ------------------------------------------
 if not HAVE_RUN:
-    skipped = 1
+    skips.append("simulation-result checks - run simulation/questa/run_sim.tcl\n"
+                 "           to produce coverage_report.txt and run.log, then re-run this.")
 else:
   chk("103 passed, 0 failed" in LOG, "run.log does not report 103 passed")
   chk("LATENCY: write request -> BVALID = 6 cycles" in LOG, "write latency != 6")
@@ -246,6 +256,41 @@ for label, doc in (("user guide", UG), ("block diagrams", BD)):
     chk(n_tables == len(nums),
         f"{label}: {n_tables} tables but {len(nums)} captions - every table "
         f"must be captioned")
+
+# ---- 16b. PDF page counts match what the READMEs claim ------------------
+# The "40 pages" in two READMEs was wrong for two revisions before anyone
+# noticed, because nothing could see inside the PDF to check. pypdf is
+# optional - the checker must still run without it - so this group skips
+# loudly rather than silently passing, the same way the Questa group does.
+try:
+    from pypdf import PdfReader as _PdfReader
+except ImportError:
+    _PdfReader = None
+
+PAGE_CLAIMS = [
+    ("axi4_lite_firewall_user_guide.pdf",     f"{ROOT}/README.md",
+     f"{ROOT}/doc/tools/README.md"),
+    ("axi4_lite_firewall_block_diagrams.pdf", f"{ROOT}/README.md",
+     f"{ROOT}/doc/tools/README.md"),
+]
+if _PdfReader is None:
+    skips.append("PDF page-count checks - pip install pypdf to enable them.")
+else:
+    for pdf, *readmes in PAGE_CLAIMS:
+        path = f"{ROOT}/doc/{pdf}"
+        if not os.path.exists(path):
+            skips.append(f"page count for {pdf} - the PDF has not been built.")
+            continue
+        n = len(_PdfReader(path).pages)
+        for rm in readmes:
+            txt = open(rm).read()
+            # every "<number> pages" claim on a line that also names this PDF
+            stem = pdf[:-4]
+            claims = [int(c) for line in txt.splitlines() if stem in line
+                      for c in re.findall(r"(\d+) pages", line)]
+            chk(all(c == n for c in claims),
+                f"{os.path.basename(rm)}: claims {claims} pages for {pdf}, "
+                f"actual {n}")
 
 # ---- 17. internal anchors resolve --------------------------------------
 heads = set()
@@ -403,9 +448,8 @@ chk("if (s_axi_awvalid && s_axi_wvalid) begin" in TOP,
     "the write path no longer waits for both AWVALID and WVALID")
 
 print("\n".join("  FAIL: " + b for b in bad) or "  (no failures)")
-if skipped:
-    print("  SKIPPED: simulation-result checks - run simulation/questa/run_sim.tcl\n"
-          "           to produce coverage_report.txt and run.log, then re-run this.")
+for reason in skips:
+    print("  SKIPPED: " + reason)
 print(f"\n{ok} checks passed, {len(bad)} failed"
-      + (", 1 group skipped" if skipped else ""))
+      + (f", {len(skips)} group(s) skipped" if skips else ""))
 sys.exit(1 if bad else 0)

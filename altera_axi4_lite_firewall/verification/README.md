@@ -83,6 +83,13 @@ permission-denied read, **3** downstream timeout, **4** the recovery sequence.
 The bench is deliberately sequential and minimal so each window is a clean
 figure.
 
+> **The recovery scenario holds `periph_rst` asserted across the
+> `RECOVERY.UNBLOCK` write**, and releases it afterwards. This is not
+> incidental: the figure it renders is the user guide's illustration of the
+> recovery sequence, so if the bench pulsed the reset before unblocking, the
+> figure would depict exactly the mistake the guide warns against. It did,
+> until the DE10-Lite example design made the consequence concrete.
+
 ```bash
 cd verification
 verilator --binary --trace --top-module wave_capture_tb \

@@ -92,10 +92,16 @@ module wave_capture_tb;
     marker=2; wait_n(2); rd(32'h0000_2004);                wait_n(6);  // denied read (perm)
     marker=3; wait_n(2); hang_addr=1; wr(32'h0000_1008, 32'hDEAD0001); wait_n(6); // timeout
     marker=4; wait_n(2);                                    // recovery sequence
-      cw('h04, 32'h7);                                      // acknowledge
-      periph_rst=1; wait_n(16); periph_rst=0; hang_addr=0; wait_n(2);
-      cw('h1C, 32'h1);                                      // UNBLOCK
-      wait_n(4); wr(32'h0000_1004, 32'h600D600D); wait_n(6);
+      // The peripheral reset is HELD ACROSS the UNBLOCK write, not pulsed
+      // before it. Until UNBLOCK retracts it, the command left over from the
+      // timeout is still asserted on m_axi; a peripheral that is out of reset
+      // at that moment accepts it and commits a write the master was already
+      // told had failed. See the second Caution in user guide section 3.5.
+      cw('h04, 32'h7);                                      // step 2: acknowledge
+      periph_rst=1; hang_addr=0; wait_n(16);                // step 4: reset, and hold
+      cw('h1C, 32'h1);                                      // step 5: UNBLOCK, still in reset
+      periph_rst=0; wait_n(2);                              // step 6: release
+      wait_n(4); wr(32'h0000_1004, 32'h600D600D); wait_n(6);   // step 7: resume
     marker=9; wait_n(4);
     $finish;
   end

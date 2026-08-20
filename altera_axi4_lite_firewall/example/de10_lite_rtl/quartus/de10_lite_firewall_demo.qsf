@@ -1,0 +1,159 @@
+# =============================================================================
+# de10_lite_firewall_demo.qsf
+#
+# Quartus settings for the AXI4-Lite Firewall demo on the Terasic DE10-Lite
+# (Intel MAX 10, 10M50DAF484C7G, 484-pin FBGA, speed grade 7).
+#
+# PIN ASSIGNMENTS: taken from the DE10-Lite pin table. Board revisions have
+# been consistent here, but if your board came with a "golden top" project,
+# diff these against its .qsf before your first programming run - a wrong pin
+# on a 3.3 V bank is the one mistake in this file that can damage hardware.
+#
+# All demo I/O is on 3.3 V banks. STRATIX_DEVICE_IO_STANDARD is the assignment
+# that sets the device-wide default in Quartus 18.1 (DEFAULT_IO_STANDARD is not
+# a recognised name and makes the .qsf unreadable).
+# =============================================================================
+
+set_global_assignment -name FAMILY "MAX 10"
+set_global_assignment -name DEVICE 10M50DAF484C7G
+set_global_assignment -name TOP_LEVEL_ENTITY de10_lite_firewall_demo
+set_global_assignment -name ORIGINAL_QUARTUS_VERSION 18.1.1
+set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_files
+
+# MAX 10 configuration. SINGLE IMAGE WITH ERAM is the DE10-Lite default and is
+# what lets the design come up from internal flash at power-on rather than
+# needing a JTAG download every time.
+set_global_assignment -name DEVICE_INITIALIZATION_CLOCK OSC_CLK_1_125MHZ
+set_global_assignment -name INTERNAL_FLASH_UPDATE_MODE "SINGLE IMAGE WITH ERAM"
+set_global_assignment -name ENABLE_CONFIGURATION_PINS OFF
+set_global_assignment -name ENABLE_BOOT_SEL_PIN OFF
+set_global_assignment -name USE_CONFIGURATION_DEVICE OFF
+set_global_assignment -name CRC_ERROR_OPEN_DRAIN OFF
+
+# Unused pins tri-stated with a weak pull-up: the DE10-Lite has SDRAM, VGA,
+# an accelerometer and Arduino headers wired to pins this design never drives,
+# and leaving them driven would fight the on-board devices.
+set_global_assignment -name RESERVE_ALL_UNUSED_PINS "AS INPUT TRI-STATED WITH WEAK PULL-UP"
+set_global_assignment -name STRATIX_DEVICE_IO_STANDARD "3.3-V LVTTL"
+
+# ---------------------------------------------------------------------------
+# Source files. The two rtl/ files at the top are the IP core itself, taken
+# straight from the component directory - this demo does not carry a private
+# copy of the core, so it always builds what is actually in the repository.
+# ---------------------------------------------------------------------------
+set_global_assignment -name SYSTEMVERILOG_FILE ../../../rtl/axi_firewall_regs.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../../rtl/axi_firewall_top.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/demo_axi_lite_master.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../common/demo_target_slave.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/demo_sequencer.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/hex7seg.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/key_debounce.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/de10_lite_firewall_demo.sv
+set_global_assignment -name SDC_FILE de10_lite_firewall_demo.sdc
+
+# ---------------------------------------------------------------------------
+# In-System Sources and Probes.
+#
+# Exposes the sequencer's controls and its pass bitmap over JTAG, so the demo
+# can be regression-tested on real hardware from a script instead of by
+# reading the seven-segment displays. See run_on_board.sh.
+#
+# The RTL is guarded by this macro, so simulation never has to resolve the
+# altsource_probe megafunction. Remove the macro and the design is exactly
+# what it was: switches and buttons only.
+# ---------------------------------------------------------------------------
+set_global_assignment -name VERILOG_MACRO "ENABLE_ISSP=1"
+
+
+# ---- clock ---------------------------------------------------------
+set_location_assignment PIN_P11 -to "MAX10_CLK1_50"
+
+# ---- push buttons (active low) -------------------------------------
+set_location_assignment PIN_B8 -to "KEY[0]"
+set_location_assignment PIN_A7 -to "KEY[1]"
+
+# ---- slide switches ------------------------------------------------
+set_location_assignment PIN_C10 -to "SW[0]"
+set_location_assignment PIN_C11 -to "SW[1]"
+set_location_assignment PIN_D12 -to "SW[2]"
+set_location_assignment PIN_C12 -to "SW[3]"
+set_location_assignment PIN_A12 -to "SW[4]"
+set_location_assignment PIN_B12 -to "SW[5]"
+set_location_assignment PIN_A13 -to "SW[6]"
+set_location_assignment PIN_A14 -to "SW[7]"
+set_location_assignment PIN_B14 -to "SW[8]"
+set_location_assignment PIN_F15 -to "SW[9]"
+
+# ---- red LEDs ------------------------------------------------------
+set_location_assignment PIN_A8 -to "LEDR[0]"
+set_location_assignment PIN_A9 -to "LEDR[1]"
+set_location_assignment PIN_A10 -to "LEDR[2]"
+set_location_assignment PIN_B10 -to "LEDR[3]"
+set_location_assignment PIN_D13 -to "LEDR[4]"
+set_location_assignment PIN_C13 -to "LEDR[5]"
+set_location_assignment PIN_E14 -to "LEDR[6]"
+set_location_assignment PIN_D14 -to "LEDR[7]"
+set_location_assignment PIN_A11 -to "LEDR[8]"
+set_location_assignment PIN_B11 -to "LEDR[9]"
+
+# ---- seven-segment display 0 (active low, [7] = decimal point) -----
+set_location_assignment PIN_C14 -to "HEX0[0]"
+set_location_assignment PIN_E15 -to "HEX0[1]"
+set_location_assignment PIN_C15 -to "HEX0[2]"
+set_location_assignment PIN_C16 -to "HEX0[3]"
+set_location_assignment PIN_E16 -to "HEX0[4]"
+set_location_assignment PIN_D17 -to "HEX0[5]"
+set_location_assignment PIN_C17 -to "HEX0[6]"
+set_location_assignment PIN_D15 -to "HEX0[7]"
+
+# ---- seven-segment display 1 (active low, [7] = decimal point) -----
+set_location_assignment PIN_C18 -to "HEX1[0]"
+set_location_assignment PIN_D18 -to "HEX1[1]"
+set_location_assignment PIN_E18 -to "HEX1[2]"
+set_location_assignment PIN_B16 -to "HEX1[3]"
+set_location_assignment PIN_A17 -to "HEX1[4]"
+set_location_assignment PIN_A18 -to "HEX1[5]"
+set_location_assignment PIN_B17 -to "HEX1[6]"
+set_location_assignment PIN_A16 -to "HEX1[7]"
+
+# ---- seven-segment display 2 (active low, [7] = decimal point) -----
+set_location_assignment PIN_B20 -to "HEX2[0]"
+set_location_assignment PIN_A20 -to "HEX2[1]"
+set_location_assignment PIN_B19 -to "HEX2[2]"
+set_location_assignment PIN_A21 -to "HEX2[3]"
+set_location_assignment PIN_B21 -to "HEX2[4]"
+set_location_assignment PIN_C22 -to "HEX2[5]"
+set_location_assignment PIN_B22 -to "HEX2[6]"
+set_location_assignment PIN_A19 -to "HEX2[7]"
+
+# ---- seven-segment display 3 (active low, [7] = decimal point) -----
+set_location_assignment PIN_F21 -to "HEX3[0]"
+set_location_assignment PIN_E22 -to "HEX3[1]"
+set_location_assignment PIN_E21 -to "HEX3[2]"
+set_location_assignment PIN_C19 -to "HEX3[3]"
+set_location_assignment PIN_C20 -to "HEX3[4]"
+set_location_assignment PIN_D19 -to "HEX3[5]"
+set_location_assignment PIN_E17 -to "HEX3[6]"
+set_location_assignment PIN_D22 -to "HEX3[7]"
+
+# ---- seven-segment display 4 (active low, [7] = decimal point) -----
+set_location_assignment PIN_F18 -to "HEX4[0]"
+set_location_assignment PIN_E20 -to "HEX4[1]"
+set_location_assignment PIN_E19 -to "HEX4[2]"
+set_location_assignment PIN_J18 -to "HEX4[3]"
+set_location_assignment PIN_H19 -to "HEX4[4]"
+set_location_assignment PIN_F19 -to "HEX4[5]"
+set_location_assignment PIN_F20 -to "HEX4[6]"
+set_location_assignment PIN_F17 -to "HEX4[7]"
+
+# ---- seven-segment display 5 (active low, [7] = decimal point) -----
+set_location_assignment PIN_J20 -to "HEX5[0]"
+set_location_assignment PIN_K20 -to "HEX5[1]"
+set_location_assignment PIN_L18 -to "HEX5[2]"
+set_location_assignment PIN_N18 -to "HEX5[3]"
+set_location_assignment PIN_M20 -to "HEX5[4]"
+set_location_assignment PIN_N19 -to "HEX5[5]"
+set_location_assignment PIN_N20 -to "HEX5[6]"
+set_location_assignment PIN_L19 -to "HEX5[7]"
+
+set_global_assignment -name LAST_QUARTUS_VERSION "18.1.1 Standard Edition"

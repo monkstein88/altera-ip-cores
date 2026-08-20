@@ -4,7 +4,7 @@
 
 **Core:** `altera_axi4_lite_firewall`
 **Version:** 2.0
-**Document version:** 1.0
+**Document version:** 1.2
 **Last updated:** August 2026
 
 ---
@@ -107,27 +107,62 @@ installation.
 
 ## 1.3 Resource Utilization
 
-**Not characterised.** No synthesis has been run, so no logic element,
-register or memory figures are available.
+Characterised on Intel MAX 10 by the DE10-Lite example designs in
+`example/`, which instantiate the core inside complete, timing-closed systems
+that have been run on physical hardware.
+
+**Table 2. Resource Utilization**
+
+| Item | Logic elements | Dedicated registers |
+|---|---|---|
+| `axi_firewall_top`, `ADDR_WIDTH` = 32 | 1,869 | 768 |
+| of which `axi_firewall_regs` | 1,624 | 618 |
+| `axi_firewall_top`, `ADDR_WIDTH` = 12 | 1,391 | 544 |
+| of which `axi_firewall_regs` | 1,050 | 327 |
+
+Conditions: Intel MAX 10 `10M50DAF484C7G` (speed grade 7), Quartus Prime
+18.1.1 Standard Edition, `DATA_WIDTH` = 32, `CTRL_ADDR_WIDTH` = 12,
+`NUM_RULES` = 8, `TIMEOUT_WIDTH` = 20. The core infers no memory blocks,
+multipliers or PLLs.
+
+The two pairs of rows differ only in `ADDR_WIDTH`, and the core is 26 % smaller
+at 12 bits than at 32. That is direct evidence for the area analysis below: the
+rule table and its comparators dominate, and both scale with the address
+width.
+
+f<sub>MAX</sub> on the slow 1200 mV 85 &deg;C model is **59.0 MHz** at
+`ADDR_WIDTH` = 32 (in a system closed at 50 MHz, +3.052 ns of setup slack) and
+**112.57 MHz** at `ADDR_WIDTH` = 12 (closed at 100 MHz, +1.117 ns). The
+100 MHz result needs Quartus's High Performance Effort and physical synthesis;
+at default settings that design reaches 95.27 MHz and misses by 0.496 ns.
+
+The critical path lies inside the core and is the one predicted from the
+source: `captured_awaddr` to `wr_timeout_cnt`, which is the combinational rule
+lookup feeding the forward-or-reject decision that gates the timeout counter.
 
 The two structures that dominate area and timing are predictable from the
-source, and are recorded here so you know what to expect and what to measure:
+source, and both are now confirmed by measurement:
 
-* **The rule table** is `NUM_RULES × (2 × ADDR_WIDTH + 3)` registers. At the
-  default `NUM_RULES = 8` and `ADDR_WIDTH = 32` that is 536 registers.
+* **The rule table** is `NUM_RULES` &times; (2 &times; `ADDR_WIDTH` + 3)
+  registers. At the default `NUM_RULES` = 8 and `ADDR_WIDTH` = 32 that is 536
+  registers, which accounts for most of the 618 measured in
+  `axi_firewall_regs`; the remainder are the control, status, interrupt and
+  fault-capture registers.
 * **The rule lookup** is a purely combinational priority chain over
   `NUM_RULES` entries, duplicated for the read and write paths. Each entry is
-  two `ADDR_WIDTH`-wide magnitude comparisons. This is the expected critical
+  two `ADDR_WIDTH`-wide magnitude comparisons. This is the measured critical
   path and the term that scales with `NUM_RULES`.
 
-To obtain real figures, synthesise the core standalone with `quartus_map`,
-then run `quartus_sta` for f<sub>MAX</sub>, sweeping `NUM_RULES`. If the
-lookup limits f<sub>MAX</sub>, the standard remedy is to register the lookup
-result and accept one extra cycle of latency in the EVAL state.
+> **Note:** These are measurements at two address widths on one device and
+> speed grade, at a single value of `NUM_RULES`. f<sub>MAX</sub> as a function
+> of `NUM_RULES`, and behaviour on any other device family, remain
+> uncharacterised. If the lookup
+> limits f<sub>MAX</sub> in your system, the standard remedy is to register the
+> lookup result and accept one extra cycle of latency in the EVAL state.
 
 ## 1.4 Release Information
 
-**Table 2. Release Information**
+**Table 3. Release Information**
 
 | Item | Description |
 |---|---|
@@ -210,7 +245,7 @@ which is the protected peripheral's address decode.
 
 ## 2.3 Required Connections
 
-**Table 3. Connection Requirements**
+**Table 4. Connection Requirements**
 
 | Connection | Requirement | Consequence if omitted |
 |---|---|---|
@@ -263,7 +298,7 @@ vvp tb.out
 
 ## 2.5 Files Provided
 
-**Table 4. Files Provided**
+**Table 5. Files Provided**
 
 | File | Description |
 |---|---|
@@ -276,6 +311,7 @@ vvp tb.out
 | `simulation/questa/run_sim.tcl` | Questa flow with coverage |
 | `simulation/verilator/run_sim.sh` | Verilator flow |
 | `simulation/verilator/slangcheck.py` | Strict elaboration gate |
+| `example/de10_lite_rtl/` | DE10-Lite example design: sixteen self-checking scenarios in synthesisable RTL, a board-level testbench, a Quartus project, and a version 2.0 C driver. See its `README.md` |
 | `doc/` | Block diagrams and this user guide |
 
 ---
@@ -323,7 +359,7 @@ The verdict is applied in the EVAL state, in strict priority order:
    SLVERR.
 5. Otherwise, forward the transaction.
 
-**Table 5. Response Encoding**
+**Table 6. Response Encoding**
 
 | Condition | Response | Status bit set | Interrupt |
 |---|---|---|---|
@@ -403,16 +439,17 @@ Recovery is an explicit software sequence. It is modelled on the procedure
 AMD document for their AXI Firewall, which carries the same requirement to
 reset the monitored side before unblocking.
 
-**Table 6. Recovery Sequence**
+**Table 7. Recovery Sequence**
 
 | Step | Action | Why |
 |---|---|---|
 | 1 | Stop issuing transactions to `s_axi` | New transactions are rejected while blocked |
 | 2 | Write 1 to the sticky `STATUS` bits | Acknowledges the fault and releases the auto-isolate latch. **Required before step 5** — see below |
 | 3 | Poll `STATUS` until `WR_RESP_BUSY` and `RD_RESP_BUSY` clear — **with a bound** | Tells you no late response is still in flight |
-| 4 | **Reset the protected peripheral** (≥ 16 clocks) | Discards the peripheral's AXI state |
-| 5 | Write 1 to `RECOVERY.UNBLOCK` | Reopens forwarding and withdraws the stuck VALID |
-| 6 | Resume, retrying anything that failed | Transactions attempted while blocked returned SLVERR |
+| 4 | **Assert the protected peripheral's reset** and hold it (≥ 16 clocks) | Discards the peripheral's AXI state |
+| 5 | Write 1 to `RECOVERY.UNBLOCK`, **with the peripheral still held in reset** | Reopens forwarding and withdraws the stuck VALID. Holding reset means nothing downstream can latch the command as it is withdrawn — see below |
+| 6 | Release the peripheral's reset | The peripheral restarts with no knowledge of the abandoned transaction |
+| 7 | Resume, retrying anything that failed | Transactions attempted while blocked returned SLVERR |
 
 **Figure 6. Recovery Sequence — Acknowledge, Reset the Peripheral, UNBLOCK**
 
@@ -424,6 +461,21 @@ reset the monitored side before unblocking.
 > transaction the core already reported to the master as failed. Measured: 0
 > of 25 tested timing offsets mis-attribute a stale response when the sequence
 > is followed; 1 of 25 does when step 4 is skipped.
+
+> **Caution:** The reset must still be asserted when step 5 executes. Reset is
+> a held state across steps 4 to 6, not a pulse to be fired and forgotten
+> before unblocking.
+>
+> The reason is that the orphaned command is still on `m_axi` until `UNBLOCK`
+> retracts it. A peripheral that has been reset and *released* sees a
+> perfectly valid `AWVALID`/`ARVALID` waiting on the bus and accepts it,
+> committing a transaction the master was already told had failed. Unlike the
+> stale-response hazard above, which is timing-dependent and was measured at 1
+> offset in 25, this one is deterministic: it happens every time.
+>
+> Scenarios `b` and `C` of the DE10-Lite example design are this sequence with
+> the two orderings, and read back `0x00000000` and `0xCAFEF00D` respectively
+> from the protected peripheral.
 
 > **Caution:** Step 2 must precede step 5, and the order is load-bearing.
 > Forwarding is gated by *two* independent conditions — the blocked state and
@@ -522,7 +574,7 @@ programmed.
 
 ## 3.9 Latency
 
-**Table 7. Latency, Zero-Wait-State Peripheral**
+**Table 8. Latency, Zero-Wait-State Peripheral**
 
 | Operation | Cycles |
 |---|---|
@@ -543,7 +595,7 @@ transaction and does not amortise.
 All five parameters are compile-time. Nothing in the core is
 runtime-reconfigurable except the rule table and the control registers.
 
-**Table 8. Parameters**
+**Table 9. Parameters**
 
 | Parameter | Type | Default | Legal range | Description |
 |---|---|---|---|---|
@@ -564,7 +616,7 @@ The register file spans `0x40 + NUM_RULES × 16` bytes, so:
 CTRL_ADDR_WIDTH ≥ ceil(log2(0x40 + NUM_RULES × 16))
 ```
 
-**Table 9. Minimum `CTRL_ADDR_WIDTH`**
+**Table 10. Minimum `CTRL_ADDR_WIDTH`**
 
 | `NUM_RULES` | Table spans | Highest byte used | Minimum `CTRL_ADDR_WIDTH` |
 |---|---|---|---|
@@ -587,7 +639,7 @@ Choose the timeout to be comfortably longer than the protected peripheral's
 worst-case response, including any interconnect arbitration. `TIMEOUT_WIDTH`
 only has to be wide enough to express it.
 
-**Table 10. Maximum Timeout by Width**
+**Table 11. Maximum Timeout by Width**
 
 | `TIMEOUT_WIDTH` | Maximum count | At 100 MHz | At 50 MHz |
 |---|---|---|---|
@@ -610,7 +662,7 @@ only has to be wide enough to express it.
 
 The core has 60 ports across six Platform Designer interfaces.
 
-**Table 11. Interfaces**
+**Table 12. Interfaces**
 
 | Interface | Type | Role | Signals |
 |---|---|---|---|
@@ -623,7 +675,7 @@ The core has 60 ports across six Platform Designer interfaces.
 
 ## 5.1 Clock and Reset
 
-**Table 12. Clock and Reset Signals**
+**Table 13. Clock and Reset Signals**
 
 | Signal | Direction | Width | Description |
 |---|---|---|---|
@@ -634,7 +686,7 @@ The core has 60 ports across six Platform Designer interfaces.
 
 Connect to the bus master. Standard AXI4-Lite slave.
 
-**Table 13. `s_axi` Signals**
+**Table 14. `s_axi` Signals**
 
 | Signal | Direction | Width | Description |
 |---|---|---|---|
@@ -667,7 +719,7 @@ Connect to the bus master. Standard AXI4-Lite slave.
 Connect to the peripheral being protected. Signal names and widths mirror
 `s_axi` with directions reversed.
 
-**Table 14. `m_axi` Signals of Note**
+**Table 15. `m_axi` Signals of Note**
 
 | Signal | Direction | Width | Description |
 |---|---|---|---|
@@ -690,7 +742,7 @@ A separate AXI4-Lite slave carrying the register file. `WDATA` is always 32
 bits wide and `WSTRB` always 4 bits, independent of `DATA_WIDTH`; the
 addressable range is set by `CTRL_ADDR_WIDTH`.
 
-**Table 15. `s_axi_ctrl` Signals of Note**
+**Table 16. `s_axi_ctrl` Signals of Note**
 
 | Signal | Direction | Width | Description |
 |---|---|---|---|
@@ -702,7 +754,7 @@ addressable range is set by `CTRL_ADDR_WIDTH`.
 
 ## 5.5 `irq`
 
-**Table 16. `irq`**
+**Table 17. `irq`**
 
 | Signal | Direction | Width | Description |
 |---|---|---|---|
@@ -715,7 +767,7 @@ addressable range is set by `CTRL_ADDR_WIDTH`.
 All registers are 32 bits and word-aligned on `s_axi_ctrl`. Offsets are byte
 offsets from the base address assigned to `s_axi_ctrl`.
 
-**Table 17. Register Map**
+**Table 18. Register Map**
 
 | Offset | Name | Access | Reset | Description |
 |---|---|---|---|---|
@@ -738,7 +790,7 @@ offsets from the base address assigned to `s_axi_ctrl`.
 
 ## 6.1 CTRL (0x00)
 
-**Table 18. CTRL**
+**Table 19. CTRL**
 
 | Bit | Name | Access | Reset | Description |
 |---|---|---|---|---|
@@ -753,7 +805,7 @@ offsets from the base address assigned to `s_axi_ctrl`.
 
 ## 6.2 STATUS (0x04)
 
-**Table 19. STATUS**
+**Table 20. STATUS**
 
 | Bit | Name | Access | Reset | Description |
 |---|---|---|---|---|
@@ -779,7 +831,7 @@ write-1-to-clear; writing 0 to a bit leaves it unchanged.
 
 ## 6.3 IRQ_ENABLE (0x08)
 
-**Table 20. IRQ_ENABLE**
+**Table 21. IRQ_ENABLE**
 
 | Bit | Name | Access | Reset | Description |
 |---|---|---|---|---|
@@ -793,7 +845,7 @@ still set and still requires a W1C to clear.
 
 ## 6.4 TIMEOUT_VALUE (0x0C)
 
-**Table 21. TIMEOUT_VALUE**
+**Table 22. TIMEOUT_VALUE**
 
 | Bit | Name | Access | Reset | Description |
 |---|---|---|---|---|
@@ -806,7 +858,7 @@ time out immediately; the core does not reject the value.
 
 ## 6.5 FAULT_ADDR (0x10)
 
-**Table 22. FAULT_ADDR**
+**Table 23. FAULT_ADDR**
 
 | Bit | Name | Access | Reset | Description |
 |---|---|---|---|---|
@@ -818,7 +870,7 @@ it before clearing `STATUS` if you intend to log it.
 
 ## 6.6 FAULT_INFO (0x14)
 
-**Table 23. FAULT_INFO**
+**Table 24. FAULT_INFO**
 
 | Bit | Name | Access | Reset | Description |
 |---|---|---|---|---|
@@ -826,7 +878,7 @@ it before clearing `STATUS` if you intend to log it.
 | 3:1 | `FAULT_TYPE` | R | 0 | See table below |
 | 0 | `WAS_WRITE` | R | 0 | 1 = the faulting transaction was a write |
 
-**Table 24. FAULT_TYPE Encoding**
+**Table 25. FAULT_TYPE Encoding**
 
 | Value | Name | Meaning |
 |---|---|---|
@@ -839,7 +891,7 @@ Values 4–7 are not generated.
 
 ## 6.7 CORE_INFO (0x18)
 
-**Table 25. CORE_INFO**
+**Table 26. CORE_INFO**
 
 | Bit | Name | Access | Description |
 |---|---|---|---|
@@ -853,7 +905,7 @@ works across instances. Check `VERSION` before running the recovery sequence:
 
 ## 6.8 RECOVERY (0x1C)
 
-**Table 26. RECOVERY**
+**Table 27. RECOVERY**
 
 | Bit | Name | Access | Description |
 |---|---|---|---|
@@ -871,7 +923,7 @@ Reads return zero. Writing 0 does nothing. New in version 2.0.
 
 Each rule occupies a 16-byte slot at `0x40 + i × 0x10`.
 
-**Table 27. Rule Slot Layout**
+**Table 28. Rule Slot Layout**
 
 | Sub-offset | Name | Access | Reset | Description |
 |---|---|---|---|---|
@@ -880,7 +932,7 @@ Each rule occupies a 16-byte slot at `0x40 + i × 0x10`.
 | +0x8 | `RULE_PERM[i]` | R/W | 0 | Permissions, see below |
 | +0xC | reserved | — | — | Padding |
 
-**Table 28. RULE_PERM[i]**
+**Table 29. RULE_PERM[i]**
 
 | Bit | Name | Access | Reset | Description |
 |---|---|---|---|---|
@@ -1013,35 +1065,58 @@ and polls, which does not belong in interrupt context.
 
 This implements the sequence in [Section 3.5](#35-recovery-sequence).
 
+Note the shape of the reset interface: **two functions, not one.** A single
+`reset_peripheral()` that pulses and returns cannot express this sequence,
+because the reset has to still be asserted when `UNBLOCK` is written.
+
 ```c
-int fw_recover(void *base, void (*reset_peripheral)(void))
+int fw_recover(void *base,
+               void (*reset_assert)(void),    /* drive the peripheral's reset */
+               void (*reset_release)(void),   /* and release it               */
+               void (*delay_clocks)(unsigned))
 {
+    uint32_t st;
+
     /* Step 1 is the caller's: stop issuing transactions to the
        protected peripheral before calling this function. */
 
-    /* Step 2: acknowledge the fault and release the auto-isolate latch. */
+    /* Step 2: acknowledge the fault and release the auto-isolate latch.
+       This does NOT reopen the downstream - that is step 5. */
     IOWR_32DIRECT(base, FW_STATUS, FW_ST_FAULTS);
 
     /* Step 3: bounded poll. A peripheral that accepted a command and then
        died owes a response forever, so this MUST NOT be unbounded. On
        expiry, continue anyway - UNBLOCK discards what is still owed. */
     for (int spin = 0; spin < 1000; spin++) {
-        uint32_t st = IORD_32DIRECT(base, FW_STATUS);
+        st = IORD_32DIRECT(base, FW_STATUS);
         if (!(st & (FW_ST_WR_BUSY | FW_ST_RD_BUSY)))
             break;
     }
 
-    /* Step 4: reset the protected peripheral. Not optional. Hold for at
-       least 16 clocks so its AXI state machines fully re-initialise. */
-    reset_peripheral();
+    /* Step 4: assert the protected peripheral's reset and HOLD it. Not
+       optional. At least 16 clocks so its AXI state machines fully
+       re-initialise. */
+    reset_assert();
+    delay_clocks(16);
 
-    /* Step 5: reopen the downstream. */
+    /* Step 5: reopen the downstream, with the peripheral STILL IN RESET.
+       UNBLOCK is the point at which the core withdraws the VALID left over
+       from the timed-out command. Until then that command is still sitting
+       on m_axi, and a peripheral that is out of reset will accept it - see
+       the second Caution in Section 3.5. */
     IOWR_32DIRECT(base, FW_RECOVERY, 1);
 
-    /* Step 6: the caller retries anything that failed while blocked. */
+    /* Step 6: only now release the peripheral. */
+    reset_release();
+
+    /* Step 7: the caller retries anything that failed while blocked. */
     return (IORD_32DIRECT(base, FW_STATUS) & FW_ST_BLOCKED) ? -1 : 0;
 }
 ```
+
+> **Note:** A tested implementation of this function, with the reset hooks
+> parameterised and the ordering checked by host tests, is provided as
+> `example/de10_lite_nios/software/axi4_lite_firewall.c`.
 
 > **Caution:** The bound on step 3 is the important part. `WR_RESP_BUSY` and
 > `RD_RESP_BUSY` clear when the peripheral delivers what it owes, and a dead
@@ -1052,7 +1127,7 @@ int fw_recover(void *base, void (*reset_peripheral)(void))
 
 ## 7.5 Migrating from Version 1.x
 
-**Table 29. Version 1.x to 2.0 Changes**
+**Table 30. Version 1.x to 2.0 Changes**
 
 | Area | Version 1.x | Version 2.0 |
 |---|---|---|
@@ -1086,7 +1161,7 @@ precisely what has been established and what has not.
 
 Three front ends are used, because each catches things the others miss.
 
-**Table 30. Verification Tools**
+**Table 31. Verification Tools**
 
 | Tool | Version | Role | What it uniquely caught |
 |---|---|---|---|
@@ -1105,7 +1180,7 @@ rather than one.
 
 All figures below are from the version 2.0 sources.
 
-**Table 31. Verification Results**
+**Table 32. Verification Results**
 
 | Metric | Result |
 |---|---|
@@ -1120,7 +1195,7 @@ All figures below are from the version 2.0 sources.
 | slang errors | 0 |
 | Verilator lint findings, 9 configurations | 0 |
 
-**Table 32. Assertions**
+**Table 33. Assertions**
 
 | Assertion | Passes | Checks |
 |---|---|---|
@@ -1145,7 +1220,7 @@ highlighting. Two assertions in an earlier revision were exactly that, and
 the fix was adding a test that made the antecedent true, not editing the
 assertion.
 
-**Table 33. Cover Directives**
+**Table 34. Cover Directives**
 
 | Directive | Hits | What it proves the suite reaches |
 |---|---|---|
@@ -1156,7 +1231,7 @@ assertion.
 | `c_block_and_recover` | 5 | A full block-and-recover cycle |
 | `c_unblock_with_stuck_cmd` | 3 | `UNBLOCK` while a command is still stuck on `m_axi` |
 
-**Table 34. FSM Transition Coverage**
+**Table 35. FSM Transition Coverage**
 
 | Transition | Write FSM | Read FSM | Exercised by |
 |---|---|---|---|
@@ -1176,7 +1251,7 @@ of the recovery sequence. It runs a clean, permitted write, injects one late
 over 25 values. If the master ever sees `SLVERR` on a write the peripheral
 answered `OKAY`, a stale response was mis-attributed.
 
-**Table 35. Orphan-Response Results**
+**Table 36. Orphan-Response Results**
 
 | Recovery sequence | Offsets that mis-attribute |
 |---|---|
@@ -1185,25 +1260,82 @@ answered `OKAY`, a stale response was mis-attributed.
 
 This is why step 4 is stated as mandatory rather than recommended.
 
-## 8.4 What Has Not Been Verified
+## 8.4 Hardware Demonstration
+
+The example design in `example/de10_lite_rtl/` is a second, independent
+verification vehicle, and covers ground the testbench structurally cannot: it
+is the only place the core is driven by **synthesisable hardware** rather than
+by testbench tasks, through the same RTL that is programmed into an FPGA.
+
+A hardware sequencer programs the rule table over `s_axi_ctrl`, issues
+transactions at `s_axi`, injects faults into the protected peripheral, and
+checks every response against the register map in Section 6. Sixteen scenarios
+cover permitted and denied access in both directions, both violation types,
+both timeout shapes, isolation, the recovery sequence, bypass and interrupt
+masking.
+
+There are two example designs, and they answer different questions. The RTL
+one asks whether the core behaves; the Nios II one asks whether it
+*integrates*, by putting it behind generated Platform Designer interconnect, an
+Avalon-to-AXI bridge and a processor data cache.
+
+**Table 37. Hardware Demonstration Results**
+
+| Metric | RTL example | Nios II example |
+|---|---|---|
+| Driven by | a hardware sequencer | C on a Nios II/f |
+| Clock | 50 MHz | 100 MHz (PLL) |
+| `ADDR_WIDTH` | 32 | 12 |
+| **Passing on a physical DE10-Lite** | **16 / 16 scenarios** | **33 / 33 checks** |
+| Board-level checks in simulation | 80 / 80, Questa and Verilator | not applicable |
+| Quartus 18.1.1 compilation | 0 errors | 0 errors |
+| Timing closure | met, +3.052 ns | met, +1.117 ns |
+| Driver host tests | not applicable | 29 / 29 |
+
+Two results from that work are folded back into this document. The resource
+and f<sub>MAX</sub> figures in
+[Section 1.3](#13-resource-utilization) come from it. And the second Caution
+in [Section 3.5](#35-recovery-sequence) — that the peripheral's reset must
+still be asserted when `UNBLOCK` is written — was found by building it:
+scenarios `b` and `C` are the same recovery with the two orderings, and the
+wrong one deterministically commits a write the master was told had failed.
+
+Both were run on a Terasic DE10-Lite. The RTL example carries an In-System
+Sources and Probes instance so a script can drive it and read its pass bitmap
+back over JTAG; the Nios II example reports over its JTAG UART.
+
+> **Note:** Running on hardware exposed two defects that simulation had not,
+> and both were in the Nios II *test program* rather than in the core. An
+> interrupt handler that acknowledged faults was clearing the sticky `STATUS`
+> bits before the checking code could read them, and posted writes meant
+> `STATUS` could be sampled before the offending transaction had been
+> evaluated. Neither is reachable in a testbench, which has no interrupt
+> latency, no write posting and no cache. They are recorded here because they
+> are the failure modes a real driver will meet.
+
+## 8.5 What Has Not Been Verified
 
 Stated plainly, because the absence of a result is easy to mistake for a
 passing one.
 
-**Table 36. Not Verified**
+**Table 38. Not Verified**
 
 | Item | Status |
 |---|---|
-| Quartus Prime analysis of the `_hw.tcl` component | Never run. The component has not been imported into Platform Designer. |
-| Synthesis results (logic elements, registers) | Never run |
-| Timing closure, f<sub>MAX</sub> vs `NUM_RULES` | Never run |
-| Behaviour inside a generated Platform Designer interconnect | Never run |
-| Any specific device family | None characterised |
+| Quartus Prime analysis of the `_hw.tcl` component | **Verified for Quartus 18.1.1 Standard.** Platform Designer recognises all six interfaces and all five parameters, and the component generates and synthesises inside a real system |
+| Synthesis results (logic elements, registers) | **Measured** at `NUM_RULES` = 8 on MAX 10 — see [Section 1.3](#13-resource-utilization) |
+| Timing closure at 50 MHz on MAX 10 | **Met** — see [Section 1.3](#13-resource-utilization) |
+| f<sub>MAX</sub> vs `NUM_RULES` | Never swept. One data point only |
+| Behaviour inside a generated Platform Designer interconnect | **Verified** by the Nios II example, on hardware |
+| Device families other than MAX 10 | None characterised |
+| Behaviour on physical hardware | **Verified on a Terasic DE10-Lite** (`10M50DAF484C7G`), both examples |
 | Formal property proof | Not attempted; assertions are simulation-only |
 
 Everything in Sections 1 through 7 that describes core behaviour is backed by
-simulation. Everything about *building* the core into a real system is
-untested and should be treated as a first attempt.
+simulation, and the parts a demonstration can reach are additionally confirmed
+on silicon. What remains untested is breadth rather than depth: one device
+family, one speed grade, two address widths, one value of `NUM_RULES`, and no
+formal proof.
 
 ---
 
@@ -1245,7 +1377,7 @@ stability will not be caught here. This is the main functional difference from
 AMD's core, which is a protocol checker with no address-based access control.
 The two are complementary.
 
-**Table 37. Comparison with the AMD AXI Protocol Firewall**
+**Table 39. Comparison with the AMD AXI Protocol Firewall**
 
 | Capability | This core | AMD AXI Protocol Firewall |
 |---|---|---|
@@ -1284,7 +1416,7 @@ Simultaneous read and write faults both set their sticky `STATUS` bits
 correctly, but only one address and one type are captured — and the two are
 resolved by *different* rules:
 
-**Table 38. Fault Capture Resolution**
+**Table 40. Fault Capture Resolution**
 
 | Field | Resolved by |
 |---|---|
@@ -1313,13 +1445,15 @@ this for you.
 
 # 10. Document Revision History
 
-**Table 39. Document Revision History**
+**Table 41. Document Revision History**
 
 | Document version | Core version | Date | Changes |
 |---|---|---|---|
+| 1.2 | 2.0 | August 2026 | Recorded hardware verification on a Terasic DE10-Lite: both example designs run on a physical board (Section 8.4), the Platform Designer component flow works, and the core is now measured at a second `ADDR_WIDTH` (Section 1.3). Several rows moved out of "not verified". No RTL change. |
+| 1.1 | 2.0 | August 2026 | Added measured resource and f<sub>MAX</sub> figures (Section 1.3), which were previously uncharacterised. Corrected the recovery sequence: the protected peripheral's reset must remain asserted while `RECOVERY.UNBLOCK` is written, and the sequence is now seven steps rather than six (Sections 3.5 and 7.4). Added the hardware demonstration (Section 8.4) and updated what has not been verified. No RTL change. |
 | 1.0 | 2.0 | August 2026 | Initial release of this user guide |
 
-**Table 40. Core Revision History**
+**Table 42. Core Revision History**
 
 | Core version | `CORE_INFO` | Changes |
 |---|---|---|

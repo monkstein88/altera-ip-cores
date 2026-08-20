@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# =============================================================================
+# build.sh - build the whole Nios II/f firewall example, from scratch.
+#
+#   ./build.sh            everything: Qsys system, BSP, software, bitstream
+#   ./build.sh qsys       just regenerate the Platform Designer system
+#   ./build.sh sw         just the BSP and the application ELF
+#   ./build.sh fpga       just the Quartus compilation
+#   ./build.sh clean      remove every generated artifact
+#
+# Set QUARTUS_ROOT if Quartus is not at /opt/intelFPGA/18.1.
+#
+# Order matters and is not obvious: the BSP is generated FROM the .sopcinfo
+# that qsys-generate writes, so the software cannot be built before the
+# hardware. Changing the system clock in build_system.tcl and rebuilding only
+# the software leaves ALT_CPU_FREQ stale and every HAL delay wrong.
+# =============================================================================
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CORE="$(cd "$HERE/../.." && pwd)"
+COMMON="$(cd "$HERE/../common" && pwd)"
+
+QUARTUS_ROOT="${QUARTUS_ROOT:-/opt/intelFPGA/18.1}"
+export QUARTUS_ROOTDIR="$QUARTUS_ROOT/quartus"
+export SOPC_KIT_NIOS2="$QUARTUS_ROOT/nios2eds"
+export PATH="$SOPC_KIT_NIOS2/sdk2/bin:$SOPC_KIT_NIOS2/bin:$SOPC_KIT_NIOS2/bin/gnu/H-x86_64-pc-linux-gnu/bin:$QUARTUS_ROOTDIR/sopc_builder/bin:$QUARTUS_ROOTDIR/bin:$PATH"
+
+# The IP search path is how Platform Designer finds the firewall (in the core
+# directory) and the protected peripheral (in example/common). Without it,
+# add_instance fails with "No module type named altera_axi4_lite_firewall".
+SEARCH="$CORE/,$COMMON/,\$"
+
+command -v qsys-script >/dev/null || { echo "error: Quartus not found under $QUARTUS_ROOT" >&2; exit 127; }
+
+do_qsys() {
+    echo "=== Platform Designer system ==="
+    cd "$HERE/qsys"
+    rm -rf firewall_sys firewall_sys.qsys firewall_sys.sopcinfo
+    qsys-script --script=build_system.tcl --search-path="$SEARCH"
+    qsys-generate firewall_sys.qsys --synthesis=VERILOG \
+        --search-path="$SEARCH" --output-directory=firewall_sys
+}
+
+do_sw() {
+    echo "=== Nios II BSP ==="
+    cd "$HERE"
+    [ -f qsys/firewall_sys.sopcinfo ] || { echo "error: run './build.sh qsys' first" >&2; exit 1; }
+    rm -rf software/bsp
+    nios2-bsp hal software/bsp qsys --cpu-name cpu
+
+    echo "=== application ==="
+    cd "$HERE/software"
+    rm -rf obj firewall_demo.elf firewall_demo.map firewall_demo.objdump Makefile
+    nios2-app-generate-makefile --bsp-dir bsp --app-dir . \
+        --elf-name firewall_demo.elf --src-files main.c axi4_lite_firewall.c
+    make
+}
+
+do_fpga() {
+    echo "=== Quartus compilation ==="
+    cd "$HERE/quartus"
+    quartus_sh --flow compile de10_lite_nios
+}
+
+do_clean() {
+    cd "$HERE"
+    rm -rf qsys/firewall_sys qsys/firewall_sys.qsys qsys/firewall_sys.sopcinfo
+    rm -rf software/bsp software/obj software/Makefile
+    rm -f  software/firewall_demo.elf software/firewall_demo.map software/firewall_demo.objdump
+    rm -rf quartus/db quartus/incremental_db quartus/output_files
+    (cd software/test && make clean >/dev/null 2>&1) || true
+    echo "cleaned"
+}
+
+case "${1:-all}" in
+    qsys)  do_qsys ;;
+    sw)    do_sw ;;
+    fpga)  do_fpga ;;
+    clean) do_clean ;;
+    all)   do_qsys; do_sw; do_fpga
+           echo
+           echo "=== done ==="
+           echo "  bitstream : quartus/output_files/de10_lite_nios.sof"
+           echo "  software  : software/firewall_demo.elf"
+           echo
+           echo "To run it:"
+           echo "  quartus_pgm -m jtag -o \"p;quartus/output_files/de10_lite_nios.sof\""
+           echo "  nios2-download -g software/firewall_demo.elf && nios2-terminal"
+           ;;
+    *)     echo "usage: $0 [all|qsys|sw|fpga|clean]" >&2; exit 2 ;;
+esac

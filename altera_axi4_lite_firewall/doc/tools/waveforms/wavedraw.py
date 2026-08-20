@@ -39,6 +39,13 @@ class Vcd:
         for sid, names in self.ids.items():
             for n in names:
                 self.by_name[n] = sid
+                # Verilator wraps the design in a synthetic "TOP" scope, and
+                # whether it appears in the VCD depends on the version. Register
+                # the stripped spelling too, so a trace from either one resolves
+                # the same signal names and the figures do not silently come out
+                # blank on a different Verilator.
+                if n.startswith("TOP."):
+                    self.by_name.setdefault(n[len("TOP."):], sid)
 
         # value-change stream: time -> {id: value}
         self.times = []
