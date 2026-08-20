@@ -36,8 +36,17 @@ command -v qsys-script >/dev/null || { echo "error: Quartus not found under $QUA
 do_qsys() {
     echo "=== Platform Designer system ==="
     cd "$HERE/qsys"
-    rm -rf firewall_sys firewall_sys.qsys firewall_sys.sopcinfo
+    rm -rf firewall_sys firewall_sys.sopcinfo
     qsys-script --script=build_system.tcl --search-path="$SEARCH"
+
+    # The ALTPLL wizard stamps a timestamp-derived MIF name into the .qsys
+    # (PT#RECONFIG_FILE ALTPLL<digits>.mif) on every run. It is GUI bookkeeping
+    # for PLL reconfiguration, which this system does not use, but it is enough
+    # to make the tracked .qsys show a one-line diff after every regeneration.
+    # Pin it so regenerating an unchanged system produces an unchanged file.
+    sed -i 's/PT#RECONFIG_FILE ALTPLL[0-9]*\.mif/PT#RECONFIG_FILE ALTPLL_firewall_sys.mif/' \
+        firewall_sys.qsys
+
     qsys-generate firewall_sys.qsys --synthesis=VERILOG \
         --search-path="$SEARCH" --output-directory=firewall_sys
 }
@@ -65,7 +74,9 @@ do_fpga() {
 
 do_clean() {
     cd "$HERE"
-    rm -rf qsys/firewall_sys qsys/firewall_sys.qsys qsys/firewall_sys.sopcinfo
+    # firewall_sys.qsys is tracked - regenerate it with './build.sh qsys',
+    # never delete it here, or a clean would leave the working tree dirty.
+    rm -rf qsys/firewall_sys qsys/firewall_sys.sopcinfo
     rm -rf software/bsp software/obj software/Makefile
     rm -f  software/firewall_demo.elf software/firewall_demo.map software/firewall_demo.objdump
     rm -rf quartus/db quartus/incremental_db quartus/output_files

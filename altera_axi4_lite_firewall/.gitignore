@@ -62,18 +62,16 @@ greybox_tmp/
 
 # Platform Designer and Nios II artifacts (example/de10_lite_nios/).
 #
-# qsys/build_system.tcl is the source of truth for the Platform Designer
-# system, so the .qsys it emits is a build artifact like any other and is NOT
-# tracked. An earlier version tracked it, on the grounds that it is what the
-# GUI opens - but ./build.sh clean deletes it, and a tracked file that the
-# project's own clean target removes is a contradiction. Worse, a committed
-# .qsys can drift from the script that claims to generate it, which is exactly
-# the failure this repository moved its documents off ODF to avoid.
+# firewall_sys.qsys IS tracked, so the system can be opened in the Platform
+# Designer GUI straight from a clone. qsys/build_system.tcl remains the source
+# of truth: it regenerates the .qsys, and ./build.sh clean deliberately leaves
+# it alone so the tracked copy survives a clean.
 #
-# Run ./build.sh qsys to produce it, then open it in Platform Designer. If you
-# change the system there, port the change back into build_system.tcl.
+# If you change the system in the GUI, port the change back into
+# build_system.tcl - otherwise the next ./build.sh qsys reverts it.
+#
+# The bulky derivatives below are not tracked; they are pure output.
 example/de10_lite_nios/qsys/firewall_sys/
-example/de10_lite_nios/qsys/firewall_sys.qsys
 example/de10_lite_nios/qsys/.qsys_edit/
 example/de10_lite_nios/software/bsp/
 example/de10_lite_nios/software/obj/

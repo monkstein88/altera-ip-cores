@@ -98,11 +98,16 @@ The system is built by **`qsys/build_system.tcl`**, not committed as a
 hand-edited `.qsys`. The script is the source of truth: it is reviewable in a
 diff, and it does not pin the Quartus version that happened to write it.
 
-The generated `firewall_sys.qsys` is **not** tracked — `./build.sh qsys`
-produces it in a few seconds, and a committed copy could drift from the script
-that claims to generate it. To open the system in the Platform Designer GUI,
-run `./build.sh qsys` first. If you then change anything there, port the change
-back into `build_system.tcl` or the next build will revert it.
+The generated `firewall_sys.qsys` **is** tracked, so you can open the system in
+the Platform Designer GUI straight from a clone without building anything
+first, and `./build.sh clean` leaves it alone. If you change the system in the
+GUI, port the change back into `build_system.tcl` — otherwise the next
+`./build.sh qsys` reverts it.
+
+One wrinkle worth knowing: the ALTPLL wizard writes a timestamp-derived MIF
+name into the `.qsys` on every run, which would make the tracked file show a
+one-line diff after each regeneration. `build.sh` pins that field, so
+regenerating an unchanged system produces an unchanged file.
 
 ### Three things that are easy to get wrong
 
@@ -240,7 +245,8 @@ example/de10_lite_nios/
 ├── build.sh                    Qsys system -> BSP -> application -> bitstream
 ├── run_on_board.sh             Program, run and check, non-interactively
 ├── qsys/
-│   └── build_system.tcl        The system, as a reviewable script (source of truth)
+│   ├── build_system.tcl        The system, as a reviewable script (source of truth)
+│   └── firewall_sys.qsys       Generated from it, and tracked so the GUI can open it
 ├── rtl/
 │   └── de10_lite_nios_top.sv   Board wrapper: clock, PLL reset sequencing, fault wiring
 ├── quartus/                    Project, pin assignments, 100 MHz constraints
