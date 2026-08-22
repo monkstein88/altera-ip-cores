@@ -52,6 +52,21 @@ set_sw_property auto_initialize true
 
 set_sw_property bsp_subdirectory drivers
 
+set_sw_property display_name "Avalon-MM Firewall driver"
+
+# The driver registers its ISR with alt_ic_isr_register(), which is the
+# ENHANCED interrupt API. Declaring that is not optional bookkeeping: the SBT
+# assumes legacy-only when the property is absent, and it analyses this
+# property across every driver in the system to decide which API the BSP is
+# built against. A driver that silently claims legacy while calling the
+# enhanced entry point is how a system ends up with a BSP that does not define
+# ALT_ENHANCED_INTERRUPT_API_PRESENT and a driver that will not link.
+set_sw_property supported_interrupt_apis "enhanced_interrupt_api"
+
+# The ISR takes no locks and touches no state outside its own device
+# structure, so a higher-priority ISR may preempt it safely.
+set_sw_property isr_preemption_supported true
+
 # -----------------------------------------------------------------------
 # Source files
 #

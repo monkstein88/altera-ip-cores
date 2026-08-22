@@ -123,6 +123,20 @@ typedef struct
  * <name>_IRQ and <name>_IRQ_INTERRUPT_CONTROLLER_ID are defined by system.h
  * as -1 when the interrupt sender is left unconnected, which init() checks
  * before trying to register a handler.
+ *
+ * DELIBERATE DEVIATION: the storage is NOT declared static, which is what most
+ * Altera drivers do. Those drivers hand the application a device through the
+ * HAL device list (alt_dev_reg / alt_open), which only suits character and
+ * file devices; this is neither. The application must nevertheless reach the
+ * structure, because the peripheral-reset callbacks cannot be derived from
+ * hardware and have to be installed after alt_sys_init() has run. Leaving the
+ * symbol external is the smallest way to allow that:
+ *
+ *     extern alt_avalon_mm_firewall_dev firewall_0;   // named as in system.h
+ *
+ * The cost is a global symbol per instance, named after the Platform Designer
+ * instance name. Keep that in mind before naming an application variable the
+ * same thing.
  */
 #define ALTERA_AVALON_MM_FIREWALL_INSTANCE(name, dev)                        \
     alt_avalon_mm_firewall_dev dev = {                                       \

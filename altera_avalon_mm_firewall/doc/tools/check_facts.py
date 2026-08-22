@@ -362,6 +362,60 @@ for src in re.findall(r"add_sw_property (?:c_source|include_source) (\S+)", SWTC
     chk(os.path.exists(os.path.join(ROOT, src)),
         f"_sw.tcl lists {src}, which does not exist")
 
+# The interrupt API the driver actually calls must be the one it declares.
+# The SBT assumes legacy-only when supported_interrupt_apis is absent, and
+# decides the whole BSP's API from these declarations - so a driver calling the
+# enhanced entry point while claiming legacy produces a BSP that will not link.
+uses_enhanced = "alt_ic_isr_register" in DRVC
+uses_legacy = re.search(r"\balt_irq_register\s*\(", DRVC) is not None
+declared = re.search(r"set_sw_property supported_interrupt_apis\s+\"?([^\"\n]+)",
+                     SWTCL)
+chk(declared is not None,
+    "_sw.tcl does not declare supported_interrupt_apis; the SBT will assume "
+    "legacy-only, which is wrong for a driver using alt_ic_isr_register")
+if declared:
+    apis = declared.group(1)
+    chk(not uses_enhanced or "enhanced_interrupt_api" in apis,
+        f"driver calls alt_ic_isr_register (enhanced API) but _sw.tcl "
+        f"declares '{apis}'")
+    chk(not uses_legacy or "legacy_interrupt_api" in apis,
+        f"driver calls alt_irq_register (legacy API) but _sw.tcl "
+        f"declares '{apis}'")
+
+# Every set_sw_property name must be one the SBT actually recognises. A typo
+# is silently ignored, which is the worst possible failure mode for a property
+# whose whole job is to change how the BSP is built.
+VALID_SW_PROPS = {
+    "hw_class_name", "version", "min_compatible_hw_version", "auto_initialize",
+    "bsp_subdirectory", "alt_sys_init_priority", "display_name",
+    "extends_bsp_type", "callback_source_file", "initialization_callback",
+    "validation_callback", "generation_callback", "class_initialization_callback",
+    "class_validation_callback", "class_generation_callback",
+    "supported_interrupt_apis", "isr_preemption_supported",
+}
+for prop in re.findall(r"^set_sw_property (\w+)", SWTCL, re.M):
+    chk(prop in VALID_SW_PROPS,
+        f"_sw.tcl sets '{prop}', which is not a set_sw_property the SBT knows")
+
+VALID_ADD_PROPS = {
+    "asm_source", "c_source", "cpp_source", "include_source",
+    "include_directory", "lib_source", "specific_compatible_hw_version",
+    "supported_bsp_type", "alt_cppflags_addition", "excluded_hal_source",
+    "systemh_generation_script", "txt_source",
+}
+for prop in re.findall(r"^add_sw_property (\w+)", SWTCL, re.M):
+    chk(prop in VALID_ADD_PROPS,
+        f"_sw.tcl adds '{prop}', which is not an add_sw_property the SBT knows")
+
+# The BSP puts /inc and <BSP type>/inc on the include path automatically, so
+# the headers must live in exactly those two places or the driver will not
+# compile without an extra include_directory.
+for src in re.findall(r"add_sw_property include_source (\S+)", SWTCL):
+    d = os.path.dirname(src)
+    chk(d == "inc" or d.endswith("/inc"),
+        f"_sw.tcl installs header {src}, which is not in inc/ or <BSP type>/inc/ - "
+        "the BSP include path would not reach it")
+
 # auto_initialize demands the two macros the BSP emits
 if re.search(r"set_sw_property auto_initialize true", SWTCL):
     cls = tcl_name.upper()
@@ -369,6 +423,12 @@ if re.search(r"set_sw_property auto_initialize true", SWTCL):
         chk(f"#define {macro}(" in DRVH,
             f"_sw.tcl sets auto_initialize but the HAL header does not define "
             f"{macro}, which alt_sys_init.c will reference")
+    # alt_sys_init.c includes a header named after the hardware class, so the
+    # macros have to be in that file specifically - not merely somewhere.
+    chk(any(h.endswith(f"/{tcl_name}.h")
+            for h in re.findall(r"add_sw_property include_source (\S+)", SWTCL)),
+        f"alt_sys_init.c will #include \"{tcl_name}.h\", but no installed "
+        f"header has that name")
 
 # ---- 9. assertions and cover points -------------------------------------
 n_assert = len(re.findall(r"assert property", SVA))
