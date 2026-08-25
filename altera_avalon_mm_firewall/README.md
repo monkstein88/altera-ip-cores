@@ -26,6 +26,7 @@ directions for no benefit.
 | [User guide (Markdown)](doc/avalon_mm_firewall_user_guide.md) | Same document, readable in the browser |
 | [Block diagrams (PDF)](doc/avalon_mm_firewall_block_diagrams.pdf) | Architecture companion: system context, internal architecture, burst handling, register map |
 | [Block diagrams (Markdown)](doc/avalon_mm_firewall_block_diagrams.md) | Same document, readable in the browser |
+| [DE10-Lite RTL demo](example/de10_lite_rtl/README.md) | Self-checking hardware demonstration: 16 scenarios, no CPU or software. **Verified on a physical board.** Where this core's synthesis and Fmax numbers come from |
 | This README | Design rationale and the reasoning behind the decisions — the parts a user guide has no room for |
 
 ---
@@ -91,6 +92,10 @@ altera_avalon_mm_firewall/
 │   ├── verilator/run_sim.sh        Licence-free regression (slang, lint,
 │   │                               parameter sweep, both parameterisations)
 │   └── verilator/slangcheck.py     Strict LRM elaboration gate
+├── example/                        DE10-Lite (MAX 10) demonstration
+│   ├── common/                     The protected peripheral, shared with the
+│   │                               Nios II example when it lands
+│   └── de10_lite_rtl/              16 scenarios in synthesisable RTL, no CPU
 └── doc/                            Documents; everything else is generated
     ├── avalon_mm_firewall_user_guide.md / .pdf
     ├── avalon_mm_firewall_block_diagrams.md / .pdf
@@ -659,8 +664,9 @@ source says the same thing at the call site.
 | HAL driver | **Compiles clean** at `-Wall -Wextra -Wpedantic -Werror`; exercised against a stub register model |
 | Questa code coverage | **Measured.** `avl_mm_firewall_top` statements 183/185, branches 137/140, expressions 81/86, conditions 33/39; `avl_mm_firewall_regs` statements 110/110. The unhit remainder is defensive code the design forbids reaching — see *Verification* |
 | Verilator flow | **Not re-run** since the testbench slave model changed from `always_ff` to `always`. Behaviour is unchanged and Verilator accepted both forms, but the numbers above come from Questa |
-| Synthesis results (LE/register count, Fmax) | **Not measured.** The combinational rule lookup scales with `NUM_RULES` and is the likeliest critical path |
-| Behaviour in a real Platform Designer system | **Not verified end to end.** The testbench models a well-behaved bursting peripheral, not Platform Designer's generated interconnect |
+| Synthesis results (LE/register count, Fmax) | **Measured** by the [DE10-Lite example](example/de10_lite_rtl/README.md) on a MAX 10 `10M50DAF484C7G` (`C7`, slow 1200 mV 85 °C). Standalone: **59.28 MHz** at the defaults (`NUM_RULES=8`, `ADDR_WIDTH=32`, 2,657 LEs), **73.44 MHz** at `NUM_RULES=5`/`ADDR_WIDTH=12` (1,183 LEs), **83.31 MHz** at `NUM_RULES=2`/`ADDR_WIDTH=12`. The critical path is `rule_base → rd_deny_beats` — the combinational rule lookup, exactly as predicted. **100 MHz is not reachable in any configuration** without the registered-lookup option below |
+| Behaviour on physical hardware | **Verified on a Terasic DE10-Lite** (MAX 10 `10M50DAF484C7G`): 16/16 scenarios pass in the [RTL example](example/de10_lite_rtl/README.md), driven and read back over JTAG |
+| Behaviour in a real Platform Designer system | **Not verified end to end.** The testbench models a well-behaved bursting peripheral, not Platform Designer's generated interconnect; the RTL example connects the core point to point, without generated Qsys interconnect |
 | `hw.tcl` import into a specific Quartus release | **Not verified.** See *Integration*, step 2 |
 | Wrapping (line-wrap) bursts | **Not supported.** Both interfaces declare `linewrapBursts false`; Platform Designer inserts an adapter if a master needs them |
 
@@ -674,8 +680,13 @@ source says the same thing at the call site.
   and the bounded poll in the recovery sequence can become unconditional. The
   tracking registers already exist; this is a contained change and the most
   valuable one for anyone writing against this core.
-- **Registered lookup option** for high-`NUM_RULES` designs, as a parameter
-  rather than a fork.
+- **Registered lookup option**, as a parameter rather than a fork. No longer a
+  speculative nice-to-have: the core tops out at **83 MHz even at `NUM_RULES=2`
+  with a 12-bit address space** on a `C7` MAX 10, because the lookup is
+  combinational end to end (`rule_base → comparators → verdict →
+  rd_deny_beats`). Registering it cuts that path roughly in half for one cycle
+  per *transaction*, amortised across a burst. This is what any design needing
+  100 MHz on this part requires.
 - Rule-hit counters per window, for auditing and profiling access patterns.
 - Synthesis numbers (LE/register count, Fmax vs `NUM_RULES`) — currently the
   largest unmeasured item.
