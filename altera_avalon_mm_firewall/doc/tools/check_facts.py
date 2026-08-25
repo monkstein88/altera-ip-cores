@@ -58,6 +58,22 @@ FIGS = rd("doc/tools/diagrams/build_figures.py")
 # skipped and counted, loudly, rather than silently passing.
 LOG0 = rd_opt("simulation/verilator/run_wresp0.log")
 LOG1 = rd_opt("simulation/verilator/run_wresp1.log")
+
+# Fall back to the Questa transcript. It holds both parameterisations in one
+# file, and its lines carry vsim's "# " prefix, so it is split on the banner the
+# testbench prints and the prefix is stripped. Without this the check totals go
+# unverified on any machine that has Questa but not Verilator - which is how a
+# quoted total can drift from the suite that produced it.
+if LOG0 is None or LOG1 is None:
+    qlog = rd_opt("simulation/questa/run.log")
+    if qlog is not None:
+        body = re.sub(r"^# ?", "", qlog, flags=re.M)
+        parts = re.split(r"^ Avalon-MM Firewall regression\s+\(USE_WRITE_RESPONSE=(\d)\)",
+                         body, flags=re.M)
+        runs = dict(zip(parts[1::2], parts[2::2]))
+        if "0" in runs and "1" in runs:
+            LOG0, LOG1 = runs["0"], runs["1"]
+
 HAVE_RUN = LOG0 is not None and LOG1 is not None
 
 bad, ok, skipped = [], 0, 0
@@ -467,8 +483,8 @@ if HAVE_RUN:
         chk("PROTOCOL VIOLATION" not in log,
             f"{name} log contains protocol violations")
 else:
-    skip("simulation logs absent - check counts not verified. "
-         "Run simulation/verilator/run_sim.sh first.")
+    skip("simulation logs absent - check counts not verified. Run "
+         "simulation/verilator/run_sim.sh or simulation/questa/run_sim.tcl first.")
 
 # ---- 11. throughput claims ---------------------------------------------
 # The guard values in the testbench are the contract; prose must not claim

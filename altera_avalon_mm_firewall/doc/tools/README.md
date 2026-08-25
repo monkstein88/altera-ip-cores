@@ -52,7 +52,8 @@ fails to find its markers and says so.
 
 ## What check_facts.py actually verifies
 
-226 individual claims, across:
+289 individual claims, across (279 when no simulation log is present and the
+measured-result checks are skipped):
 
 - **Register offsets**, in both directions. The RTL holds *word* offsets and
   every document quotes *byte* offsets; that factor of four is the single most
@@ -74,8 +75,11 @@ fails to find its markers and says so.
 - **Assertion and cover-point counts**, and that every cover point the README
   names actually exists.
 - **Measured results** — check totals are read out of the simulation logs, not
-  transcribed. The logs are gitignored, so when they are absent those checks are
-  reported as *skipped* rather than silently passing.
+  transcribed. The Verilator per-run logs are preferred; failing those, the
+  Questa transcript is split on the testbench banner and used instead, so the
+  totals are still verified on a machine with only one of the two simulators.
+  All the logs are gitignored, so when none is present those checks are reported
+  as *skipped* rather than silently passing.
 - **Throughput guards**, so prose cannot claim better numbers than the
   regression actually enforces.
 - **Figure references**, in both directions: every figure a document cites

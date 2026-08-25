@@ -378,9 +378,10 @@ accidentally restart traffic toward a peripheral nobody has reset yet.
 
 ## Verification
 
-**309 checks pass** — 153 with `USE_WRITE_RESPONSE=0` and 156 with `=1`.
+**316 checks pass** — 153 with `USE_WRITE_RESPONSE=0` and 163 with `=1`.
 **0 assertion failures. 0 `m0` protocol violations. 20/20 assertions, 11/11
-cover points hit.**
+cover points hit, and every assertion has a non-zero pass count** — no property
+is passing vacuously.
 
 The suite runs twice on purpose. Write responses change the write channel's
 completion rule (last beat accepted vs. peripheral answered), which changes the
@@ -409,7 +410,13 @@ data. Running only the default leaves half the write channel unexercised.
   returned as SLAVEERROR, `RD_CMD_STUCK` set
 - **Read timeout, accepted then silent** — a different branch entirely, where
   the peripheral genuinely owes beats
-- **Write timeout mid-burst** → remaining beats consumed, `WR_CMD_STUCK` set
+- **Write timeout, command never accepted** → remaining beats consumed,
+  `WR_CMD_STUCK` set
+- **Write timeout, accepted then silent** (`USE_WRITE_RESPONSE=1` only) — every
+  beat taken downstream and only the write response withheld, so the core has to
+  answer for a burst it already forwarded. This is the only path that reaches the
+  write-response arm of the abandon logic; it sat at zero coverage until the
+  Questa branch report pointed at it
 - W1C proven *not* to unblock; the frozen command proven to survive the
   peripheral reset and to be withdrawn only by `UNBLOCK`
 - Orphan beats after recovery are discarded
@@ -446,9 +453,9 @@ can only answer, so every rejection path needs proving that it answers.
 | `c_write_decerr` / `c_read_decerr` | 10 / 4 | both unmapped paths reached |
 | `c_burst_range_wr` / `c_burst_range_rd` | 2 / 4 | burst straddle reached on both channels |
 | `c_burst_denied` | 2 | a burst refused by `BURST_ALLOW` |
-| `c_block_and_recover` | 8 | full block-then-release episodes |
+| `c_block_and_recover` | 9 | full block-then-release episodes |
 | `c_unblock_with_stuck_cmd` | 2 | an unblock that had to discard a frozen command |
-| `c_burst_streaming` / `c_write_streaming` | 318 / 310 | beats actually streaming back-to-back — the throughput claim is not theoretical |
+| `c_burst_streaming` / `c_write_streaming` | 318 / 311 | beats actually streaming back-to-back — the throughput claim is not theoretical |
 
 Three of those started at zero and are the reason the suite grew: the
 permission-denied *read*, the *write*-side burst straddle, and the unblock with
@@ -593,7 +600,15 @@ The driver compiles clean at `-Wall -Wextra -Wpedantic -Werror`.
 ```c
 #include "altera_avalon_mm_firewall.h"
 
-static void periph_assert_reset(void *ctx)  { IOWR_ALTERA_AVALON_PIO_DATA(RESET_PIO_BASE, 0); usleep(1); }
+/* Holds the peripheral in reset for >= 16 clocks. A short spin, not usleep():
+   the default ISR path calls recover(), which calls this, and usleep() must
+   not be called from interrupt context. See the note below the example. */
+static void periph_assert_reset(void *ctx)
+{
+    volatile int i;
+    IOWR_ALTERA_AVALON_PIO_DATA(RESET_PIO_BASE, 0);
+    for (i = 0; i < 64; i++) { }
+}
 static void periph_release_reset(void *ctx) { IOWR_ALTERA_AVALON_PIO_DATA(RESET_PIO_BASE, 1); }
 
 static const alt_avalon_mm_firewall_rule my_map[] = {
@@ -620,20 +635,30 @@ Everything not described by a rule is denied. `configure()` retires the unused
 rule slots as well as programming the used ones — a stale rule left valid is an
 open window nobody remembers opening.
 
+**The reset callbacks can run in interrupt context.** The ISR calls
+`alt_avalon_mm_firewall_recover()` on a timeout, and `recover()` calls
+`assert_reset` / `release_reset`, so anything blocking in those callbacks —
+`usleep()`, a semaphore, a driver call that can sleep — blocks inside the ISR.
+`_sw.tcl` also declares `isr_preemption_supported true`, which assumes the ISR
+stays short. If your peripheral needs a long or coordinated reset, leave
+`on_fault` to set a flag and call `recover()` from a thread instead; the driver
+source says the same thing at the call site.
+
 ---
 
 ## Verification status — what is and is not proven
 
 | Item | Status |
 |---|---|
-| Functional testbench (309 checks, both parameterisations) | **Passing** under Verilator 5.48 |
-| SVA properties | **20/20**, 0 failures. Non-vacuous pass counts require the Questa flow |
-| Cover directives | **11/11 hit**, counts measured under Verilator `--coverage-user` |
+| Functional testbench (316 checks, both parameterisations) | **Passing** under Questa 2024.1 |
+| SVA properties | **20/20**, 0 failures, **all non-vacuous** — lowest pass count is 10 (`a_no_orphan_readdata`), highest 4365 |
+| Cover directives | **11/11 hit**, counts measured under Questa `-cover sbceft` |
 | Strict LRM elaboration | **0 errors** under slang 11 |
 | RTL lint | **Clean** at `verilator --lint-only -Wall`, nothing waived, across 5 parameter configurations |
 | Burst throughput (33 / 36 cycles) | **Measured**, with in-suite regression guards |
 | HAL driver | **Compiles clean** at `-Wall -Wextra -Wpedantic -Werror`; exercised against a stub register model |
-| Questa coverage numbers | **Not quoted** — regenerate with the Questa flow. Assertion non-vacuity in particular is the number worth reading, and it needs Questa |
+| Questa code coverage | **Measured.** `avl_mm_firewall_top` statements 183/185, branches 137/140, expressions 81/86, conditions 33/39; `avl_mm_firewall_regs` statements 110/110. The unhit remainder is defensive code the design forbids reaching — see *Verification* |
+| Verilator flow | **Not re-run** since the testbench slave model changed from `always_ff` to `always`. Behaviour is unchanged and Verilator accepted both forms, but the numbers above come from Questa |
 | Synthesis results (LE/register count, Fmax) | **Not measured.** The combinational rule lookup scales with `NUM_RULES` and is the likeliest critical path |
 | Behaviour in a real Platform Designer system | **Not verified end to end.** The testbench models a well-behaved bursting peripheral, not Platform Designer's generated interconnect |
 | `hw.tcl` import into a specific Quartus release | **Not verified.** See *Integration*, step 2 |

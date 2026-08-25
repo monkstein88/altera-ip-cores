@@ -40,7 +40,13 @@ proc run_one {wresp ucdb} {
     vopt avl_mm_firewall_tb -o tb_opt_$wresp +acc -cover sbceft -assertdebug \
         -G/avl_mm_firewall_tb/USE_WRITE_RESPONSE=$wresp
     vsim tb_opt_$wresp -coverage -assertdebug
-    set NoQuitOnFinish 1
+    # The testbench ends with $finish, which by default terminates batch vsim
+    # outright - taking `coverage save`, the second parameterisation, the merge
+    # and the report with it, silently and with exit status 0. `onfinish stop`
+    # is the control that prevents it; it is a command, not a variable, and it
+    # is only accepted AFTER elaboration, so it belongs here rather than at the
+    # top of the script.
+    onfinish stop
     onbreak {resume}
     run -all
     coverage save $ucdb

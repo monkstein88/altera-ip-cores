@@ -961,8 +961,10 @@ accepted, versus peripheral answered — and with it the timeout scope, the
 abandonment path and the arbitration of the shared `response` signal against
 read data. Running only the default leaves half the write channel unexercised.
 
-**Result: 309 checks pass** — 153 with write responses disabled and 156 with
-them enabled. Zero assertion failures, zero `m0` protocol violations.
+**Result: 316 checks pass** — 153 with write responses disabled and 163 with
+them enabled. Zero assertion failures, zero `m0` protocol violations, and every
+one of the 20 assertions has a non-zero pass count, so none of them is passing
+vacuously.
 
 Coverage includes:
 
@@ -981,7 +983,9 @@ Coverage includes:
 - Wait states on the downstream peripheral
 - Read timeout with the command never accepted, and separately with the
   command accepted and the peripheral then silent — different branches
-- Write timeout mid-burst
+- Write timeout with the command never accepted, and separately with every
+  beat accepted and only the write response withheld — the second reaches the
+  write-response arm of the abandonment logic and nothing else does
 - Acknowledgement proven *not* to unblock; the frozen command proven to
   survive the peripheral reset and to be withdrawn only by `UNBLOCK`
 - Orphan beats after recovery discarded

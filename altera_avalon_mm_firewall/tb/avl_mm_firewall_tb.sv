@@ -329,7 +329,16 @@ module avl_mm_firewall_tb #(
     assign sm_wr_cur  = (sm_wr_left == 0) ? m0_address : sm_wr_addr;
     assign sm_wr_last = (sm_wr_left == 0) ? (m0_burstcount == 1) : (sm_wr_left == 1);
 
-    always_ff @(posedge clk) begin
+    // Plain `always`, not `always_ff`, and that is deliberate. This block
+    // writes `mem`, and the initial block below also writes it once to zero
+    // the array before the run. always_ff carries a single-driver requirement
+    // (IEEE 1800 9.2.2.4), so the pair is an elaboration ERROR in Questa
+    // (vopt-7061) even though Verilator accepts it - which is how the Questa
+    // flow came to be broken while the Verilator regression stayed green.
+    // Zeroing from the reset branch instead is not an option: tests write the
+    // memory, then reset the peripheral through recover(), then read the
+    // contents back to prove the window was untouched.
+    always @(posedge clk) begin
         if (!slave_rst_n) begin
             sm_wr_addr            <= '0;
             sm_wr_left            <= '0;
@@ -1043,6 +1052,31 @@ module avl_mm_firewall_tb #(
         expect_data(2, 32'h1111_2222, "post-write-recovery");
 
         // ---------------------------------------------------------------
+        // R2 is the write-side counterpart of Q, and the only way to reach the
+        // HAS_WRESP arm of the abandon block in avl_mm_firewall_top.sv. R above
+        // wedges waitrequest, so no beat is ever accepted and the write
+        // response the master gets comes from the ordinary denied-write path
+        // instead. Here every beat IS accepted and only the response is
+        // withheld, so wr_resp_wait is set when the timeout fires and the core
+        // has to answer for a burst it already forwarded.
+        if (USE_WRITE_RESPONSE) begin
+            $display("\n--- R2. Write timeout, accepted then silent (response withheld) ---");
+            clear_collector();
+            slave_mode = SM_HANG_DATA;
+            s0_wr(A_RW, 8, 32'hAAAA_0000);
+            check(1'b1, "write burst with a withheld response is consumed, not stalled");
+            ticks(300);                      // TIMEOUT_VALUE is 200 by this point
+            csr_rd(W_STATUS, st);
+            check(st[ST_TMO],      "TIMEOUT_ERROR set by the withheld write response");
+            check(st[ST_BLOCK],    "BLOCKED set by the withheld write response");
+            check(!st[ST_WRSTUCK], "WR_CMD_STUCK clear - the command WAS accepted");
+            check_eq(wresp_count, 1, "abandoned write produces exactly one write response");
+            check_eq(wresp_last, R_SLVERR, "and that response is SLAVEERROR");
+            check(proto_viol == 0, "no m0 protocol violation from the withheld response");
+            slave_mode = SM_NORMAL;
+            recover();
+        end
+
         $display("\n--- S. Manual isolation ---");
         csr_wr(W_CTRL, 32'h7);                    // enable | auto | manual isolate
         ticks(2);
