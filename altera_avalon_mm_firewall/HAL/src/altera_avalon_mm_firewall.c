@@ -273,6 +273,27 @@ int alt_avalon_mm_firewall_recover(alt_avalon_mm_firewall_dev *dev)
     /* 6. Release the peripheral. */
     dev->release_reset(dev->reset_context);
 
+    /*
+     * Acknowledge AGAIN, and this is not redundant.
+     *
+     * Step 2's acknowledge can be overwritten before the sequence finishes. A
+     * command the peripheral never accepted keeps m0_read/m0_write asserted
+     * with waitrequest high, so the core's no-progress timer keeps expiring
+     * and re-latching TIMEOUT_ERROR - and re-arming auto-isolate with it - for
+     * as long as the command is frozen. Only UNBLOCK at step 5 retires it.
+     *
+     * Without this second acknowledge, a recovery that has genuinely succeeded
+     * leaves STATUS reading TIMEOUT_ERROR | ISOLATED, and ISOLATED still gates
+     * the data path: the next transaction is refused and the caller sees a
+     * "recovered" core that answers nothing. Found on hardware, where the
+     * symptom was a post-recovery write that silently did not land.
+     *
+     * It is safe here and nowhere earlier: the frozen command is gone, the
+     * peripheral is out of reset and healthy, so nothing is left to re-fire.
+     */
+    IOWR_ALTERA_AVALON_MM_FIREWALL_STATUS(
+        dev->base, ALTERA_AVALON_MM_FIREWALL_STATUS_STICKY_MSK);
+
     dev->recover_count++;
 
     /*

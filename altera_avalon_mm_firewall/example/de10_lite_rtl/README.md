@@ -118,7 +118,7 @@ board behaves exactly as before with nothing attached.
     ┌────────────────┐    csr        ┌─────────────────────┐
     │                ├──────────────►│                     │
     │ demo_sequencer │               │ avl_mm_firewall_top │   m0   ┌──────────────────┐
-    │                │    s0         │                     ├───────►│ demo_target_slave│
+    │                │    s0         │                     ├───────►│ demo_avl_mm_target_slave│
     │  (the driver)  ├──────────────►│    (the IP core)    │        │ (the peripheral  │
     │                │               │                     │        │  being protected)│
     └───────┬────────┘               └──────────┬──────────┘        └────────▲─────────┘
@@ -128,7 +128,7 @@ board behaves exactly as before with nothing attached.
             └──────────────────────►  LEDR, HEX0..HEX5
 ```
 
-`demo_sequencer` plays the part a Nios II driver would play. `demo_target_slave`
+`demo_sequencer` plays the part a Nios II driver would play. `demo_avl_mm_target_slave`
 is a burst-capable Avalon-MM scratchpad with an injectable fault, because
 demonstrating a *fault-isolation* firewall needs something that can actually
 fail on cue. It lives in [`../common/`](../common/) so the Nios II example can
@@ -342,7 +342,7 @@ Broken down by entity:
 |---|---|---|
 | **`avl_mm_firewall_top` — the IP core** | **1,059** | **429** |
 |  └ `avl_mm_firewall_regs` | 582 | 213 |
-| `demo_target_slave` (64-word scratchpad in flops) | 2,333 | 1,920 |
+| `demo_avl_mm_target_slave` (64-word scratchpad in flops) | 2,333 | 1,920 |
 | `demo_sequencer` (incl. both masters and the ROM) | 1,518 | 476 |
 |  └ `demo_avl_mm_master` ×2 (`u_ctl` + `u_dat`) | 445 | 241 |
 | `altsource_probe` + `sld_hub` (JTAG probe) | 201 | 127 |

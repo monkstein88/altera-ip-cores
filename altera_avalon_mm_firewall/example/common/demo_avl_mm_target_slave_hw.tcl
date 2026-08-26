@@ -1,7 +1,7 @@
 # =============================================================================
-# demo_target_slave_hw.tcl
+# demo_avl_mm_target_slave_hw.tcl
 #
-# Platform Designer component wrapper for demo_target_slave.sv - the peripheral
+# Platform Designer component wrapper for demo_avl_mm_target_slave.sv - the peripheral
 # the Avalon-MM Firewall protects in the DE10-Lite examples.
 #
 # Used by the Nios II example, which needs the peripheral as a Qsys component
@@ -15,7 +15,7 @@
 
 package require -exact qsys 16.0
 
-set_module_property NAME         demo_target_slave
+set_module_property NAME         demo_avl_mm_target_slave
 set_module_property DISPLAY_NAME "Demo Target Slave (Avalon-MM, burst capable)"
 set_module_property VERSION      1.0
 set_module_property GROUP        "Bridges and Adapters/Custom"
@@ -26,12 +26,12 @@ set_module_property INSTANTIATE_IN_SYSTEM_MODULE true
 set_module_property VALIDATION_CALLBACK         validate
 
 add_fileset synth_fileset QUARTUS_SYNTH generate_synth_files
-set_fileset_property synth_fileset TOP_LEVEL demo_target_slave
-add_fileset_file demo_target_slave.sv SYSTEM_VERILOG PATH demo_target_slave.sv TOP_LEVEL_FILE
+set_fileset_property synth_fileset TOP_LEVEL demo_avl_mm_target_slave
+add_fileset_file demo_avl_mm_target_slave.sv SYSTEM_VERILOG PATH demo_avl_mm_target_slave.sv TOP_LEVEL_FILE
 
 add_fileset sim_verilog_fileset SIM_VERILOG generate_sim_files
-set_fileset_property sim_verilog_fileset TOP_LEVEL demo_target_slave
-add_fileset_file demo_target_slave.sv SYSTEM_VERILOG PATH demo_target_slave.sv TOP_LEVEL_FILE
+set_fileset_property sim_verilog_fileset TOP_LEVEL demo_avl_mm_target_slave
+add_fileset_file demo_avl_mm_target_slave.sv SYSTEM_VERILOG PATH demo_avl_mm_target_slave.sv TOP_LEVEL_FILE
 
 proc generate_synth_files {entity_name} { }
 proc generate_sim_files   {entity_name} { }
@@ -73,19 +73,14 @@ set_parameter_property USE_WRITE_RESPONSE HDL_PARAMETER true
 # in a real system. Recovering the firewall from a timeout requires resetting
 # the peripheral, and the core deliberately does not do that for you.
 # -----------------------------------------------------------------------
-add_interface clk clock end
-set_interface_property clk clockRate 0
-add_interface_port clk clk clk Input 1
+add_interface clock clock end
+set_interface_property clock clockRate 0
+add_interface_port clock clk clk Input 1
 
 add_interface reset reset end
-set_interface_property reset associatedClock clk
+set_interface_property reset associatedClock clock
 set_interface_property reset synchronousEdges DEASSERT
 add_interface_port reset resetn reset_n Input 1
-
-add_interface soft_reset reset end
-set_interface_property soft_reset associatedClock clk
-set_interface_property soft_reset synchronousEdges DEASSERT
-add_interface_port soft_reset soft_resetn reset_n Input 1
 
 # -----------------------------------------------------------------------
 # Avalon-MM slave
@@ -94,30 +89,30 @@ add_interface_port soft_reset soft_resetn reset_n Input 1
 # the profile a bursting slave needs. linewrapBursts false matches the
 # firewall's own declaration on both its ports.
 # -----------------------------------------------------------------------
-add_interface s avalon end
-set_interface_property s associatedClock clk
-set_interface_property s associatedReset reset
-set_interface_property s addressUnits         SYMBOLS
-set_interface_property s bridgesToMaster      ""
-set_interface_property s burstOnBurstBoundariesOnly false
-set_interface_property s linewrapBursts       false
-set_interface_property s explicitAddressSpan  0
-set_interface_property s holdTime             0
-set_interface_property s readLatency          0
-set_interface_property s maximumPendingReadTransactions 1
-set_interface_property s setupTime            0
-set_interface_property s timingUnits          Cycles
+add_interface s0 avalon end
+set_interface_property s0 associatedClock clock
+set_interface_property s0 associatedReset reset
+set_interface_property s0 addressUnits         SYMBOLS
+set_interface_property s0 bridgesToMaster      ""
+set_interface_property s0 burstOnBurstBoundariesOnly false
+set_interface_property s0 linewrapBursts       false
+set_interface_property s0 explicitAddressSpan  0
+set_interface_property s0 holdTime             0
+set_interface_property s0 readLatency          0
+set_interface_property s0 maximumPendingReadTransactions 1
+set_interface_property s0 setupTime            0
+set_interface_property s0 timingUnits          Cycles
 
-add_interface_port s s_address            address            Input  ADDR_WIDTH
-add_interface_port s s_read               read               Input  1
-add_interface_port s s_write              write              Input  1
-add_interface_port s s_writedata          writedata          Input  DATA_WIDTH
-add_interface_port s s_byteenable         byteenable         Input  DATA_WIDTH/8
-add_interface_port s s_burstcount         burstcount         Input  BURST_WIDTH
-add_interface_port s s_waitrequest        waitrequest        Output 1
-add_interface_port s s_readdata           readdata           Output DATA_WIDTH
-add_interface_port s s_readdatavalid      readdatavalid      Output 1
-add_interface_port s s_response           response           Output 2
+add_interface_port s0 s_address            address            Input  ADDR_WIDTH
+add_interface_port s0 s_read               read               Input  1
+add_interface_port s0 s_write              write              Input  1
+add_interface_port s0 s_writedata          writedata          Input  DATA_WIDTH
+add_interface_port s0 s_byteenable         byteenable         Input  DATA_WIDTH/8
+add_interface_port s0 s_burstcount         burstcount         Input  BURST_WIDTH
+add_interface_port s0 s_waitrequest        waitrequest        Output 1
+add_interface_port s0 s_readdata           readdata           Output DATA_WIDTH
+add_interface_port s0 s_readdatavalid      readdatavalid      Output 1
+add_interface_port s0 s_response           response           Output 2
 
 # -----------------------------------------------------------------------
 # Fault injection conduit
@@ -127,18 +122,29 @@ add_interface_port s s_response           response           Output 2
 # the command handshake (-> *_CMD_STUCK), `hang` with `hang_late` accepts the
 # command and then never answers (-> *_BUSY).
 # -----------------------------------------------------------------------
+# The software-controlled peripheral reset rides on this conduit rather than
+# being a reset sink. It has to be pokeable by software - recovering the
+# firewall from a timeout means resetting the peripheral, and the core
+# deliberately does not do that for you - so it is driven from a PIO bit, and
+# Platform Designer cannot wire a PIO output into a reset sink.
 add_interface fault conduit end
-set_interface_property fault associatedClock clk
+set_interface_property fault associatedClock clock
 set_interface_property fault associatedReset reset
-add_interface_port fault hang      hang      Input 1
-add_interface_port fault hang_late hang_late Input 1
+add_interface_port fault hang        hang        Input 1
+add_interface_port fault hang_late   hang_late   Input 1
+add_interface_port fault soft_resetn soft_resetn Input 1
 
 # -----------------------------------------------------------------------
 # Elaboration and validation
 # -----------------------------------------------------------------------
 proc elaborate {} {
     if {[get_parameter_value USE_WRITE_RESPONSE]} {
-        add_interface_port s s_writeresponsevalid writeresponsevalid Output 1
+        add_interface_port s0 s_writeresponsevalid writeresponsevalid Output 1
+        # Platform Designer will not generate an interface that carries
+        # writeresponsevalid but advertises no pending-write capacity. One is
+        # the truth here: this peripheral answers a write burst before it will
+        # accept another.
+        set_interface_property s0 maximumPendingWriteTransactions 1
     }
 }
 set_module_property ELABORATION_CALLBACK elaborate

@@ -301,6 +301,21 @@ proc elaborate {} {
         if {$use_wresp} {
             add_interface_port s0 s0_writeresponsevalid writeresponsevalid Output 1
             add_interface_port m0 m0_writeresponsevalid writeresponsevalid Input  1
+
+            # Platform Designer refuses to generate an Avalon-MM interface that
+            # carries writeresponsevalid but advertises no pending-write
+            # capacity: "Interface with write responses must support at least 1
+            # pending write." Without this the entire USE_WRITE_RESPONSE=1
+            # configuration is unusable in Qsys - it elaborates and simulates
+            # fine and then fails at system generation, a long way from where
+            # the mistake was made.
+            #
+            # One, not more: the core allows a single write burst outstanding
+            # at a time. wr_gate holds off a new burst while wr_resp_wait or
+            # wr_resp_out is set, so advertising a deeper queue would promise
+            # pipelining the core does not implement.
+            set_interface_property s0 maximumPendingWriteTransactions 1
+            set_interface_property m0 maximumPendingWriteTransactions 1
         }
     }
 }

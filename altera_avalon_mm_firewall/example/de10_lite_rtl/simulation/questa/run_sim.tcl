@@ -39,7 +39,7 @@ vlog -sv -quiet +define+DEMO_TRACE $CORE/avl_mm_firewall_top.sv
 # The core's own assertions, bound into the demo's firewall instance by the
 # testbench. Compile with +define+DEMO_NO_SVA to leave them out.
 vlog -sv -quiet +define+DEMO_TRACE ../../../../tb/avl_mm_firewall_sva.sv
-vlog -sv -quiet +define+DEMO_TRACE $COMMON/demo_target_slave.sv
+vlog -sv -quiet +define+DEMO_TRACE $COMMON/demo_avl_mm_target_slave.sv
 vlog -sv -quiet +define+DEMO_TRACE $DEMO/demo_avl_mm_master.sv
 vlog -sv -quiet +define+DEMO_TRACE $DEMO/demo_sequencer.sv
 vlog -sv -quiet +define+DEMO_TRACE $DEMO/hex7seg.sv

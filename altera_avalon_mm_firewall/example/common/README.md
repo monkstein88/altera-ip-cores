@@ -5,8 +5,8 @@ one so there is a single copy to keep correct.
 
 | File | What it is |
 |---|---|
-| `demo_target_slave.sv` | The peripheral the firewall protects: a burst-capable Avalon-MM scratchpad with injectable faults |
-| `demo_target_slave_hw.tcl` | Platform Designer component wrapper for it, used by the Nios II example |
+| `demo_avl_mm_target_slave.sv` | The peripheral the firewall protects: a burst-capable Avalon-MM scratchpad with injectable faults |
+| `demo_avl_mm_target_slave_hw.tcl` | Platform Designer component wrapper for it, used by the Nios II example |
 
 ## Why a custom peripheral rather than an on-chip RAM
 
@@ -18,7 +18,7 @@ matters most — unreachable.
 
 It also has to **burst**. This core exists because its AXI4-Lite sibling could
 not, so a demo peripheral that only accepted single accesses would leave the
-whole point undemonstrated. `demo_target_slave` takes burst writes at one beat
+whole point undemonstrated. `demo_avl_mm_target_slave` takes burst writes at one beat
 per cycle and returns burst reads at one beat per cycle, with zero wait states,
 which is what lets scenario 5 measure the core's throughput claim on silicon.
 

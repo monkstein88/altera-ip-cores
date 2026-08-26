@@ -449,8 +449,19 @@ own.
 4. ASSERT the protected peripheral's reset and HOLD it (>= 16 clocks).
 5. Write RECOVERY.UNBLOCK - while the reset is still asserted.
 6. Release the protected peripheral's reset.
-7. Resume.
+7. Write 1 to the sticky STATUS bits AGAIN.  (see the caution below)
+8. Resume.
 ```
+
+> **Caution:** Step 7 is not a repeat of step 2 for tidiness. Step 2's
+> acknowledge can be overwritten before the sequence completes: a command the
+> peripheral never accepted holds `m0_read`/`m0_write` asserted with
+> `waitrequest` high, so the no-progress timer keeps expiring and re-latching
+> `TIMEOUT_ERROR`, re-arming auto-isolate with it, until `UNBLOCK` at step 5
+> retires the command. Omit step 7 and a successful recovery leaves `STATUS`
+> reading `TIMEOUT_ERROR | ISOLATED` — and `ISOLATED` still gates the data
+> path, so the next transaction is refused by a core that reports itself
+> recovered. `alt_avalon_mm_firewall_recover()` performs step 7 for you.
 
 > **Caution:** Steps 5 and 6 are in this order deliberately. `UNBLOCK` is what
 > withdraws a frozen `m0` command. If the peripheral is already out of reset

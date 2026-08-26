@@ -12,7 +12,7 @@
 //                      csr                          LEDR[8:0] = STATUS
 //                 +-----------+                     LEDR[9]   = irq
 //   demo_sequencer|           |
-//   (plays the    +---------->| avl_mm_firewall_top |----> demo_target_slave
+//   (plays the    +---------->| avl_mm_firewall_top |----> demo_avl_mm_target_slave
 //    part of the  |   s0      |   (the IP core)     | m0    (the peripheral
 //    driver)      +---------->|                     |        being protected,
 //                             +---------------------+        with an injectable
@@ -353,7 +353,7 @@ module de10_lite_avl_mm_firewall_demo #(
     // ==================================================================
     // The peripheral being protected
     // ==================================================================
-    demo_target_slave #(
+    demo_avl_mm_target_slave #(
         .ADDR_WIDTH         (ADDR_WIDTH),
         .DATA_WIDTH         (DATA_WIDTH),
         .BURST_WIDTH        (BURST_WIDTH),

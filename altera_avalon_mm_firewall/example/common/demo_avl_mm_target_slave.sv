@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 
 // =============================================================================
-// demo_target_slave.sv
+// demo_avl_mm_target_slave.sv
 //
 // The peripheral being protected. A small Avalon-MM scratchpad - MEM_WORDS
 // 32-bit words, byte-enabled, BURST CAPABLE - plus a switchable fault
@@ -58,7 +58,7 @@
 // landed" (reads back the orphaned data) with no ambiguity.
 // =============================================================================
 
-module demo_target_slave #(
+module demo_avl_mm_target_slave #(
     parameter int ADDR_WIDTH         = 32,
     parameter int DATA_WIDTH         = 32,
     parameter int BURST_WIDTH        = 8,

@@ -36,7 +36,7 @@ SOURCES=(
     "$CORE/avl_mm_firewall_regs.sv"
     "$CORE/avl_mm_firewall_top.sv"
     "$CORETB/avl_mm_firewall_sva.sv"
-    "$COMMON/demo_target_slave.sv"
+    "$COMMON/demo_avl_mm_target_slave.sv"
     "$DEMO/demo_avl_mm_master.sv"
     "$DEMO/demo_sequencer.sv"
     "$DEMO/hex7seg.sv"

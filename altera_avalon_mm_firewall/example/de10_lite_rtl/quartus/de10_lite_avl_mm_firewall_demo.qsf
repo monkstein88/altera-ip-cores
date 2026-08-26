@@ -49,7 +49,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE ../../../rtl/avl_mm_firewall_pkg.
 set_global_assignment -name SYSTEMVERILOG_FILE ../../../rtl/avl_mm_firewall_regs.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../../rtl/avl_mm_firewall_top.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/demo_avl_mm_master.sv
-set_global_assignment -name SYSTEMVERILOG_FILE ../../common/demo_target_slave.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../common/demo_avl_mm_target_slave.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/demo_sequencer.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/hex7seg.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/key_debounce.sv

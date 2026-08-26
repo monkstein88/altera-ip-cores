@@ -27,6 +27,7 @@ directions for no benefit.
 | [Block diagrams (PDF)](doc/avalon_mm_firewall_block_diagrams.pdf) | Architecture companion: system context, internal architecture, burst handling, register map |
 | [Block diagrams (Markdown)](doc/avalon_mm_firewall_block_diagrams.md) | Same document, readable in the browser |
 | [DE10-Lite RTL demo](example/de10_lite_rtl/README.md) | Self-checking hardware demonstration: 16 scenarios, no CPU or software. **Verified on a physical board.** Where this core's synthesis and Fmax numbers come from |
+| [DE10-Lite Nios II demo](example/de10_lite_nios/README.md) | The same core driven by C on a Nios II/f **at 100 MHz**, inside a generated Platform Designer system. **41/41 checks pass on hardware** |
 | This README | Design rationale and the reasoning behind the decisions — the parts a user guide has no room for |
 
 ---
@@ -92,10 +93,10 @@ altera_avalon_mm_firewall/
 │   ├── verilator/run_sim.sh        Licence-free regression (slang, lint,
 │   │                               parameter sweep, both parameterisations)
 │   └── verilator/slangcheck.py     Strict LRM elaboration gate
-├── example/                        DE10-Lite (MAX 10) demonstration
-│   ├── common/                     The protected peripheral, shared with the
-│   │                               Nios II example when it lands
-│   └── de10_lite_rtl/              16 scenarios in synthesisable RTL, no CPU
+├── example/                        Two DE10-Lite (MAX 10) demonstrations
+│   ├── common/                     The protected peripheral, shared by both
+│   ├── de10_lite_rtl/              16 scenarios in synthesisable RTL, no CPU
+│   └── de10_lite_nios/             C on a Nios II/f at 100 MHz, in Qsys
 └── doc/                            Documents; everything else is generated
     ├── avalon_mm_firewall_user_guide.md / .pdf
     ├── avalon_mm_firewall_block_diagrams.md / .pdf
@@ -316,8 +317,22 @@ the second can wedge the interconnect between the firewall and the peripheral.
 4. ASSERT the peripheral's reset and HOLD it   /* >= 16 clocks              */
 5. write RECOVERY.UNBLOCK                 /* while the reset is asserted    */
 6. release the peripheral's reset
-7. resume
+7. write 1 to the sticky STATUS bits AGAIN     /* see below                 */
+8. resume
 ```
+
+**Step 7 is not redundant, and leaving it out is subtly worse than it looks.**
+Step 2's acknowledge can be overwritten before the sequence finishes. A command
+the peripheral never accepted keeps `m0_read`/`m0_write` asserted with
+`waitrequest` high, so the no-progress timer keeps expiring and re-latching
+`TIMEOUT_ERROR` — re-arming auto-isolate with it — for as long as the command
+is frozen. Only `UNBLOCK` at step 5 retires it.
+
+Skip step 7 and a recovery that has genuinely succeeded leaves `STATUS` reading
+`TIMEOUT_ERROR | ISOLATED`, and `ISOLATED` still gates the data path: the next
+transaction is refused and you have a "recovered" core that answers nothing.
+This was found on hardware, where the symptom was a post-recovery write that
+silently did not land. `alt_avalon_mm_firewall_recover()` does it for you.
 
 **Steps 5 and 6 are in this order deliberately, and this is where the core
 deviates from AMD's published AXI Firewall flow** (which resets, then
@@ -720,9 +735,10 @@ source says the same thing at the call site.
 | Verilator flow | **Not re-run** since the testbench slave model changed from `always_ff` to `always`. Behaviour is unchanged and Verilator accepted both forms, but the numbers above come from Questa |
 | Synthesis results (LE/register count, Fmax) | **Measured** on a MAX 10 `10M50DAF484C7G` (`C7`, slow 1200 mV 85 °C) — see *Performance* for the full table. Standalone at the defaults: 60.77 MHz combinational, **95.85 MHz with `REGISTER_LOOKUP`**; 73.44 → **107.43 MHz** at `NUM_RULES=5`/`ADDR_WIDTH=12`. **100 MHz is reachable with `REGISTER_LOOKUP` at moderate `NUM_RULES`/`ADDR_WIDTH`, but not at the widest defaults**, where the remaining path is the `rd_deny_beats` ↔ `waitrequest` loop |
 | `REGISTER_LOOKUP` mode | **Verified** — the full suite runs in both lookup modes (four parameterisations, 632 checks), 22/22 assertions non-vacuous in all of them |
-| Behaviour on physical hardware | **Verified on a Terasic DE10-Lite** (MAX 10 `10M50DAF484C7G`): 16/16 scenarios pass in the [RTL example](example/de10_lite_rtl/README.md), driven and read back over JTAG |
-| Behaviour in a real Platform Designer system | **Not verified end to end.** The testbench models a well-behaved bursting peripheral, not Platform Designer's generated interconnect; the RTL example connects the core point to point, without generated Qsys interconnect |
-| `hw.tcl` import into a specific Quartus release | **Not verified.** See *Integration*, step 2 |
+| Behaviour on physical hardware | **Verified on a Terasic DE10-Lite** (MAX 10 `10M50DAF484C7G`): 16/16 scenarios in the [RTL example](example/de10_lite_rtl/README.md) at 50 MHz, and 41/41 checks in the [Nios II example](example/de10_lite_nios/README.md) at 100 MHz |
+| Behaviour in a real Platform Designer system | **Verified.** The [Nios II example](example/de10_lite_nios/README.md) runs the core behind generated Qsys interconnect, a pipeline bridge and a Nios II/f data cache, at 100 MHz on hardware |
+| Operation at 100 MHz | **Verified on hardware** with `REGISTER_LOOKUP=1` and the parameters sized to the system — see the [Nios II example](example/de10_lite_nios/README.md) |
+| `hw.tcl` import into a specific Quartus release | **Verified** for Quartus 18.1.1 Standard: the component packages and generates in Platform Designer, and the BSP picks the driver up from `_sw.tcl`. Other releases untested |
 | Wrapping (line-wrap) bursts | **Not supported.** Both interfaces declare `linewrapBursts false`; Platform Designer inserts an adapter if a master needs them |
 
 ---

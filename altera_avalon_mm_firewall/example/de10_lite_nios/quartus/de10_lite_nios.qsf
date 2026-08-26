@@ -1,0 +1,75 @@
+# =============================================================================
+# de10_lite_nios.qsf
+#
+# Quartus settings for the Nios II Avalon-MM Firewall example on the Terasic
+# DE10-Lite (Intel MAX 10, 10M50DAF484C7G).
+#
+# Quartus 18.1 is required: it is the last release with Nios II EDS, and MAX 10
+# support was dropped after Quartus 20.x. A newer Quartus can neither target
+# this device nor build this software.
+#
+# PIN ASSIGNMENTS: the same clock, key, switch and LED pins as the RTL example
+# and the AXI4-Lite demos, which were diffed against the DE10-Lite Golden Top
+# project on the Terasic System CD.
+# =============================================================================
+
+set_global_assignment -name FAMILY "MAX 10"
+set_global_assignment -name DEVICE 10M50DAF484C7G
+set_global_assignment -name TOP_LEVEL_ENTITY de10_lite_nios_top
+set_global_assignment -name ORIGINAL_QUARTUS_VERSION 18.1.1
+set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_files
+
+# MAX 10 configuration, as the DE10-Lite expects it.
+set_global_assignment -name DEVICE_INITIALIZATION_CLOCK OSC_CLK_1_125MHZ
+set_global_assignment -name INTERNAL_FLASH_UPDATE_MODE "SINGLE IMAGE WITH ERAM"
+set_global_assignment -name ENABLE_CONFIGURATION_PINS OFF
+set_global_assignment -name ENABLE_BOOT_SEL_PIN OFF
+set_global_assignment -name USE_CONFIGURATION_DEVICE OFF
+set_global_assignment -name CRC_ERROR_OPEN_DRAIN OFF
+
+set_global_assignment -name RESERVE_ALL_UNUSED_PINS "AS INPUT TRI-STATED WITH WEAK PULL-UP"
+set_global_assignment -name STRATIX_DEVICE_IO_STANDARD "3.3-V LVTTL"
+
+# ---------------------------------------------------------------------------
+# Sources. The Platform Designer system brings the firewall, the protected
+# peripheral and everything else in through its own .qip, so the core's RTL is
+# not listed here - it is pulled from ../../../rtl/ by the component's
+# _hw.tcl, which is what keeps this example building the core that is actually
+# in the repository.
+# ---------------------------------------------------------------------------
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/de10_lite_nios_top.sv
+set_global_assignment -name QIP_FILE ../qsys/firewall_sys/synthesis/firewall_sys.qip
+set_global_assignment -name SDC_FILE de10_lite_nios.sdc
+
+# ---- clock ---------------------------------------------------------
+set_location_assignment PIN_P11 -to "MAX10_CLK1_50"
+
+# ---- push buttons (active low) -------------------------------------
+set_location_assignment PIN_B8 -to "KEY[0]"
+set_location_assignment PIN_A7 -to "KEY[1]"
+
+# ---- slide switches ------------------------------------------------
+set_location_assignment PIN_C10 -to "SW[0]"
+set_location_assignment PIN_C11 -to "SW[1]"
+set_location_assignment PIN_D12 -to "SW[2]"
+set_location_assignment PIN_C12 -to "SW[3]"
+set_location_assignment PIN_A12 -to "SW[4]"
+set_location_assignment PIN_B12 -to "SW[5]"
+set_location_assignment PIN_A13 -to "SW[6]"
+set_location_assignment PIN_A14 -to "SW[7]"
+set_location_assignment PIN_B14 -to "SW[8]"
+set_location_assignment PIN_F15 -to "SW[9]"
+
+# ---- red LEDs ------------------------------------------------------
+set_location_assignment PIN_A8 -to "LEDR[0]"
+set_location_assignment PIN_A9 -to "LEDR[1]"
+set_location_assignment PIN_A10 -to "LEDR[2]"
+set_location_assignment PIN_B10 -to "LEDR[3]"
+set_location_assignment PIN_D13 -to "LEDR[4]"
+set_location_assignment PIN_C13 -to "LEDR[5]"
+set_location_assignment PIN_E14 -to "LEDR[6]"
+set_location_assignment PIN_D14 -to "LEDR[7]"
+set_location_assignment PIN_A11 -to "LEDR[8]"
+set_location_assignment PIN_B11 -to "LEDR[9]"
+
+set_global_assignment -name LAST_QUARTUS_VERSION "18.1.1 Standard Edition"

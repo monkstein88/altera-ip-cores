@@ -64,3 +64,18 @@ output_files/
 *.qdf
 hc_output/
 greybox_tmp/
+
+# Nios II example build artifacts (example/de10_lite_nios/).
+#
+# firewall_sys.qsys IS tracked, so the system can be opened in the Platform
+# Designer GUI straight from a clone; qsys/build_system.tcl remains the source
+# of truth and ./build.sh clean deliberately leaves the .qsys alone.
+example/de10_lite_nios/qsys/firewall_sys/
+example/de10_lite_nios/qsys/.qsys_edit/
+example/de10_lite_nios/software/bsp/
+example/de10_lite_nios/software/obj/
+example/de10_lite_nios/software/Makefile
+example/de10_lite_nios/software/*.elf
+example/de10_lite_nios/software/*.map
+example/de10_lite_nios/software/*.objdump
+example/de10_lite_nios/qsys/firewall_sys.sopcinfo
