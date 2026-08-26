@@ -36,10 +36,11 @@ vlog -sv +acc +cover=sbceft ../../rtl/avl_mm_firewall_top.sv
 vlog -sv +acc +cover=sbceft ../../tb/avl_mm_firewall_sva.sv
 vlog -sv +acc +cover=sbceft ../../tb/avl_mm_firewall_tb.sv
 
-proc run_one {wresp ucdb} {
-    vopt avl_mm_firewall_tb -o tb_opt_$wresp +acc -cover sbceft -assertdebug \
-        -G/avl_mm_firewall_tb/USE_WRITE_RESPONSE=$wresp
-    vsim tb_opt_$wresp -coverage -assertdebug
+proc run_one {wresp reglk ucdb} {
+    vopt avl_mm_firewall_tb -o tb_opt_${wresp}_${reglk} +acc -cover sbceft -assertdebug \
+        -G/avl_mm_firewall_tb/USE_WRITE_RESPONSE=$wresp \
+        -G/avl_mm_firewall_tb/REGISTER_LOOKUP=$reglk
+    vsim tb_opt_${wresp}_${reglk} -coverage -assertdebug
     # The testbench ends with $finish, which by default terminates batch vsim
     # outright - taking `coverage save`, the second parameterisation, the merge
     # and the report with it, silently and with exit status 0. `onfinish stop`
@@ -53,10 +54,17 @@ proc run_one {wresp ucdb} {
     quit -sim
 }
 
-run_one 0 coverage_wresp0.ucdb
-run_one 1 coverage_wresp1.ucdb
+# Four parameterisations, not two. REGISTER_LOOKUP changes the handshake
+# timing of every command - a stall cycle that does not exist in the
+# combinational build - so running only one of them leaves the entire stall
+# path, and the two properties that had to be restated for it, unexercised.
+run_one 0 0 coverage_w0_lk0.ucdb
+run_one 1 0 coverage_w1_lk0.ucdb
+run_one 0 1 coverage_w0_lk1.ucdb
+run_one 1 1 coverage_w1_lk1.ucdb
 
-vcover merge coverage.ucdb coverage_wresp0.ucdb coverage_wresp1.ucdb
+vcover merge coverage.ucdb coverage_w0_lk0.ucdb coverage_w1_lk0.ucdb \
+                           coverage_w0_lk1.ucdb coverage_w1_lk1.ucdb
 
 # ---------------------------------------------------------------------------
 # Reports.
@@ -87,22 +95,35 @@ proc run_passed {} {
     set fh [open run.log r]
     set txt [read $fh]
     close $fh
-    # Both parameterisations must have printed the marker.
+    # All four parameterisations must have printed the marker.
     set n 0
     set idx 0
     while {[set idx [string first "*** ALL TESTS PASSED ***" $txt $idx]] >= 0} {
         incr n
         incr idx
     }
-    return [expr {$n >= 2}]
+    if {$n < 4} { return 0 }
+
+    # ...and no assertion may have fired.
+    #
+    # This is not belt and braces. The testbench counts its OWN checks; an SVA
+    # failure prints "** Error: Assertion error." and does not touch that
+    # count, so a run can report "163 passed, 0 failed" with properties failing
+    # underneath it. That happened while REGISTER_LOOKUP was being brought up -
+    # seven assertion failures behind a clean pass line - and this check is why
+    # it cannot happen quietly again.
+    if {[string first "Assertion error" $txt] >= 0} { return 0 }
+
+    return 1
 }
 
 proc report_result {} {
     if {[run_passed]} {
-        puts "RESULT: PASSED - coverage.ucdb and coverage_report.txt written"
+        puts "RESULT: PASSED - all four parameterisations, no assertion failures"
+        puts "        coverage.ucdb and coverage_report.txt written"
         puts "        (assertion + directive results are inside coverage_report.txt)"
     } else {
-        puts "RESULT: FAILED - see run.log"
+        puts "RESULT: FAILED - see run.log (check for 'Assertion error' too)"
     }
     return
 }

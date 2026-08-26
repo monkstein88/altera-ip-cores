@@ -86,6 +86,7 @@ module de10_lite_avl_mm_firewall_demo_tb;
         .unblock(unblock), .rd_fwd_beats(rd_fwd_beats), .rd_deny_beats(rd_deny_beats),
         .wr_dec(wr_dec), .rd_dec(rd_dec),
         .wr_start(wr_start), .rd_accept(rd_accept), .wr_active(wr_active),
+        .lk_stall(lk_stall),
         .wr_allow(wr_allow), .rd_allow(rd_allow)
     );
 `endif

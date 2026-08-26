@@ -70,7 +70,12 @@
 // =============================================================================
 
 module avl_mm_firewall_tb #(
-    parameter int USE_WRITE_RESPONSE = 0
+    parameter int USE_WRITE_RESPONSE = 0,
+    // 1 => the DUT registers its rule lookup, stalling each transaction for
+    // one cycle. The suite runs both ways: the registered mode changes the
+    // handshake timing of every command, so running only the combinational
+    // one leaves the whole stall path unexercised.
+    parameter int REGISTER_LOOKUP    = 0
 );
 
     localparam int ADDR_WIDTH        = 32;
@@ -194,7 +199,8 @@ module avl_mm_firewall_tb #(
         .NUM_RULES         (NUM_RULES),
         .TIMEOUT_WIDTH     (TIMEOUT_WIDTH),
         .CSR_ADDR_WIDTH    (CSR_ADDR_WIDTH),
-        .USE_WRITE_RESPONSE(USE_WRITE_RESPONSE)
+        .USE_WRITE_RESPONSE(USE_WRITE_RESPONSE),
+        .REGISTER_LOOKUP   (REGISTER_LOOKUP)
     ) dut (
         .clk(clk), .reset_n(reset_n),
 
@@ -235,6 +241,7 @@ module avl_mm_firewall_tb #(
         .unblock(unblock), .rd_fwd_beats(rd_fwd_beats), .rd_deny_beats(rd_deny_beats),
         .wr_dec(wr_dec), .rd_dec(rd_dec),
         .wr_start(wr_start), .rd_accept(rd_accept), .wr_active(wr_active),
+        .lk_stall(lk_stall),
         .wr_allow(wr_allow), .rd_allow(rd_allow)
     );
 `endif
@@ -651,7 +658,8 @@ module avl_mm_firewall_tb #(
 
     initial begin
         $display("\n=========================================================");
-        $display(" Avalon-MM Firewall regression  (USE_WRITE_RESPONSE=%0d)", USE_WRITE_RESPONSE);
+        $display(" Avalon-MM Firewall regression  (USE_WRITE_RESPONSE=%0d, REGISTER_LOOKUP=%0d)",
+                 USE_WRITE_RESPONSE, REGISTER_LOOKUP);
         $display("=========================================================");
 
         for (int i = 0; i < MEMW; i++) mem[i] = '0;

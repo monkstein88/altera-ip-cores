@@ -262,6 +262,7 @@ that has not taken or produced a beat in N cycles is not.
 | `CSR_ADDR_WIDTH` | 8 | **In words.** Must cover word 0x10 + NUM_RULES·4 |
 | `USE_RESPONSE` | 1 | Expose the 2-bit `response` signal (hw.tcl only, not HDL) |
 | `USE_WRITE_RESPONSE` | 0 | Expose `writeresponsevalid`. Requires `USE_RESPONSE` |
+| `REGISTER_LOOKUP` | 0 | Register the rule lookup. Costs **one cycle per transaction**, not per beat, and roughly halves the critical path — see *Performance* |
 
 Three validation callbacks in `hw.tcl` catch the configurations that elaborate,
 simulate and are quietly wrong:
@@ -383,15 +384,23 @@ accidentally restart traffic toward a peripheral nobody has reset yet.
 
 ## Verification
 
-**316 checks pass** — 153 with `USE_WRITE_RESPONSE=0` and 163 with `=1`.
-**0 assertion failures. 0 `m0` protocol violations. 20/20 assertions, 11/11
+**632 checks pass** — the suite runs four times, and each run is 153 checks with
+`USE_WRITE_RESPONSE=0` or 163 with `=1`.
+**0 assertion failures. 0 `m0` protocol violations. 22/22 assertions, 11/11
 cover points hit, and every assertion has a non-zero pass count** — no property
 is passing vacuously.
 
-The suite runs twice on purpose. Write responses change the write channel's
-completion rule (last beat accepted vs. peripheral answered), which changes the
-timeout scope, the abandonment path and the response arbitration against read
-data. Running only the default leaves half the write channel unexercised.
+The suite runs **four** times on purpose, over two independent axes.
+
+`USE_WRITE_RESPONSE` changes the write channel's completion rule (last beat
+accepted vs. peripheral answered), which changes the timeout scope, the
+abandonment path and the response arbitration against read data. Running only
+the default leaves half the write channel unexercised.
+
+`REGISTER_LOOKUP` changes the handshake timing of every command: there is a
+stall cycle in one build that does not exist in the other. Running only the
+combinational build leaves the whole stall path — and the two properties that
+had to be restated for it — unexercised.
 
 ### What is covered
 
@@ -438,7 +447,7 @@ data. Running only the default leaves half the write channel unexercised.
 
 ### Assertions
 
-`tb/avl_mm_firewall_sva.sv` binds 20 assertions and 11 cover points into
+`tb/avl_mm_firewall_sva.sv` binds 22 assertions and 11 cover points into
 `avl_mm_firewall_top`, in three groups:
 
 | Group | What it checks |
@@ -529,22 +538,67 @@ worth relying on. The wait-state generator here is free-running and registered.
 
 Measured by the in-suite benchmark against a zero-wait-state peripheral model:
 
-| Operation | Cycles | Guard |
+| Operation | `REGISTER_LOOKUP=0` | `REGISTER_LOOKUP=1` | Guard |
+|---|---|---|---|
+| 32-beat write burst | **33** cycles | **34** cycles | fails above 36 |
+| 32-beat read burst (command → last beat) | **36** cycles | **37** cycles | fails above 40 |
+
+One beat per cycle plus the peripheral's own read latency, in both modes.
+Registering the lookup adds exactly one cycle **per transaction**, not per
+beat, so the burst rate itself is untouched. Compare the AXI4-Lite sibling's 6
+cycles *per single transaction*: a 32-beat transfer through it costs roughly
+192 cycles once Platform Designer's burst adapter has split it into single
+beats.
+
+### Fmax, and why `REGISTER_LOOKUP` exists
+
+The critical path is the rule lookup, and it is combinational end to end:
+
+```
+avl_mm_firewall_regs|rule_base → NUM_RULES × 2 address comparators
+  → priority chain → decide() → rd_deny_beats / m0_* / s0_waitrequest
+```
+
+Two comparators per rule, because this core checks the **first and last byte**
+of every transaction; every carry chain in them is `ADDR_WIDTH` bits long.
+Measured standalone on a MAX 10 `10M50DAF484C7G` (`C7`, slow 1200 mV 85 °C),
+with virtual pins:
+
+| Configuration | `REGISTER_LOOKUP=0` | `REGISTER_LOOKUP=1` |
 |---|---|---|
-| 32-beat write burst | **33** | fails above 36 |
-| 32-beat read burst (command → last beat) | **36** | fails above 40 |
+| `NUM_RULES=8`, `ADDR_WIDTH=32` (defaults) | 60.77 MHz · 2,649 LEs | **95.85 MHz** · 2,736 LEs |
+| `NUM_RULES=5`, `ADDR_WIDTH=12` | 73.44 MHz · 1,183 LEs | **107.43 MHz** · 1,213 LEs |
+| `NUM_RULES=2`, `ADDR_WIDTH=12` | 83.31 MHz · 928 LEs | — |
 
-That is one beat per cycle plus the peripheral's own read latency — the
-firewall adds no cycles of its own. Compare the AXI4-Lite sibling's 6 cycles
-*per single transaction*: a 32-beat transfer through it costs roughly 192
-cycles once Platform Designer's burst adapter has split it into single beats.
+Registering the lookup costs about 90 logic elements and buys 46–58% more
+clock. With it on, the path moves off the lookup entirely — it becomes a loop
+through the denied-read beat counter and the `waitrequest` handshake, which is
+inherent to the zero-latency Avalon-MM handshake and is where the remaining
+ceiling sits.
 
-**The critical path is the rule lookup**, and it scales with `NUM_RULES`:
-`s0_address` → NUM_RULES range comparators → `m0_read`/`m0_write` and
-`s0_waitrequest`. Fmax is not measured (see below). If it limits your design,
-the standard fix is a pipeline stage on the lookup, which costs one cycle of
-latency per transaction — still amortised across a burst, unlike the AXI
-core's per-beat cost.
+**100 MHz is reachable, but not at the widest settings.** `NUM_RULES=5` with a
+12-bit address space clears it comfortably; the 8-rule, 32-bit default lands at
+96 MHz. If you need 100 MHz there, the lever that still works is the one the
+table shows: fewer rules, or a narrower address space, or both.
+
+### Registering the lookup *increases* bandwidth
+
+The extra cycle is easy to misread as a throughput cost. It is not, because the
+clock gains far more than the cycle costs. A 32-beat, 32-bit burst moves 128
+bytes:
+
+| Configuration | Cycles | Clock | Time | Bandwidth |
+|---|---|---|---|---|
+| defaults, `REGISTER_LOOKUP=0` | 36 | 59.28 MHz | 607 ns | 211 MB/s |
+| defaults, `REGISTER_LOOKUP=1` | 37 | 95.85 MHz | 386 ns | **332 MB/s** (+57%) |
+| `NUM_RULES=5`/`ADDR_WIDTH=12`, off | 36 | 73.44 MHz | 490 ns | 261 MB/s |
+| `NUM_RULES=5`/`ADDR_WIDTH=12`, on | 37 | 107.43 MHz | 344 ns | **372 MB/s** (+42%) |
+
+The one case that genuinely pays is a master doing **single accesses**: those go
+from 1 cycle to 2, so the +1 is a 100% overhead on the transaction rather than
+3%. A CPU poking registers one word at a time sees that; a DMA engine moving
+bursts does not. That asymmetry is the reason this is a parameter and not the
+only behaviour.
 
 ---
 
@@ -655,8 +709,8 @@ source says the same thing at the call site.
 
 | Item | Status |
 |---|---|
-| Functional testbench (316 checks, both parameterisations) | **Passing** under Questa 2024.1 |
-| SVA properties | **20/20**, 0 failures, **all non-vacuous** — lowest pass count is 10 (`a_no_orphan_readdata`), highest 4365 |
+| Functional testbench (632 checks, four parameterisations) | **Passing** under Questa 2024.1 |
+| SVA properties | **22/22**, 0 failures, **all non-vacuous** across all four parameterisations |
 | Cover directives | **11/11 hit**, counts measured under Questa `-cover sbceft` |
 | Strict LRM elaboration | **0 errors** under slang 11 |
 | RTL lint | **Clean** at `verilator --lint-only -Wall`, nothing waived, across 5 parameter configurations |
@@ -664,7 +718,8 @@ source says the same thing at the call site.
 | HAL driver | **Compiles clean** at `-Wall -Wextra -Wpedantic -Werror`; exercised against a stub register model |
 | Questa code coverage | **Measured.** `avl_mm_firewall_top` statements 183/185, branches 137/140, expressions 81/86, conditions 33/39; `avl_mm_firewall_regs` statements 110/110. The unhit remainder is defensive code the design forbids reaching — see *Verification* |
 | Verilator flow | **Not re-run** since the testbench slave model changed from `always_ff` to `always`. Behaviour is unchanged and Verilator accepted both forms, but the numbers above come from Questa |
-| Synthesis results (LE/register count, Fmax) | **Measured** by the [DE10-Lite example](example/de10_lite_rtl/README.md) on a MAX 10 `10M50DAF484C7G` (`C7`, slow 1200 mV 85 °C). Standalone: **59.28 MHz** at the defaults (`NUM_RULES=8`, `ADDR_WIDTH=32`, 2,657 LEs), **73.44 MHz** at `NUM_RULES=5`/`ADDR_WIDTH=12` (1,183 LEs), **83.31 MHz** at `NUM_RULES=2`/`ADDR_WIDTH=12`. The critical path is `rule_base → rd_deny_beats` — the combinational rule lookup, exactly as predicted. **100 MHz is not reachable in any configuration** without the registered-lookup option below |
+| Synthesis results (LE/register count, Fmax) | **Measured** on a MAX 10 `10M50DAF484C7G` (`C7`, slow 1200 mV 85 °C) — see *Performance* for the full table. Standalone at the defaults: 60.77 MHz combinational, **95.85 MHz with `REGISTER_LOOKUP`**; 73.44 → **107.43 MHz** at `NUM_RULES=5`/`ADDR_WIDTH=12`. **100 MHz is reachable with `REGISTER_LOOKUP` at moderate `NUM_RULES`/`ADDR_WIDTH`, but not at the widest defaults**, where the remaining path is the `rd_deny_beats` ↔ `waitrequest` loop |
+| `REGISTER_LOOKUP` mode | **Verified** — the full suite runs in both lookup modes (four parameterisations, 632 checks), 22/22 assertions non-vacuous in all of them |
 | Behaviour on physical hardware | **Verified on a Terasic DE10-Lite** (MAX 10 `10M50DAF484C7G`): 16/16 scenarios pass in the [RTL example](example/de10_lite_rtl/README.md), driven and read back over JTAG |
 | Behaviour in a real Platform Designer system | **Not verified end to end.** The testbench models a well-behaved bursting peripheral, not Platform Designer's generated interconnect; the RTL example connects the core point to point, without generated Qsys interconnect |
 | `hw.tcl` import into a specific Quartus release | **Not verified.** See *Integration*, step 2 |
@@ -680,13 +735,13 @@ source says the same thing at the call site.
   and the bounded poll in the recovery sequence can become unconditional. The
   tracking registers already exist; this is a contained change and the most
   valuable one for anyone writing against this core.
-- **Registered lookup option**, as a parameter rather than a fork. No longer a
-  speculative nice-to-have: the core tops out at **83 MHz even at `NUM_RULES=2`
-  with a 12-bit address space** on a `C7` MAX 10, because the lookup is
-  combinational end to end (`rule_base → comparators → verdict →
-  rd_deny_beats`). Registering it cuts that path roughly in half for one cycle
-  per *transaction*, amortised across a burst. This is what any design needing
-  100 MHz on this part requires.
+- ~~**Registered lookup option**, as a parameter rather than a fork.~~
+  **Done** — `REGISTER_LOOKUP`, default off. See *Performance*: 60.8 → 95.9 MHz
+  at the defaults, 73.4 → 107.4 MHz at `NUM_RULES=5`/`ADDR_WIDTH=12`, for about
+  90 logic elements and one cycle per transaction. What remains is the path it
+  exposed underneath: a loop through the denied-read beat counter and the
+  `waitrequest` handshake, which is what now caps the widest configuration at
+  96 MHz.
 - Rule-hit counters per window, for auditing and profiling access patterns.
 - Synthesis numbers (LE/register count, Fmax vs `NUM_RULES`) — currently the
   largest unmeasured item.

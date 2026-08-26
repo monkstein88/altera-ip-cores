@@ -70,6 +70,9 @@ module avl_mm_firewall_sva
     input logic                 wr_start,
     input logic                 rd_accept,
     input logic                 wr_active,
+    // 1 while a registered lookup is resolving. Constant 0 when
+    // REGISTER_LOOKUP is off, so every property below is unchanged there.
+    input logic                 lk_stall,
     input logic                 wr_allow,
     input logic                 rd_allow
 );
@@ -166,8 +169,16 @@ module avl_mm_firewall_sva
     // middle of a write burst is already a master protocol violation
     // (a_no_read_during_write_burst below), and the core holds it off rather
     // than interleaving it into the burst.
+    // `!lk_stall` is an exclusion, not a loosening. The claim is that the
+    // firewall never stalls a transaction ON THE RULE CHECK - that a denial is
+    // answered rather than held - and that is what makes the core incapable of
+    // becoming the hang it exists to prevent. With REGISTER_LOOKUP the verdict
+    // costs one cycle to compute, and during that cycle there is no verdict to
+    // act on yet. Every cycle after it is still covered, and
+    // a_lookup_stall_bounded below caps the excluded window at exactly one
+    // cycle, so nothing can hide in it.
     a_denied_read_not_stalled: assert property (
-        (s0_read && !rd_allow && !wr_active &&
+        (s0_read && !rd_allow && !wr_active && !lk_stall &&
          rd_deny_beats == '0 && rd_fwd_beats == '0)
         |-> !s0_waitrequest);
 
@@ -185,7 +196,17 @@ module avl_mm_firewall_sva
 
     // A denied write is likewise consumed immediately rather than stalled.
     a_denied_write_not_stalled: assert property (
-        (wr_start && !wr_allow) |-> !s0_waitrequest);
+        (wr_start && !wr_allow && !lk_stall) |-> !s0_waitrequest);
+
+    // The lookup stall is exactly one cycle. Without this the exclusions above
+    // would be a hole: a stall that could persist would let the core hold a
+    // transaction indefinitely and still satisfy both properties.
+    a_lookup_stall_bounded: assert property (lk_stall |=> !lk_stall);
+
+    // And it only ever applies to a command. Beats 2..N of a write burst carry
+    // no address and must never be stalled by the lookup, or the one-cycle
+    // cost would become per-beat and the burst throughput claim would be lost.
+    a_no_lookup_stall_mid_burst: assert property (!(lk_stall && wr_active));
 
     // ==================================================================
     // COVER - proof the interesting paths were REACHED, not merely never

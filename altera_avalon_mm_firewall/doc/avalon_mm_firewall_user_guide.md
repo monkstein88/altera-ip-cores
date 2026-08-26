@@ -565,6 +565,7 @@ acceptance, and never touch the peripheral.
 | `CSR_ADDR_WIDTH` | 8 | 5–16 | Yes | Control port address width, **in words** |
 | `USE_RESPONSE` | 1 | 0, 1 | No | Expose the 2-bit `response` signal on `s0` and `m0` |
 | `USE_WRITE_RESPONSE` | 0 | 0, 1 | Yes | Expose `writeresponsevalid`. Requires `USE_RESPONSE` |
+| `REGISTER_LOOKUP` | 0 | 0, 1 | Yes | Register the rule lookup, breaking the combinational path from the rule table to the verdict. Costs one cycle per transaction, not per beat |
 
 ## Choosing values
 
@@ -955,14 +956,15 @@ has failed and must be retried by whoever issued it.
 runs under Verilator (`--timing --assert`), Questa, and Icarus (`-g2012`, with
 `-DICARUS` to omit the assertion bind).
 
-**The suite runs twice**, once with `USE_WRITE_RESPONSE` = 0 and once with 1.
+**The suite runs four times**: `USE_WRITE_RESPONSE` 0 and 1, each with
+`REGISTER_LOOKUP` 0 and 1.
 Write responses change the write channel's completion rule — last beat
 accepted, versus peripheral answered — and with it the timeout scope, the
 abandonment path and the arbitration of the shared `response` signal against
 read data. Running only the default leaves half the write channel unexercised.
 
-**Result: 316 checks pass** — 153 with write responses disabled and 163 with
-them enabled. Zero assertion failures, zero `m0` protocol violations, and every
+**Result: 632 checks pass** — each of the four runs is 153 checks with write
+responses disabled or 163 with them enabled. Zero assertion failures, zero `m0` protocol violations, and every
 one of the 20 assertions has a non-zero pass count, so none of them is passing
 vacuously.
 
@@ -998,7 +1000,7 @@ Coverage includes:
 
 ## 8.2 Assertions
 
-`tb/avl_mm_firewall_sva.sv` binds **20 assertions and 11 cover points** into
+`tb/avl_mm_firewall_sva.sv` binds **22 assertions and 11 cover points** into
 `avl_mm_firewall_top`, in three groups.
 
 | Group | Properties |

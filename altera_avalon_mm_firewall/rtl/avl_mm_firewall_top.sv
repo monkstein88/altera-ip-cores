@@ -178,7 +178,12 @@ module avl_mm_firewall_top
     parameter int NUM_RULES         = 8,
     parameter int TIMEOUT_WIDTH     = 20,
     parameter int CSR_ADDR_WIDTH    = 8,  // CSR port address width, IN WORDS
-    parameter int USE_WRITE_RESPONSE = 0  // 1 => writeresponsevalid/response on writes
+    parameter int USE_WRITE_RESPONSE = 0, // 1 => writeresponsevalid/response on writes
+    // 1 => register the rule lookup, breaking the combinational path from the
+    // rule table to the verdict. Costs one cycle per TRANSACTION (not per
+    // beat) and is what any design above ~60 MHz on a mid-speed part needs.
+    // See "REGISTERED LOOKUP" below. Default 0: behaviour is unchanged.
+    parameter int REGISTER_LOOKUP    = 0
 ) (
     input  logic                       clk,
     input  logic                       reset_n,     // active-low, synchronous
@@ -232,6 +237,7 @@ module avl_mm_firewall_top
     localparam int BEATCNT_W   = $clog2(RD_CAPACITY+1) + 1;
 
     localparam bit HAS_WRESP = (USE_WRITE_RESPONSE != 0);
+    localparam bit REG_LK    = (REGISTER_LOOKUP != 0);
 
     // Response encoding, verdict codes (fw_code_e) and fw_resp() all come from
     // avl_mm_firewall_pkg, shared with the register block.
@@ -378,6 +384,62 @@ module avl_mm_firewall_top
     assign chk_r_last = burst_last;
 
     // ==================================================================
+    // REGISTERED LOOKUP (REGISTER_LOOKUP = 1)
+    //
+    // The critical path of this core, measured on a MAX 10 C7 part, runs
+    //
+    //   avl_mm_firewall_regs|rule_base -> NUM_RULES x 2 address comparators
+    //     -> priority chain -> decide() -> rd_deny_beats / m0_* / waitrequest
+    //
+    // end to end with no register in it. That is the "gate, not a buffer"
+    // decision this core is built on, and it caps Fmax at 59 MHz at the
+    // defaults - 83 MHz even at NUM_RULES=2 with a 12-bit address space.
+    //
+    // Setting REGISTER_LOOKUP inserts a register in the middle of that path:
+    // the lookup result is captured, and the verdict is computed from the
+    // captured copy. A fresh command is stalled for exactly one cycle while
+    // that happens. Avalon-MM already requires a master to hold address and
+    // burstcount stable while waitrequest is high, so nothing has to be
+    // captured except the lookup itself.
+    //
+    // WHAT IS *NOT* REGISTERED, deliberately: forward_blocked and
+    // global_enable stay live inputs to decide(). Registering them would let
+    // a transaction be evaluated against a stale isolation state, and "a
+    // fresh fault always wins" is a property the block/unblock logic and the
+    // recovery sequence both depend on. Only the rule lookup - the long part
+    // - is registered.
+    //
+    // COST: one cycle per TRANSACTION, not per beat. A 32-beat burst pays it
+    // once and amortises it; a single access pays it in full. That is the
+    // whole trade, and it is why this is a parameter rather than the only
+    // behaviour.
+    // ==================================================================
+    logic lk_stall;      // a fresh command is waiting for its verdict
+    logic lk_valid;      // the captured verdict describes the command on s0
+
+    logic r_w_match, r_w_allow, r_w_contain, r_w_burst_en;
+    logic r_r_match, r_r_allow, r_r_contain, r_r_burst_en;
+    logic r_is_burst, r_burst_wrap;
+
+    // What decide() actually sees. Constant-folded: with REGISTER_LOOKUP = 0
+    // this is the combinational lookup, unchanged, and the registers below
+    // are not instantiated at all.
+    logic eff_w_match, eff_w_allow, eff_w_contain, eff_w_burst_en;
+    logic eff_r_match, eff_r_allow, eff_r_contain, eff_r_burst_en;
+    logic eff_is_burst, eff_burst_wrap;
+
+    assign eff_w_match    = REG_LK ? r_w_match    : chk_w_match;
+    assign eff_w_allow    = REG_LK ? r_w_allow    : chk_w_allow;
+    assign eff_w_contain  = REG_LK ? r_w_contain  : chk_w_contain;
+    assign eff_w_burst_en = REG_LK ? r_w_burst_en : chk_w_burst_en;
+    assign eff_r_match    = REG_LK ? r_r_match    : chk_r_match;
+    assign eff_r_allow    = REG_LK ? r_r_allow    : chk_r_allow;
+    assign eff_r_contain  = REG_LK ? r_r_contain  : chk_r_contain;
+    assign eff_r_burst_en = REG_LK ? r_r_burst_en : chk_r_burst_en;
+    assign eff_is_burst   = REG_LK ? r_is_burst   : is_burst;
+    assign eff_burst_wrap = REG_LK ? r_burst_wrap : burst_wrap;
+
+    // ==================================================================
     // DECISION
     // ==================================================================
     // `blocked` is checked before `bypass` on purpose: CTRL.GLOBAL_ENABLE=0
@@ -404,11 +466,11 @@ module avl_mm_firewall_top
     logic     wr_allow, rd_allow;
 
     assign wr_dec = decide(forward_blocked, global_enable,
-                           chk_w_match, chk_w_allow, chk_w_contain, chk_w_burst_en,
-                           is_burst, burst_wrap);
+                           eff_w_match, eff_w_allow, eff_w_contain, eff_w_burst_en,
+                           eff_is_burst, eff_burst_wrap);
     assign rd_dec = decide(forward_blocked, global_enable,
-                           chk_r_match, chk_r_allow, chk_r_contain, chk_r_burst_en,
-                           is_burst, burst_wrap);
+                           eff_r_match, eff_r_allow, eff_r_contain, eff_r_burst_en,
+                           eff_is_burst, eff_burst_wrap);
     assign wr_allow = (wr_dec == FW_ALLOW);
     assign rd_allow = (rd_dec == FW_ALLOW);
 
@@ -475,15 +537,26 @@ module avl_mm_firewall_top
     // requirement satisfied without a reorder buffer.
     assign rd_gate_deny  = (rd_deny_beats == '0) && (rd_fwd_beats == '0) && !wr_active;
 
+    // Read straight off the register, NOT recomputed from the next-state.
+    // Tracking this in a flop fed by rd_deny_next was measured and is 7 MHz
+    // SLOWER: it moves the zero-compare from the counter's output, where it
+    // starts at a register, to its input, where it sits behind the whole
+    // accept/abandon mux.
     assign rd_deny_emit = (rd_deny_beats != '0);
 
     // ---- m0 command drive ----
     logic m0_write_i, m0_read_i;
 
+    // `!lk_stall` matters even though the verdict is unusable during the
+    // lookup cycle: without it a stale captured verdict could assert m0_read
+    // or m0_write for one cycle and then withdraw it, which is exactly the
+    // protocol violation this core refuses to commit. With REGISTER_LOOKUP=0
+    // lk_stall is a constant 0 and these terms vanish.
     assign m0_write_i = wr_stuck ? 1'b1
-                      : (s0_write && (wr_active ? wr_fwd : (wr_allow && wr_gate)));
+                      : (s0_write && !lk_stall &&
+                         (wr_active ? wr_fwd : (wr_allow && wr_gate)));
     assign m0_read_i  = rd_stuck ? 1'b1
-                      : (s0_read && rd_allow && rd_gate_allow);
+                      : (s0_read && !lk_stall && rd_allow && rd_gate_allow);
 
     assign m0_write = m0_write_i;
     assign m0_read  = m0_read_i;
@@ -508,10 +581,14 @@ module avl_mm_firewall_top
     assign rd_wait = rd_allow  ? (rd_gate_allow ? m0_waitrequest : 1'b1)
                                : (rd_gate_deny  ? 1'b0           : 1'b1);
 
+    // The lookup stall takes priority over everything: until the verdict
+    // exists there is nothing to decide with. It lasts exactly one cycle per
+    // transaction, and only when REGISTER_LOOKUP is set.
     always_comb begin
-        if (s0_write)     s0_waitrequest = wr_wait;
-        else if (s0_read) s0_waitrequest = rd_wait;
-        else              s0_waitrequest = 1'b0;
+        if (lk_stall)     s0_waitrequest = 1'b1;
+        else if (s0_write) s0_waitrequest = wr_wait;
+        else if (s0_read)  s0_waitrequest = rd_wait;
+        else               s0_waitrequest = 1'b0;
     end
 
     logic wr_accept, rd_accept, wr_start, wr_last_beat, wr_fwd_now;
@@ -522,6 +599,81 @@ module avl_mm_firewall_top
     assign wr_fwd_now  = wr_active ? wr_fwd : wr_allow;
     assign wr_last_beat = wr_accept && (wr_active ? (wr_beats_left == BURST_WIDTH'(1))
                                                   : (bcnt == BURST_WIDTH'(1)));
+
+    // ------------------------------------------------------------------
+    // Lookup pipeline register.
+    //
+    // Placed here rather than beside the declarations because it needs
+    // rd_accept / wr_start, and referencing an identifier before its
+    // declaration creates an implicit net that then collides with the real
+    // one - Verilator resolves it silently, Questa and slang reject it.
+    //
+    // A "command" is a read, or the FIRST beat of a write. Beats 2..N of a
+    // write burst carry no address and reuse wr_fwd, so they are never
+    // stalled and the cost stays one cycle per transaction.
+    // ------------------------------------------------------------------
+    logic lk_cmd;
+    assign lk_cmd = s0_read || (s0_write && !wr_active);
+
+    generate
+        if (REG_LK) begin : g_reg_lookup
+            assign lk_stall = lk_cmd && !lk_valid;
+
+            always_ff @(posedge clk) begin
+                if (!reset_n) begin
+                    lk_valid     <= 1'b0;
+                    r_w_match    <= 1'b0;
+                    r_w_allow    <= 1'b0;
+                    r_w_contain  <= 1'b0;
+                    r_w_burst_en <= 1'b0;
+                    r_r_match    <= 1'b0;
+                    r_r_allow    <= 1'b0;
+                    r_r_contain  <= 1'b0;
+                    r_r_burst_en <= 1'b0;
+                    r_is_burst   <= 1'b0;
+                    r_burst_wrap <= 1'b0;
+                end else begin
+                    if (lk_stall) begin
+                        r_w_match    <= chk_w_match;
+                        r_w_allow    <= chk_w_allow;
+                        r_w_contain  <= chk_w_contain;
+                        r_w_burst_en <= chk_w_burst_en;
+                        r_r_match    <= chk_r_match;
+                        r_r_allow    <= chk_r_allow;
+                        r_r_contain  <= chk_r_contain;
+                        r_r_burst_en <= chk_r_burst_en;
+                        r_is_burst   <= is_burst;
+                        r_burst_wrap <= burst_wrap;
+                        lk_valid     <= 1'b1;
+                    end
+
+                    // Retire the verdict once its command has been consumed,
+                    // or if the master withdraws before it is. Either way the
+                    // next command gets a fresh lookup - the captured copy
+                    // describes one transaction and no other.
+                    if (rd_accept || wr_start || !lk_cmd) lk_valid <= 1'b0;
+                end
+            end
+        end else begin : g_comb_lookup
+            // Combinational pass-through: no stall, no registers, and the
+            // r_* signals are tied off so nothing is left floating.
+            assign lk_stall = 1'b0;
+
+            always_comb begin
+                lk_valid     = 1'b0;
+                r_w_match    = 1'b0;
+                r_w_allow    = 1'b0;
+                r_w_contain  = 1'b0;
+                r_w_burst_en = 1'b0;
+                r_r_match    = 1'b0;
+                r_r_allow    = 1'b0;
+                r_r_contain  = 1'b0;
+                r_r_burst_en = 1'b0;
+                r_is_burst   = 1'b0;
+                r_burst_wrap = 1'b0;
+            end
+        end
+    endgenerate
 
     // ---- s0 response path ----
     //
@@ -731,12 +883,32 @@ module avl_mm_firewall_top
     // ==================================================================
     // READ CHANNEL
     // ==================================================================
+    // rd_fwd_after is what m0 would still owe after this cycle's accept and
+    // beat, IGNORING abandonment. It is the quantity the abandon path converts
+    // into synthesised error beats, so it has to be available before
+    // abandonment is applied - hence two signals rather than one.
+    logic [BEATCNT_W-1:0] rd_fwd_after;
     logic [BEATCNT_W-1:0] rd_fwd_next;
+    logic [BEATCNT_W-1:0] rd_deny_next;
 
     always_comb begin
-        rd_fwd_next = rd_fwd_beats;
-        if (rd_accept && rd_allow) rd_fwd_next = rd_fwd_next + BEATCNT_W'(bcnt);
-        if (rd_fwd_valid)          rd_fwd_next = rd_fwd_next - BEATCNT_W'(1);
+        rd_fwd_after = rd_fwd_beats;
+        if (rd_accept && rd_allow) rd_fwd_after = rd_fwd_after + BEATCNT_W'(bcnt);
+        if (rd_fwd_valid)          rd_fwd_after = rd_fwd_after - BEATCNT_W'(1);
+    end
+
+    // A timeout on either channel gives up on everything m0 still owes.
+    assign rd_fwd_next = abandon ? '0 : rd_fwd_after;
+
+    // The denied-beat counter's next value, made explicit so the non-zero flag
+    // can be derived from it. The assignment order below reproduces exactly
+    // the priority the sequential block used to have: emit decrements, a new
+    // denial overrides that, and abandonment overrides both.
+    always_comb begin
+        rd_deny_next = rd_deny_beats;
+        if (rd_deny_emit)                    rd_deny_next = rd_deny_beats - BEATCNT_W'(1);
+        if (rd_accept && !rd_allow)          rd_deny_next = BEATCNT_W'(bcnt);
+        if (abandon && (rd_fwd_after != '0)) rd_deny_next = rd_fwd_after;
     end
 
     always_ff @(posedge clk) begin
@@ -768,17 +940,14 @@ module avl_mm_firewall_top
             end
 
             // ---- beat accounting ----
-            rd_fwd_beats <= rd_fwd_next;
-
-            if (rd_deny_emit) rd_deny_beats <= rd_deny_beats - BEATCNT_W'(1);
-
+            //
             // A denied read is accepted immediately and the core owes the
             // master the full burst's worth of error beats. This is the part
             // that has no AXI4-Lite analogue: there is no way to say "no".
-            if (rd_accept && !rd_allow) begin
-                rd_deny_beats <= BEATCNT_W'(bcnt);
-                rd_deny_resp  <= fw_resp(rd_dec);
-            end
+            rd_fwd_beats  <= rd_fwd_next;
+            rd_deny_beats <= rd_deny_next;
+
+            if (rd_accept && !rd_allow) rd_deny_resp <= fw_resp(rd_dec);
 
             if (rd_accept && !rd_allow && (rd_dec != FW_BLOCKED)) begin
                 rd_flt_type       <= rd_dec;
@@ -801,12 +970,10 @@ module avl_mm_firewall_top
                 // Beats the peripheral owes but will never deliver become
                 // beats the core delivers itself, as SLAVEERROR. Without this
                 // the master waits for readdatavalid forever, which is exactly
-                // the hang the firewall exists to prevent.
-                if (rd_fwd_next != '0) begin
-                    rd_deny_beats <= rd_fwd_next;
-                    rd_deny_resp  <= RESP_SLAVEERROR;
-                end
-                rd_fwd_beats <= '0;
+                // the hang the firewall exists to prevent. The counters
+                // themselves are loaded by rd_deny_next / rd_fwd_next above;
+                // only the response code is set here.
+                if (rd_fwd_after != '0) rd_deny_resp <= RESP_SLAVEERROR;
             end
 
             if (rd_to_fire) begin

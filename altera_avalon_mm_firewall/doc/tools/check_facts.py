@@ -56,25 +56,30 @@ FIGS = rd("doc/tools/diagrams/build_figures.py")
 # a working copy is exactly how wrong numbers get cited as current. So they may
 # legitimately be absent. When they are, the checks that depend on them are
 # skipped and counted, loudly, rather than silently passing.
-LOG0 = rd_opt("simulation/verilator/run_wresp0.log")
-LOG1 = rd_opt("simulation/verilator/run_wresp1.log")
+# Four parameterisations: USE_WRITE_RESPONSE x REGISTER_LOOKUP.
+LOGS = [rd_opt(f"simulation/verilator/run_wresp{w}_lk{l}.log")
+        for w in (0, 1) for l in (0, 1)]
 
-# Fall back to the Questa transcript. It holds both parameterisations in one
-# file, and its lines carry vsim's "# " prefix, so it is split on the banner the
+# Fall back to the Questa transcript. It holds all four runs in one file, and
+# its lines carry vsim's "# " prefix, so it is split on the banner the
 # testbench prints and the prefix is stripped. Without this the check totals go
 # unverified on any machine that has Questa but not Verilator - which is how a
 # quoted total can drift from the suite that produced it.
-if LOG0 is None or LOG1 is None:
+if any(x is None for x in LOGS):
     qlog = rd_opt("simulation/questa/run.log")
     if qlog is not None:
         body = re.sub(r"^# ?", "", qlog, flags=re.M)
-        parts = re.split(r"^ Avalon-MM Firewall regression\s+\(USE_WRITE_RESPONSE=(\d)\)",
-                         body, flags=re.M)
-        runs = dict(zip(parts[1::2], parts[2::2]))
-        if "0" in runs and "1" in runs:
-            LOG0, LOG1 = runs["0"], runs["1"]
+        parts = re.split(
+            r"^ Avalon-MM Firewall regression\s+"
+            r"\(USE_WRITE_RESPONSE=(\d), REGISTER_LOOKUP=(\d)\)",
+            body, flags=re.M)
+        runs = {}
+        for i in range(1, len(parts) - 2, 3):
+            runs[(parts[i], parts[i + 1])] = parts[i + 2]
+        if len(runs) == 4:
+            LOGS = [runs[(str(w), str(l))] for w in (0, 1) for l in (0, 1)]
 
-HAVE_RUN = LOG0 is not None and LOG1 is not None
+HAVE_RUN = all(x is not None for x in LOGS)
 
 bad, ok, skipped = [], 0, 0
 
@@ -468,20 +473,28 @@ chk(len(sva_covers) == n_cover,
 
 # ---- 10. measured results ----------------------------------------------
 if HAVE_RUN:
-    n0 = len(re.findall(r"^  PASS", LOG0, re.M))
-    n1 = len(re.findall(r"^  PASS", LOG1, re.M))
-    tot = n0 + n1
+    counts = [len(re.findall(r"^  PASS", L, re.M)) for L in LOGS]
+    tot = sum(counts)
+    n0, n1 = counts[0], counts[2]      # wresp0 / wresp1; both lookup modes match
+    chk(counts[0] == counts[1] and counts[2] == counts[3],
+        "REGISTER_LOOKUP changed the number of checks that run - the suite is "
+        "supposed to be the same tests either way")
     for doc_name, doc in (("user guide", UG), ("README", RM)):
         chk(str(tot) in doc,
             f"{doc_name} quotes a check total that is not {tot}")
         chk(str(n0) in doc and str(n1) in doc,
             f"{doc_name} does not quote the per-run totals {n0} and {n1}")
-    for name, log in (("wresp0", LOG0), ("wresp1", LOG1)):
+    names = [f"wresp{w}_lk{l}" for w in (0, 1) for l in (0, 1)]
+    for name, log in zip(names, LOGS):
         chk("*** ALL TESTS PASSED ***" in log,
             f"{name} log does not contain the pass marker")
         chk("FAIL:" not in log, f"{name} log contains failures")
         chk("PROTOCOL VIOLATION" not in log,
             f"{name} log contains protocol violations")
+        # An SVA failure does not touch the testbench's own pass/fail count,
+        # so a run can report "0 failed" with properties failing underneath.
+        chk("Assertion error" not in log and "Assertion failed" not in log,
+            f"{name} log contains assertion failures")
 else:
     skip("simulation logs absent - check counts not verified. Run "
          "simulation/verilator/run_sim.sh or simulation/questa/run_sim.tcl first.")

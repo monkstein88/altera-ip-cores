@@ -52,7 +52,7 @@ fails to find its markers and says so.
 
 ## What check_facts.py actually verifies
 
-289 individual claims, across (279 when no simulation log is present and the
+304 individual claims, across (283 when no simulation log is present and the
 measured-result checks are skipped):
 
 - **Register offsets**, in both directions. The RTL holds *word* offsets and
@@ -74,6 +74,10 @@ measured-result checks are skipped):
   header, `hw.tcl` and the user guide's parameter table.
 - **Assertion and cover-point counts**, and that every cover point the README
   names actually exists.
+- **Assertion FAILURES in the logs.** An SVA failure does not touch the
+  testbench's own pass/fail count, so a run can report "0 failed" with
+  properties failing underneath it - which is exactly what happened while
+  REGISTER_LOOKUP was being brought up.
 - **Measured results** — check totals are read out of the simulation logs, not
   transcribed. The Verilator per-run logs are preferred; failing those, the
   Questa transcript is split on the testbench banner and used instead, so the

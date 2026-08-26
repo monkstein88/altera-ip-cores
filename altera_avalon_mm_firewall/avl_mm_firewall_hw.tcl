@@ -136,6 +136,13 @@ set_parameter_property USE_RESPONSE ALLOWED_RANGES {0 1}
 set_parameter_property USE_RESPONSE HDL_PARAMETER false
 set_parameter_property USE_RESPONSE DESCRIPTION "Adds the 2-bit Avalon-MM response signal to s0 and m0, so a denied or timed-out access is reported to the master as DECODEERROR or SLAVEERROR. Without it a denied read still returns the right number of beats, but they read as zeros with no error indication - the violation is then visible only through the interrupt and STATUS. Turn this off only for a master that cannot accept response."
 
+add_parameter REGISTER_LOOKUP INTEGER 0
+set_parameter_property REGISTER_LOOKUP DISPLAY_NAME "Register the rule lookup"
+set_parameter_property REGISTER_LOOKUP ALLOWED_RANGES {0 1}
+set_parameter_property REGISTER_LOOKUP HDL_PARAMETER true
+set_parameter_property REGISTER_LOOKUP DESCRIPTION \
+    "Break the combinational path from the rule table to the verdict by registering the lookup. Costs one cycle per transaction (not per beat) and roughly halves the critical path. Leave off for zero added latency; turn on when the rule lookup limits Fmax."
+
 add_parameter USE_WRITE_RESPONSE INTEGER 0
 set_parameter_property USE_WRITE_RESPONSE DISPLAY_NAME "Expose writeresponsevalid"
 set_parameter_property USE_WRITE_RESPONSE ALLOWED_RANGES {0 1}
@@ -359,5 +366,13 @@ proc validate {} {
     if {$bw == 1} {
         send_message info \
             "BURST_WIDTH is 1, so s0 and m0 are non-bursting. The RULE_PERM.BURST_ALLOW bit and the burst range check have no effect in this configuration."
+    }
+    if {[get_parameter_value REGISTER_LOOKUP]} {
+        send_message info \
+            "REGISTER_LOOKUP is on. Every transaction is stalled for one cycle while its verdict is computed, so a single access costs 2 cycles instead of 1 and an N-beat burst costs N+1 instead of N. Beat-rate throughput is unchanged. Turn this off if you need the zero-added-latency pass-through."
+    }
+    if {!$uresp && [get_parameter_value REGISTER_LOOKUP]} {
+        send_message info \
+            "REGISTER_LOOKUP with USE_RESPONSE off: violations cost a stall cycle and are still invisible on the data path. Both are deliberate, but together they make a denied access indistinguishable from a slow one."
     }
 }

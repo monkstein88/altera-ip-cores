@@ -113,17 +113,23 @@ rm -f /tmp/avlfw_lint.$$
 # -----------------------------------------------------------------------------
 OVERALL=0
 
-for WRESP in 0 1; do
-    BUILD="$HERE/obj_dir_wresp$WRESP"
-    LOG="$HERE/run_wresp$WRESP.log"
+# Four parameterisations. REGISTER_LOOKUP changes the handshake timing of
+# every command, so running only the combinational build leaves the stall path
+# and the two properties restated for it unexercised.
+for CFG in "0 0" "1 0" "0 1" "1 1"; do
+    set -- $CFG
+    WRESP=$1
+    REGLK=$2
+    BUILD="$HERE/obj_dir_w${WRESP}_lk${REGLK}"
+    LOG="$HERE/run_wresp${WRESP}_lk${REGLK}.log"
 
     echo
     echo "=============================================================="
-    echo "== USE_WRITE_RESPONSE=$WRESP"
+    echo "== USE_WRITE_RESPONSE=$WRESP  REGISTER_LOOKUP=$REGLK"
     echo "=============================================================="
 
     VFLAGS=(--binary --timing --assert "${WARN_OFF[@]}"
-            -GUSE_WRITE_RESPONSE=$WRESP
+            -GUSE_WRITE_RESPONSE=$WRESP -GREGISTER_LOOKUP=$REGLK
             --top-module avl_mm_firewall_tb -o simx -Mdir "$BUILD")
     [[ -n "$CXX_EXTRA" ]] && VFLAGS+=(-CFLAGS "$CXX_EXTRA")
 
