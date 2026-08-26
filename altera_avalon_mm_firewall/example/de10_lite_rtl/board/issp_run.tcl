@@ -88,6 +88,34 @@ proc show  {tag} {
           [field $d 22 22] [field $d 32 23]]
 }
 
+# ---------------------------------------------------------------------------
+# Refuse to test a board that is already wedged.
+#
+# There is a known issue - see this example's README - where re-running against
+# a board that has already completed a run leaves the sequencer stuck with
+# `running` high. Every step-mode read then returns the PREVIOUS scenario's
+# result, and the checks below report a wrong scenario and a wrong STATUS.
+#
+# That output reads exactly like the FIREWALL failing four checks, which is
+# what it is not: it is a stale board that needs re-programming. Catching it
+# here turns a misleading test failure into an instruction. `src 00` first, so
+# a leftover auto-sweep or start bit from a previous session is not mistaken
+# for a wedge, and the wait allows for the scenario 0 that runs by itself at
+# power-up.
+# ---------------------------------------------------------------------------
+src 00
+if {![wait_idle 60]} {
+    puts ""
+    puts "ERROR: the sequencer is still busy (running=1) before any command was"
+    puts "       sent, so the board is in a stale state and nothing below would"
+    puts "       mean anything. This is NOT a firewall failure."
+    puts ""
+    puts "       Re-program the board and try again - run run_on_board.sh"
+    puts "       WITHOUT --no-program."
+    end_insystem_source_probe
+    exit 1
+}
+
 puts "\n--- state at power-up ---"
 show "idle"
 puts "  (scenario 0 runs by itself so a hand-picked scenario finds a"

@@ -1,0 +1,40 @@
+THIRD-PARTY IP - NOT UNDER THIS REPOSITORY'S MIT LICENCE
+========================================================
+
+This directory contains the SDRAM Controller Intel FPGA IP, version 20.1.
+
+    Copyright (C) 2001-2020 Intel Corporation. All rights reserved.
+
+It is Intel's work, not this repository's author's. It is redistributed here
+because Quartus stopped shipping it: Quartus Prime 18.1 Standard still carries
+a live copy under ip/altera/sopc_builder_ip/, while 25.1 Standard has no copy
+at any depth - only an entry in quartus/common/misc/outdated_ip/ marking it
+retired. It was obtained via the Trenz Electronic forum.
+
+LICENCE
+-------
+Use is governed by the terms in the headers of the files in this directory -
+the Intel Program License Subscription Agreement, the Intel FPGA IP License
+Agreement, or such other agreement as those headers reference. In substance
+those terms restrict use to programming logic devices manufactured and sold by
+Intel/Altera or their authorised distributors.
+
+The MIT licence in the repository root does NOT apply to this directory, and
+nothing here relicenses Intel's IP.
+
+MODIFICATION MADE HERE
+----------------------
+Two module properties in altera_avalon_new_sdram_controller_hw.tcl are changed
+from Intel's original, and the change is commented at the point it occurs:
+
+    HIDE_FROM_SOPC      true -> false
+    HIDE_FROM_QUARTUS   true -> false
+
+Intel set both when retiring the IP from the Platform Designer catalog in 20.1,
+so it remained instantiable for existing designs but was hidden from new ones.
+They are false here so the component appears in the catalog and can be used,
+which is the only reason to preserve it. Set them back to true for Intel's
+original catalog behaviour.
+
+Nothing else is altered: not the rest of the _hw.tcl, not the Perl generators,
+and not the generated RTL.

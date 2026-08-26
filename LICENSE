@@ -1,0 +1,54 @@
+MIT License
+
+Copyright (c) 2026 Monk Monkstein
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+===============================================================================
+SCOPE OF THIS LICENCE
+===============================================================================
+
+This repository contains both original work and third-party IP. They are NOT
+under the same terms.
+
+COVERED by the MIT licence above - original work:
+
+    altera_avalon_mm_firewall/          the Avalon-MM Firewall core, its
+                                        testbenches, documentation, HAL driver
+                                        and DE10-Lite examples
+    altera_axi4_lite_firewall/          the AXI4-Lite Firewall core, and the
+                                        same supporting material
+    README.md, and the repository tooling
+
+NOT COVERED - third-party IP, redistributed under its own terms:
+
+    altera_avalon_new_sdram_controller/
+
+That directory contains the SDRAM Controller Intel FPGA IP, copyright
+(C) 2001-2020 Intel Corporation. It is not the author's work, is not offered
+under the MIT licence, and cannot be relicensed here. Its use is governed by
+the Intel Program License Subscription Agreement, the Intel FPGA IP License
+Agreement, or such other agreement as the headers in those files reference -
+which in practice means it is for use with programmable devices manufactured
+and sold by Intel/Altera or their authorised distributors.
+
+See altera_avalon_new_sdram_controller/NOTICE for the detail, including the
+one change made to it in this repository.
+
+If you take only the firewalls, only the MIT licence applies.

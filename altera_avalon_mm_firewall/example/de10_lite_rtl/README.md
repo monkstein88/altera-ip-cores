@@ -94,6 +94,10 @@ Exit status is 0 only if everything passed.
 RESULT: PASSED ON HARDWARE
 ```
 
+That is a real transcript, but **expect it about half the time**: the sweep
+always passes, while the step-mode section that follows wedges intermittently.
+See [Known issue](#known-issue-the-jtag-step-mode-check-is-intermittent).
+
 Those two `status` values are the live `STATUS` register read off real silicon.
 `134` is `TIMEOUT | ISOLATED | BLOCKED | WR_CMD_STUCK` after scenario `b`;
 `234` is the same three bits with **`RD_CMD_STUCK`** instead, after `C`. The
@@ -418,11 +422,68 @@ bandwidth arithmetic; the short version is that the extra cycle costs ~3% on a
 
 ---
 
+## Known issue: the JTAG step-mode check is intermittent
+
+**The auto sweep is reliable. The step-mode section that follows it is not.**
+
+Measured across four consecutive runs, each with a freshly programmed board:
+
+```
+run 1  sweep FFFF (16/16)   step mode wedged      FAILED
+run 2  sweep FFFF (16/16)   b=0x134  C=0x234      PASSED
+run 3  sweep FFFF (16/16)   b=0x134  C=0x234      PASSED
+run 4  sweep FFFF (16/16)   step mode wedged      FAILED
+```
+
+**The sweep reached `bitmap = FFFF` — all sixteen scenarios — on every run,
+including the two that then failed.** What fails is the step-mode section: the
+sequencer ends up with `running` stuck high, no further start pulse is
+accepted, and each subsequent read returns the previous scenario's result. So
+`run_on_board.sh` reports `RESULT: FAILED` roughly half the time, and the
+failure is always in the same place.
+
+### What it is not
+
+- **Not `--no-program`.** It happens on freshly programmed boards. Once wedged
+  the state does persist until a re-program, which is why re-running without
+  programming looks worse, but that is a consequence, not the cause.
+- **Not the ISSP tool version.** 18.1 and 25.1 `quartus_stp` were compared
+  directly against the same bitstream and behave identically.
+- **Not the Quartus build version.** Seen with bitstreams from both 18.1 and
+  25.1 Standard.
+- **Not the demo logic.** From a fresh configuration, stepping `C`, then `b`,
+  then `C` again all run and report correctly, and the sweep exercises all
+  sixteen scenarios every time.
+
+It has **not** been root-caused. The suspect area is the interaction between
+the sweep and the sequencer's `E_IDLE` start handling. One thing worth knowing
+before digging: JTAG probe reads take tens of milliseconds while a scenario
+completes in microseconds, so `running` is frequently never observed high at
+all — any handshake that waits on that edge is racing by construction. Two
+attempted fixes along those lines were tried and discarded.
+
+`issp_run.tcl` now refuses to run against a board that is *already* wedged when
+it starts, printing an instruction to re-program rather than four misleading
+`FAIL:` lines about wrong scenarios and wrong `STATUS`. That guard is verified
+not to false-trigger on a healthy board, but it cannot catch a wedge that
+develops mid-run, which is the common case.
+
+### What to trust meanwhile
+
+Treat `bitmap = FFFF` from the sweep as the authoritative hardware result — it
+is the part that exercises all sixteen scenarios and it has never failed. Treat
+a step-mode `FAILED` as unproven rather than as a firewall defect, and re-run
+before believing it.
+
+---
+
 ## What is and isn't verified
 
 | Item | Status |
 |---|---|
-| **All 16 scenarios on a physical DE10-Lite** | **Passing** — driven and read back over JTAG |
+| **All 16 scenarios on a physical DE10-Lite** | **Passing** — the auto sweep reaches `bitmap = FFFF` on every run |
+| Auto sweep over JTAG (all 16 scenarios) | **Reliable** — `bitmap = FFFF` on every run observed |
+| `run_on_board.sh` step-mode section | **Intermittent** — wedges in roughly half of runs; see *Known issue* above |
 | All 16 scenarios, board-level simulation | **Passing** under Questa 2024.1, 91/91 checks |
 | Display and LED decode | **Checked** against an independently written glyph table |
 | Step mode, auto sweep, scenario selection | **Checked** by driving the pins |

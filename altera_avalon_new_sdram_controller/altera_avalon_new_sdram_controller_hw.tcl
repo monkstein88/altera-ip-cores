@@ -25,8 +25,21 @@ set_module_property GROUP {Memory Interfaces and Controllers/SDRAM}
 set_module_property AUTHOR {Intel Corporation}
 set_module_property INSTANTIATE_IN_SYSTEM_MODULE true
 set_module_property INTERNAL false
-set_module_property HIDE_FROM_SOPC true
-set_module_property HIDE_FROM_QUARTUS true
+# --- MODIFIED FROM INTEL'S ORIGINAL -----------------------------------------
+# Both of these were `true` as Intel shipped them in Quartus 20.1, which is
+# what kept this IP out of the Platform Designer catalog: it was being retired
+# there, so it stayed instantiable for existing designs but was hidden from
+# new ones. The core itself is not deprecated in any functional sense - it is
+# the same SDRAM controller that shipped for two decades.
+#
+# Preserving a usable core is the whole reason this component is in this
+# repository, so both are false here and it appears in the catalog under
+# Memory Interfaces and Controllers/SDRAM like any other component. Nothing
+# else in this file, and nothing in the generators or the RTL, is changed.
+#
+# Set them back to `true` if you want Intel's original catalog behaviour.
+set_module_property HIDE_FROM_SOPC false
+set_module_property HIDE_FROM_QUARTUS false
 set_module_property EDITABLE true
 set_module_property VALIDATION_CALLBACK validate
 set_module_property ELABORATION_CALLBACK elaborate
