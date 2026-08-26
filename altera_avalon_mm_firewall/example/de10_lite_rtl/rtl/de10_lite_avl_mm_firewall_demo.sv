@@ -105,6 +105,12 @@ module de10_lite_avl_mm_firewall_demo #(
     localparam int TIMEOUT_WIDTH      = 20;
     localparam int MAX_PENDING_READS  = 4;
     localparam int USE_WRITE_RESPONSE = 1;
+    // Registered rule lookup. The demo is the only place this mode runs on
+    // real silicon, and it is the configuration a design wanting 100 MHz
+    // would actually use. It costs one cycle per transaction - the burst
+    // throughput scenario's guard accounts for it - and buys the timing
+    // margin that makes the higher clock possible at all.
+    localparam int REGISTER_LOOKUP    = 1;
     localparam int MEM_WORDS          = 64;   // 0x00..0xFF, covers every window
 
     // Seven-segment glyph codes above 0xF (see hex7seg.sv)
@@ -304,7 +310,8 @@ module de10_lite_avl_mm_firewall_demo #(
         .NUM_RULES          (NUM_RULES),
         .TIMEOUT_WIDTH      (TIMEOUT_WIDTH),
         .CSR_ADDR_WIDTH     (CSR_ADDR_WIDTH),
-        .USE_WRITE_RESPONSE (USE_WRITE_RESPONSE)
+        .USE_WRITE_RESPONSE (USE_WRITE_RESPONSE),
+        .REGISTER_LOOKUP    (REGISTER_LOOKUP)
     ) u_fw (
         .clk     (clk),
         .reset_n (resetn),

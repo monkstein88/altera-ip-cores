@@ -40,6 +40,47 @@ if {[catch {start_insystem_source_probe -hardware_name $hw -device_name $dev} e]
 proc probe {}      { return [read_probe_data -instance_index 0 -value_in_hex] }
 proc src   {hex}   { write_source_data -instance_index 0 -value $hex -value_in_hex }
 proc field {hex hi lo} { scan $hex %x v; return [expr {($v >> $lo) & ((1 << ($hi-$lo+1)) - 1)}] }
+# Wait until the sequencer is idle, or until the budget runs out. Polling
+# rather than sleeping a fixed time: the scenarios' wall-clock length depends
+# on the build (REGISTER_LOOKUP adds a cycle to every transaction) and on the
+# programmed timeout, and a fixed delay that happens to be long enough today
+# silently stops being long enough later. That is exactly how this script
+# first failed against the registered-lookup build.
+proc running {} { scan [probe] %x v; return [expr {($v >> 22) & 1}] }
+
+proc wait_for {want {tries 200}} {
+    for {set i 0} {$i < $tries} {incr i} {
+        after 50
+        if {[running] == $want} { return 1 }
+    }
+    return 0
+}
+proc wait_idle {{tries 200}} { return [wait_for 0 $tries] }
+
+# Run one scenario in step mode and wait for it to finish. `sel` is the
+# scenario number; the source register carries
+# { -, start, freeze, auto, select[3:0] }.
+# Waiting for BUSY before waiting for IDLE is the whole point. `running` is
+# still 0 for a moment after the start pulse, so a bare wait-for-idle returns
+# instantly and samples the PREVIOUS scenario's result - which reads exactly
+# like the board ignoring the request.
+proc run_scenario {sel} {
+    src [format "%02X" $sel]
+    wait_idle
+    src [format "%02X" [expr {0x40 | $sel}]]     ;# start
+    if {![wait_for 1 40]} {
+        # The pulse was missed; hold it a little longer and try once more.
+        after 200
+        src [format "%02X" $sel]
+        after 100
+        src [format "%02X" [expr {0x40 | $sel}]]
+        wait_for 1 40
+    }
+    src [format "%02X" $sel]                     ;# release start
+    wait_idle
+    after 100
+}
+
 proc show  {tag} {
     set d [probe]
     puts [format "  %-16s bitmap=%04X scenario=%X pass=%d valid=%d running=%d status=%03X" \
@@ -55,12 +96,13 @@ puts "   programmed rule table; bitmap 0001 is correct here)"
 puts "\n--- auto sweep, driven over JTAG ---"
 src 10
 set ok 0
-for {set i 1} {$i <= 100} {incr i} {
+for {set i 1} {$i <= 200} {incr i} {
     after 250
     if {[field [probe] 15 0] == 65535} { set ok 1; break }
 }
 show "after sweep"
 src 00
+wait_idle
 
 # Step mode: run one scenario on demand and confirm only that one ran.
 #
@@ -69,12 +111,7 @@ src 00
 # 0x134 - so the status field below is a real reading off silicon, not a
 # formality.
 puts "\n--- step mode: run scenario b (write timeout) on its own ---"
-src 0B
-after 200
-src 4B
-after 200
-src 0B
-after 1500
+run_scenario 11
 show "scenario b"
 set scen   [field [probe] 19 16]
 set pass   [field [probe] 20 20]
@@ -83,12 +120,7 @@ set status [field [probe] 32 23]
 # Scenario C ends on a starved READ, which is the only way RD_CMD_STUCK gets
 # set. Checking it here is what proves STATUS bit 9 reaches real silicon.
 puts "\n--- step mode: run scenario C (read timeout, both shapes) ---"
-src 0C
-after 200
-src 4C
-after 200
-src 0C
-after 2500
+run_scenario 12
 show "scenario C"
 set cscen  [field [probe] 19 16]
 set cpass  [field [probe] 20 20]

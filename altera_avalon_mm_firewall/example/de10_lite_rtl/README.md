@@ -324,9 +324,9 @@ Assembler; a `.sof` is produced and was programmed to a real board.
 
 | Resource | Used | Device | % |
 |---|---|---|---|
-| Total logic elements | 5,235 | 49,760 | 11% |
-| — combinational functions | 4,293 | 49,760 | 9% |
-| — dedicated logic registers | 2,998 | 49,760 | 6% |
+| Total logic elements | 5,254 | 49,760 | 11% |
+| — combinational functions | 4,277 | 49,760 | 9% |
+| — dedicated logic registers | 3,006 | 49,760 | 6% |
 | Total pins | 71 | 360 | 20% |
 | Total memory bits | 0 | 1,677,312 | 0% |
 | Embedded multiplier 9-bit elements | 0 | 288 | 0% |
@@ -340,69 +340,81 @@ Broken down by entity:
 
 | Entity | Logic elements | Registers |
 |---|---|---|
-| **`avl_mm_firewall_top` — the IP core** | **1,045** | **421** |
-|  └ `avl_mm_firewall_regs` | 607 | 213 |
-| `demo_target_slave` (64-word scratchpad in flops) | 2,327 | 1,920 |
-| `demo_sequencer` (incl. both masters and the ROM) | 1,515 | 476 |
+| **`avl_mm_firewall_top` — the IP core** | **1,059** | **429** |
+|  └ `avl_mm_firewall_regs` | 582 | 213 |
+| `demo_target_slave` (64-word scratchpad in flops) | 2,333 | 1,920 |
+| `demo_sequencer` (incl. both masters and the ROM) | 1,518 | 476 |
 |  └ `demo_avl_mm_master` ×2 (`u_ctl` + `u_dat`) | 445 | 241 |
 | `altsource_probe` + `sld_hub` (JTAG probe) | 201 | 127 |
 | `hex7seg` ×6 | 54 | 0 |
 | `key_debounce` | 28 | 21 |
 
-At `NUM_RULES = 5`, `ADDR_WIDTH = 12` the core costs **1,045 LEs and 421
-registers** — under half the demo around it.
+At `NUM_RULES = 5`, `ADDR_WIDTH = 12`, `REGISTER_LOOKUP = 1` the core costs
+**1,059 LEs and 429 registers** — under half the demo around it.
 
 ### Timing — 50 MHz, slow 1200 mV 85 °C model
 
 | Metric | Value |
 |---|---|
-| Fmax | **52.53 MHz** |
-| Setup slack | **+0.963 ns** |
-| Hold slack | **+0.340 ns** |
+| Fmax | **73.75 MHz** |
+| Setup slack | **+6.440 ns** |
+| Hold slack | **+0.341 ns** |
 | Total negative slack | 0.000 |
 
-Timing closes, with about 5% margin over the board's 50 MHz oscillator.
+Timing closes with about **47% margin** over the board's 50 MHz oscillator —
+up from 5% before `REGISTER_LOOKUP` was turned on.
 
-**The critical path is inside the IP core**, and getting it to close took two
-configuration changes worth understanding — both of them the core's own
-documented advice, now with numbers attached:
+**The critical path is inside the IP core**, and getting here took three
+changes worth understanding — all of them the core's own documented advice,
+now with numbers attached:
 
-```
-avl_mm_firewall_regs|rule_base[0]  →  avl_mm_firewall_top|rd_deny_beats[*]
-```
-
-That is the combinational rule lookup running from the rule table registers,
-through the burst extent adder and the address comparators, to the denied-read
-beat counter.
-
-- At the core's defaults (`NUM_RULES = 8`, `ADDR_WIDTH = 32`) this design
-  **misses 50 MHz** — Fmax 49.19 MHz, setup slack −0.328 ns.
-- `NUM_RULES = 5` is what the map actually needs. The README's *"use the
+- At the core's defaults (`NUM_RULES = 8`, `ADDR_WIDTH = 32`, combinational
+  lookup) this design **misses 50 MHz** — Fmax 49.19 MHz, setup slack
+  −0.328 ns.
+- `NUM_RULES = 5` is what the map actually needs. The core README's *"use the
   smallest that covers your map"* is not stylistic advice.
-- `ADDR_WIDTH = 12` is the bigger lever. This core checks the **first and last
+- `ADDR_WIDTH = 12` is a bigger lever. This core checks the **first and last
   byte** of every transaction, so there are two comparators per rule, and every
   one of those carry chains is `ADDR_WIDTH` bits long. The peripheral occupies
-  256 bytes; a 32-bit address space buys nothing and costs most of the margin.
+  256 bytes; a 32-bit address space buys nothing and costs margin.
+- **`REGISTER_LOOKUP = 1`** is the biggest single win: 52.53 → 73.75 MHz, for
+  14 logic elements and 8 registers. This demo is the only place that mode
+  runs on real silicon.
+
+With the lookup registered, the worst path starts at the sequencer's own
+address register:
+
+```
+demo_avl_mm_master|addr_r  →  avl_mm_firewall_top|r_r_contain
+```
+
+— the master's address, through the burst extent adder and the rule
+comparators, into the lookup's new pipeline register. That is the *first* half
+of the split path, and it is what now caps the demo at 73.75 MHz. This is the
+demo's ceiling, not the core's: the core alone in this configuration measures
+107.43 MHz, and the gap is the sequencer's output path plus the routing
+between the two.
 
 ### Core Fmax, measured on its own
 
 Synthesised standalone with virtual pins, same device and timing model. These
-are the first Fmax numbers this core has had — its README lists synthesis as
-*"Not measured"*.
+are the first Fmax numbers this core has had — its README listed synthesis as
+*"Not measured"* until this demo was built.
 
-| Configuration | Fmax | Logic elements |
+| Configuration | `REGISTER_LOOKUP=0` | `REGISTER_LOOKUP=1` |
 |---|---|---|
-| `NUM_RULES=8`, `ADDR_WIDTH=32` (defaults) | **59.28 MHz** | 2,657 |
-| `NUM_RULES=5`, `ADDR_WIDTH=12` (this demo) | **73.44 MHz** | 1,183 |
-| `NUM_RULES=4`, `ADDR_WIDTH=12` | 73.10 MHz | 1,101 |
-| `NUM_RULES=2`, `ADDR_WIDTH=12` | **83.31 MHz** | 928 |
+| `NUM_RULES=8`, `ADDR_WIDTH=32` (defaults) | 60.77 MHz · 2,649 LEs | **95.85 MHz** · 2,736 LEs |
+| `NUM_RULES=5`, `ADDR_WIDTH=12` (this demo) | 73.44 MHz · 1,183 LEs | **107.43 MHz** · 1,213 LEs |
+| `NUM_RULES=4`, `ADDR_WIDTH=12` | 73.10 MHz · 1,101 LEs | — |
+| `NUM_RULES=2`, `ADDR_WIDTH=12` | 83.31 MHz · 928 LEs | — |
 
-Shrinking the configuration is not enough to reach 100 MHz: even at two rules
-and a 12-bit address space the core tops out at 83 MHz on this `C7` part,
-because the lookup is combinational by design. Reaching 100 MHz needs the
-registered-lookup option on the core's roadmap, which would cut that path in
-half at a cost of one cycle per transaction — amortised across a burst, unlike
-the AXI sibling's per-beat cost.
+Shrinking the configuration alone is not enough to reach 100 MHz: even at two
+rules and a 12-bit address space the combinational lookup tops out at 83 MHz on
+this `C7` part. `REGISTER_LOOKUP` is what clears it — 107 MHz at this demo's
+configuration, 96 MHz at the widest defaults, for about 90 logic elements and
+one cycle per transaction. See the core's *Performance* section for the
+bandwidth arithmetic; the short version is that the extra cycle costs ~3% on a
+32-beat burst and the clock buys back far more.
 
 ---
 
@@ -417,11 +429,12 @@ the AXI sibling's per-beat cost.
 | `STATUS` after a timeout, read off silicon | **Checked** — `0x134` (write) and `0x234` (read, `RD_CMD_STUCK`) over JTAG |
 | Core's SVA properties under a hardware driver | **0 failures**, 19 of 20 reached |
 | Synthesis for `10M50DAF484C7G` | **Clean**, 0 errors, `.sof` produced and programmed |
-| Timing closure at 50 MHz | **Closed**, +0.963 ns setup slack |
+| Timing closure at 50 MHz | **Closed**, +6.440 ns setup slack (47% margin) |
 | Core resource usage and Fmax | **Measured** — first numbers for this core |
 | **Pin assignments** | **Inherited** from the AXI4-Lite demo, which were diffed against the Golden Top; all 71 identical |
 | Verilator flow | **Not run** — Verilator is not installed on the build machine |
-| Operation at 100 MHz | **Not achievable** with the core as it stands — see *Core Fmax* above |
+| `REGISTER_LOOKUP` on real silicon | **Verified** — this demo is built with it on, and all 16 scenarios pass on the board |
+| Operation of *this demo* at 100 MHz | **Not achievable.** The demo closes at 73.75 MHz; the limit is the sequencer's address path into the core's lookup register, not the core, which measures 107.43 MHz alone in this configuration |
 
 ---
 
