@@ -34,19 +34,31 @@ COVERED by the MIT licence above - original work:
                                         and DE10-Lite examples
     altera_axi4_lite_firewall/          the AXI4-Lite Firewall core, and the
                                         same supporting material
+    altera_avalon_new_sdram_controller/example/   the DE10-Lite demonstration
+                                        built around the SDRAM controller -
+                                        original work, see the note below
+    altera_avalon_new_sdram_controller/NOTICE and README.md
     README.md, and the repository tooling
 
 NOT COVERED - third-party IP, redistributed under its own terms:
 
-    altera_avalon_new_sdram_controller/
+    altera_avalon_new_sdram_controller/    (excluding example/, NOTICE and
+                                            README.md, listed above)
 
 That directory contains the SDRAM Controller Intel FPGA IP, copyright
 (C) 2001-2020 Intel Corporation. It is not the author's work, is not offered
-under the MIT licence, and cannot be relicensed here. Its use is governed by
-the Intel Program License Subscription Agreement, the Intel FPGA IP License
-Agreement, or such other agreement as the headers in those files reference -
-which in practice means it is for use with programmable devices manufactured
-and sold by Intel/Altera or their authorised distributors.
+under the MIT licence, and cannot be relicensed here.
+
+Its use is governed by the Intel Program License Subscription Agreement, the
+Intel FPGA IP License Agreement, or such other agreement as the headers in
+those files reference - which in practice means it is for use with programmable
+devices manufactured and sold by Intel/Altera or their authorised distributors.
+
+The example/ subdirectory is the author's own: a demonstration that
+INSTANTIATES Intel's controller without containing or modifying it. Its RTL,
+scripts and documentation are MIT. Note that BUILDING it necessarily uses
+Intel's IP, so the paragraph above still governs what you may run the result
+on; the MIT grant covers the demonstration sources, not Intel's controller.
 
 See altera_avalon_new_sdram_controller/NOTICE for the detail, including the
 one change made to it in this repository.

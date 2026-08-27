@@ -36,6 +36,16 @@ hc_output/
 *.qsys.bak
 PLLJ_PLLSPE_INFO.txt
 
+# Platform Designer generated output. Each example's build.sh regenerates it
+# from qsys/build_system.tcl and the .qsys file, both of which ARE tracked.
+#
+# For the SDRAM example this is more than tidiness: the generated tree contains
+# Intel's controller RTL, which is not under this repository's MIT licence.
+# Keeping it out of the repository is what makes example/ genuinely original
+# work, as LICENSE and altera_avalon_new_sdram_controller/NOTICE both state.
+**/qsys/*_sys/
+*.sopcinfo
+
 # --- OS / editor cruft ---
 .DS_Store
 Thumbs.db

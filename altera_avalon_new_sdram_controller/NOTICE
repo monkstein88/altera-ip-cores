@@ -38,3 +38,17 @@ original catalog behaviour.
 
 Nothing else is altered: not the rest of the _hw.tcl, not the Perl generators,
 and not the generated RTL.
+
+WHAT IN THIS DIRECTORY IS *NOT* INTEL'S
+---------------------------------------
+Three things here are the repository author's own work and ARE covered by the
+repository's MIT licence:
+
+    example/        a DE10-Lite demonstration that instantiates the controller
+    NOTICE          this file
+    README.md       the component's documentation
+
+The example contains no Intel source. It builds a Platform Designer system
+around the controller and drives it from original RTL; Qsys generates Intel's
+controller into the build tree at generation time, and that generated output
+remains Intel's under the terms above.

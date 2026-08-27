@@ -218,21 +218,59 @@ module de10_lite_avl_mm_firewall_demo #(
     assign issp_source = 8'h00;
 `endif
 
+    // ------------------------------------------------------------------
+    // THE JTAG SOURCE REGISTER IS NOT UPDATED ATOMICALLY.
+    //
+    // altsource_probe shifts a new source value in over JTAG one bit at a
+    // time, and with enable_metastability = "NO" those bits reach the design
+    // as they land - there is no holding register between the scan chain and
+    // the fabric. For a few microseconds the design therefore sees words that
+    // were never written: a mixture of the old value and the new one.
+    //
+    // Bit 6 is a START edge and bits [3:0] choose WHICH scenario to start, so
+    // if bit 6 rises while the select bits are still half-updated, the wrong
+    // scenario runs and the host reads back a result that looks like a
+    // firewall failure. This was the cause of the intermittent step-mode
+    // behaviour previously recorded in this example's README as unexplained;
+    // it was isolated on the SDRAM controller example, which has the same
+    // construct, by asking for one scenario and watching a different one run.
+    //
+    // The source word is therefore filtered before anything uses it, exactly
+    // the way key_debounce filters a mechanical button: a new value only
+    // counts once it has held still for 256 consecutive clocks (5.1 us at
+    // 50 MHz), far longer than a JTAG update takes to settle and far shorter
+    // than any host notices.
+    // ------------------------------------------------------------------
+    logic [7:0] src_stable, src_q, src_cnt;
+
+    always_ff @(posedge clk) begin
+        if (!resetn) begin
+            src_q      <= 8'h00;
+            src_cnt    <= 8'h00;
+            src_stable <= 8'h00;
+        end else begin
+            src_q <= issp_source;
+            if (issp_source != src_q)   src_cnt    <= 8'h00;      // still moving
+            else if (!(&src_cnt))       src_cnt    <= src_cnt + 8'd1;
+            else                        src_stable <= src_q;      // held still: accept
+        end
+    end
+
     logic issp_start_q, issp_start_pulse, start_pulse;
     always_ff @(posedge clk) begin
         if (!resetn) issp_start_q <= 1'b0;
-        else         issp_start_q <= issp_source[6];
+        else         issp_start_q <= src_stable[6];
     end
-    assign issp_start_pulse = issp_source[6] & ~issp_start_q;
+    assign issp_start_pulse = src_stable[6] & ~issp_start_q;
     assign start_pulse      = key_start_pulse | issp_start_pulse;
 
     // The JTAG source can override the switches. OR-ed, not muxed, so the
     // physical controls keep working with nothing attached.
     logic [3:0] sel_eff;
     logic       auto_eff, freeze_eff;
-    assign sel_eff    = sw_s1[3:0] | issp_source[3:0];
-    assign auto_eff   = sw_s1[9]   | issp_source[4];
-    assign freeze_eff = sw_s1[8]   | issp_source[5];
+    assign sel_eff    = sw_s1[3:0] | src_stable[3:0];
+    assign auto_eff   = sw_s1[9]   | src_stable[4];
+    assign freeze_eff = sw_s1[8]   | src_stable[5];
 
     // ------------------------------------------------------------------
     // csr: sequencer -> firewall control port (word-addressed)

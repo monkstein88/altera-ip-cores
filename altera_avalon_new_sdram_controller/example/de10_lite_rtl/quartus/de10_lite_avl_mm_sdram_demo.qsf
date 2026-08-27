@@ -1,0 +1,185 @@
+# =============================================================================
+# de10_lite_avl_mm_sdram_demo.qsf
+#
+# Quartus settings for the Avalon-MM SDRAM Controller demo on the Terasic
+# DE10-Lite (Intel MAX 10, 10M50DAF484C7G, 484-pin FBGA, speed grade 7).
+#
+# PIN ASSIGNMENTS are taken verbatim from DE10_LITE_Golden_Top.qsf on the
+# DE10-Lite System CD v2.2.0. If your board is a different revision, diff
+# against that revision's Golden Top before the first run - a wrong pin on a
+# 3.3 V bank is the one mistake in this file that can damage hardware.
+#
+# All demo I/O is on 3.3 V banks. STRATIX_DEVICE_IO_STANDARD is the assignment
+# that sets the device-wide default in Quartus 18.1 (DEFAULT_IO_STANDARD is
+# not a recognised name and makes the .qsf unreadable).
+# =============================================================================
+
+set_global_assignment -name FAMILY "MAX 10"
+set_global_assignment -name DEVICE 10M50DAF484C7G
+set_global_assignment -name TOP_LEVEL_ENTITY de10_lite_avl_mm_sdram_demo
+set_global_assignment -name ORIGINAL_QUARTUS_VERSION 18.1.1
+set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_files
+
+# MAX 10 configuration. SINGLE IMAGE WITH ERAM is the DE10-Lite default and is
+# what lets the design come up from internal flash at power-on rather than
+# needing a JTAG download every time.
+set_global_assignment -name DEVICE_INITIALIZATION_CLOCK OSC_CLK_1_125MHZ
+set_global_assignment -name INTERNAL_FLASH_UPDATE_MODE "SINGLE IMAGE WITH ERAM"
+set_global_assignment -name ENABLE_CONFIGURATION_PINS OFF
+set_global_assignment -name ENABLE_BOOT_SEL_PIN OFF
+set_global_assignment -name USE_CONFIGURATION_DEVICE OFF
+set_global_assignment -name CRC_ERROR_OPEN_DRAIN OFF
+
+# Unused pins tri-stated with a weak pull-up: the DE10-Lite has VGA, an
+# accelerometer and Arduino headers wired to pins this design never drives,
+# and leaving them driven would fight the on-board devices.
+set_global_assignment -name RESERVE_ALL_UNUSED_PINS "AS INPUT TRI-STATED WITH WEAK PULL-UP"
+set_global_assignment -name STRATIX_DEVICE_IO_STANDARD "3.3-V LVTTL"
+
+# ---------------------------------------------------------------------------
+# Source files.
+#
+# The controller itself is not listed here: it comes in through the Platform
+# Designer system's generated .qip, which is the last entry. That file is
+# produced by ../build.sh qsys from qsys/build_system.tcl, so this project
+# always compiles whatever is actually in the component directory.
+# ---------------------------------------------------------------------------
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/sdram_pll.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/demo_avl_mm_master.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/demo_sdram_seq.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/hex7seg.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/key_debounce.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/de10_lite_avl_mm_sdram_demo.sv
+set_global_assignment -name QIP_FILE ../qsys/sdram_sys/synthesis/sdram_sys.qip
+set_global_assignment -name SDC_FILE de10_lite_avl_mm_sdram_demo.sdc
+
+# ---------------------------------------------------------------------------
+# In-System Sources and Probes.
+#
+# Exposes the sequencer's controls, its pass bitmap and its cycle counters
+# over JTAG, so the demo can be regression-tested on real hardware from a
+# script instead of by reading the seven-segment displays, and so the
+# throughput figures can be printed with units. See run_on_board.sh.
+#
+# The RTL is guarded by this macro, so simulation never has to resolve the
+# altsource_probe megafunction.
+# ---------------------------------------------------------------------------
+set_global_assignment -name VERILOG_MACRO "ENABLE_ISSP=1"
+
+# ---- clock, buttons, switches, LEDs, displays ----------------------
+# Identical to the firewall demos in this repository, which were diffed
+# against the same Golden Top.
+set_location_assignment PIN_P11 -to "MAX10_CLK1_50"
+set_location_assignment PIN_B8 -to "KEY[0]"
+set_location_assignment PIN_A7 -to "KEY[1]"
+set_location_assignment PIN_C10 -to "SW[0]"
+set_location_assignment PIN_C11 -to "SW[1]"
+set_location_assignment PIN_D12 -to "SW[2]"
+set_location_assignment PIN_C12 -to "SW[3]"
+set_location_assignment PIN_A12 -to "SW[4]"
+set_location_assignment PIN_B12 -to "SW[5]"
+set_location_assignment PIN_A13 -to "SW[6]"
+set_location_assignment PIN_A14 -to "SW[7]"
+set_location_assignment PIN_B14 -to "SW[8]"
+set_location_assignment PIN_F15 -to "SW[9]"
+set_location_assignment PIN_A8 -to "LEDR[0]"
+set_location_assignment PIN_A9 -to "LEDR[1]"
+set_location_assignment PIN_A10 -to "LEDR[2]"
+set_location_assignment PIN_B10 -to "LEDR[3]"
+set_location_assignment PIN_D13 -to "LEDR[4]"
+set_location_assignment PIN_C13 -to "LEDR[5]"
+set_location_assignment PIN_E14 -to "LEDR[6]"
+set_location_assignment PIN_D14 -to "LEDR[7]"
+set_location_assignment PIN_A11 -to "LEDR[8]"
+set_location_assignment PIN_B11 -to "LEDR[9]"
+set_location_assignment PIN_C14 -to "HEX0[0]"
+set_location_assignment PIN_E15 -to "HEX0[1]"
+set_location_assignment PIN_C15 -to "HEX0[2]"
+set_location_assignment PIN_C16 -to "HEX0[3]"
+set_location_assignment PIN_E16 -to "HEX0[4]"
+set_location_assignment PIN_D17 -to "HEX0[5]"
+set_location_assignment PIN_C17 -to "HEX0[6]"
+set_location_assignment PIN_D15 -to "HEX0[7]"
+set_location_assignment PIN_C18 -to "HEX1[0]"
+set_location_assignment PIN_D18 -to "HEX1[1]"
+set_location_assignment PIN_E18 -to "HEX1[2]"
+set_location_assignment PIN_B16 -to "HEX1[3]"
+set_location_assignment PIN_A17 -to "HEX1[4]"
+set_location_assignment PIN_A18 -to "HEX1[5]"
+set_location_assignment PIN_B17 -to "HEX1[6]"
+set_location_assignment PIN_A16 -to "HEX1[7]"
+set_location_assignment PIN_B20 -to "HEX2[0]"
+set_location_assignment PIN_A20 -to "HEX2[1]"
+set_location_assignment PIN_B19 -to "HEX2[2]"
+set_location_assignment PIN_A21 -to "HEX2[3]"
+set_location_assignment PIN_B21 -to "HEX2[4]"
+set_location_assignment PIN_C22 -to "HEX2[5]"
+set_location_assignment PIN_B22 -to "HEX2[6]"
+set_location_assignment PIN_A19 -to "HEX2[7]"
+set_location_assignment PIN_F21 -to "HEX3[0]"
+set_location_assignment PIN_E22 -to "HEX3[1]"
+set_location_assignment PIN_E21 -to "HEX3[2]"
+set_location_assignment PIN_C19 -to "HEX3[3]"
+set_location_assignment PIN_C20 -to "HEX3[4]"
+set_location_assignment PIN_D19 -to "HEX3[5]"
+set_location_assignment PIN_E17 -to "HEX3[6]"
+set_location_assignment PIN_D22 -to "HEX3[7]"
+set_location_assignment PIN_F18 -to "HEX4[0]"
+set_location_assignment PIN_E20 -to "HEX4[1]"
+set_location_assignment PIN_E19 -to "HEX4[2]"
+set_location_assignment PIN_J18 -to "HEX4[3]"
+set_location_assignment PIN_H19 -to "HEX4[4]"
+set_location_assignment PIN_F19 -to "HEX4[5]"
+set_location_assignment PIN_F20 -to "HEX4[6]"
+set_location_assignment PIN_F17 -to "HEX4[7]"
+set_location_assignment PIN_J20 -to "HEX5[0]"
+set_location_assignment PIN_K20 -to "HEX5[1]"
+set_location_assignment PIN_L18 -to "HEX5[2]"
+set_location_assignment PIN_N18 -to "HEX5[3]"
+set_location_assignment PIN_M20 -to "HEX5[4]"
+set_location_assignment PIN_N19 -to "HEX5[5]"
+set_location_assignment PIN_N20 -to "HEX5[6]"
+set_location_assignment PIN_L19 -to "HEX5[7]"
+
+# ---- SDRAM (39 pins) ----------------------------------------------
+set_location_assignment PIN_U17 -to DRAM_ADDR[0]
+set_location_assignment PIN_W19 -to DRAM_ADDR[1]
+set_location_assignment PIN_V18 -to DRAM_ADDR[2]
+set_location_assignment PIN_U18 -to DRAM_ADDR[3]
+set_location_assignment PIN_U19 -to DRAM_ADDR[4]
+set_location_assignment PIN_T18 -to DRAM_ADDR[5]
+set_location_assignment PIN_T19 -to DRAM_ADDR[6]
+set_location_assignment PIN_R18 -to DRAM_ADDR[7]
+set_location_assignment PIN_P18 -to DRAM_ADDR[8]
+set_location_assignment PIN_P19 -to DRAM_ADDR[9]
+set_location_assignment PIN_T20 -to DRAM_ADDR[10]
+set_location_assignment PIN_P20 -to DRAM_ADDR[11]
+set_location_assignment PIN_R20 -to DRAM_ADDR[12]
+set_location_assignment PIN_T21 -to DRAM_BA[0]
+set_location_assignment PIN_T22 -to DRAM_BA[1]
+set_location_assignment PIN_U21 -to DRAM_CAS_N
+set_location_assignment PIN_N22 -to DRAM_CKE
+set_location_assignment PIN_L14 -to DRAM_CLK
+set_location_assignment PIN_U20 -to DRAM_CS_N
+set_location_assignment PIN_Y21 -to DRAM_DQ[0]
+set_location_assignment PIN_Y20 -to DRAM_DQ[1]
+set_location_assignment PIN_AA22 -to DRAM_DQ[2]
+set_location_assignment PIN_AA21 -to DRAM_DQ[3]
+set_location_assignment PIN_Y22 -to DRAM_DQ[4]
+set_location_assignment PIN_W22 -to DRAM_DQ[5]
+set_location_assignment PIN_W20 -to DRAM_DQ[6]
+set_location_assignment PIN_V21 -to DRAM_DQ[7]
+set_location_assignment PIN_P21 -to DRAM_DQ[8]
+set_location_assignment PIN_J22 -to DRAM_DQ[9]
+set_location_assignment PIN_H21 -to DRAM_DQ[10]
+set_location_assignment PIN_H22 -to DRAM_DQ[11]
+set_location_assignment PIN_G22 -to DRAM_DQ[12]
+set_location_assignment PIN_G20 -to DRAM_DQ[13]
+set_location_assignment PIN_G19 -to DRAM_DQ[14]
+set_location_assignment PIN_F22 -to DRAM_DQ[15]
+set_location_assignment PIN_V22 -to DRAM_LDQM
+set_location_assignment PIN_U22 -to DRAM_RAS_N
+set_location_assignment PIN_J21 -to DRAM_UDQM
+set_location_assignment PIN_V20 -to DRAM_WE_N
+
+set_global_assignment -name LAST_QUARTUS_VERSION "18.1.1 Standard Edition"

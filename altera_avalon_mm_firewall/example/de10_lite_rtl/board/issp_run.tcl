@@ -60,25 +60,33 @@ proc wait_idle {{tries 200}} { return [wait_for 0 $tries] }
 # Run one scenario in step mode and wait for it to finish. `sel` is the
 # scenario number; the source register carries
 # { -, start, freeze, auto, select[3:0] }.
-# Waiting for BUSY before waiting for IDLE is the whole point. `running` is
-# still 0 for a moment after the start pulse, so a bare wait-for-idle returns
-# instantly and samples the PREVIOUS scenario's result - which reads exactly
-# like the board ignoring the request.
+#
+# Two separate hazards are handled here, and they are not the same thing.
+#
+# 1. THE SOURCE REGISTER IS NOT WRITTEN ATOMICALLY. altsource_probe shifts the
+#    value in over JTAG bit by bit and it reaches the fabric as it lands, so a
+#    start edge can arrive while the select bits are still half-updated - and
+#    a DIFFERENT scenario runs than the one asked for. The design now filters
+#    the source word (see src_stable in the top level), and the write of the
+#    select value is separated from the start edge here so the filter has
+#    settled before start rises. This was the cause of the intermittent
+#    behaviour previously recorded in this example's README as unexplained.
+#
+# 2. `running` is a LEVEL, and it is still 0 for a moment after the start
+#    pulse. Waiting for idle without first seeing busy returns instantly and
+#    samples the PREVIOUS scenario's result. So start is held until the design
+#    acknowledges by going busy, and only then released.
 proc run_scenario {sel} {
     src [format "%02X" $sel]
     wait_idle
-    src [format "%02X" [expr {0x40 | $sel}]]     ;# start
-    if {![wait_for 1 40]} {
-        # The pulse was missed; hold it a little longer and try once more.
-        after 200
-        src [format "%02X" $sel]
-        after 100
-        src [format "%02X" [expr {0x40 | $sel}]]
-        wait_for 1 40
-    }
+    after 100
+    src [format "%02X" [expr {0x40 | $sel}]]     ;# start, held
+    set started [wait_for 1 40]
     src [format "%02X" $sel]                     ;# release start
+    if {!$started} { return 0 }
     wait_idle
     after 100
+    return 1
 }
 
 proc show  {tag} {
@@ -91,17 +99,15 @@ proc show  {tag} {
 # ---------------------------------------------------------------------------
 # Refuse to test a board that is already wedged.
 #
-# There is a known issue - see this example's README - where re-running against
-# a board that has already completed a run leaves the sequencer stuck with
-# `running` high. Every step-mode read then returns the PREVIOUS scenario's
-# result, and the checks below report a wrong scenario and a wrong STATUS.
+# The intermittent wedge this guard was written for has since been root-caused
+# and fixed - see "Resolved" in this example's README, and src_stable in the
+# top level. The guard is kept anyway: it costs one probe read, and it turns
+# any future "the sequencer was already busy" state into an instruction rather
+# than four misleading FAIL lines about wrong scenarios and wrong STATUS.
 #
-# That output reads exactly like the FIREWALL failing four checks, which is
-# what it is not: it is a stale board that needs re-programming. Catching it
-# here turns a misleading test failure into an instruction. `src 00` first, so
-# a leftover auto-sweep or start bit from a previous session is not mistaken
-# for a wedge, and the wait allows for the scenario 0 that runs by itself at
-# power-up.
+# `src 00` first, so a leftover auto-sweep or start bit from a previous session
+# is not mistaken for a wedge, and the wait allows for the scenario 0 that runs
+# by itself at power-up.
 # ---------------------------------------------------------------------------
 src 00
 if {![wait_idle 60]} {

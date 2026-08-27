@@ -57,9 +57,15 @@ PASSED: every check passed on hardware.
 
 ### Two Quartus installations
 
-`build.sh` uses **Quartus 18.1**, the last release with **Nios II EDS** — Nios II
-was dropped after Quartus 20.x in favour of Nios V, and MAX 10 support went with
-it, so a newer Quartus can neither target this device nor build this software.
+`build.sh` uses **Quartus 18.1** for one specific reason: newer Quartus Standard
+releases no longer ship the **Nios II processor IP**. On 25.1std the catalog
+directory `ip/altera/nios2_ip/` is empty, so Platform Designer cannot instantiate
+`altera_nios2_gen2` and this system will not build there.
+
+Note what is *not* the reason. 25.1std still ships the Nios II **software** tools
+(`nios2eds/sdk2/bin`: `nios2-bsp`, `nios2-download`, `nios2-terminal`), and it
+still supports **MAX 10** — `quartus/common/devkits/max10_de10_lite` and the
+MAX 10 ALTPLL libraries are both present. Only the CPU component is missing.
 
 `run_on_board.sh` uses 18.1 for `nios2-download` and `nios2-terminal` but a
 newer Quartus for the JTAG stack (`JTAG_ROOT`, default `/opt/altera/25.1std`),

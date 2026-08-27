@@ -95,8 +95,9 @@ RESULT: PASSED ON HARDWARE
 ```
 
 That is a real transcript, but **expect it about half the time**: the sweep
-always passes, while the step-mode section that follows wedges intermittently.
-See [Known issue](#known-issue-the-jtag-step-mode-check-is-intermittent).
+always passes, and so does the step-mode section that follows it. (The step
+mode used to be intermittent; see
+[Resolved](#resolved-the-jtag-step-mode-check-used-to-be-intermittent).)
 
 Those two `status` values are the live `STATUS` register read off real silicon.
 `134` is `TIMEOUT | ISOLATED | BLOCKED | WR_CMD_STUCK` after scenario `b`;
@@ -422,58 +423,59 @@ bandwidth arithmetic; the short version is that the extra cycle costs ~3% on a
 
 ---
 
-## Known issue: the JTAG step-mode check is intermittent
+## Resolved: the JTAG step-mode check used to be intermittent
 
-**The auto sweep is reliable. The step-mode section that follows it is not.**
+This example previously carried a known issue — the auto sweep was reliable
+but the step-mode section that followed it wedged in roughly half of runs, and
+it was recorded here as not root-caused. **It has since been root-caused and
+fixed.** The section is kept because the failure mode is a general hazard of
+`altsource_probe`, not a quirk of this design, and because the way it presents
+is thoroughly misleading.
 
-Measured across four consecutive runs, each with a freshly programmed board:
+### The cause
+
+`altsource_probe` shifts a new source value in over JTAG **one bit at a time**,
+and with `enable_metastability = "NO"` those bits reach the fabric as they
+land. There is no holding register between the scan chain and the design. For
+a few microseconds the design therefore sees source words that were never
+written: a mixture of the old value and the new one.
+
+In this demo, source bit 6 is a **start edge** and bits `[3:0]` choose **which
+scenario to start**. If bit 6 rises while the select bits are still
+half-updated, a *different* scenario runs than the one the host asked for — and
+the host, comparing against what it requested, reports a wrong scenario number
+and a wrong `STATUS`. That reads exactly like a firewall defect, which is what
+it is not.
+
+It was isolated on this repository's SDRAM controller example, which has the
+same construct, by asking for scenario 4 and watching scenario 3 run.
+
+### The fix
+
+The source word is filtered in RTL before anything uses it, the same way
+`key_debounce` filters a mechanical button: a new value only counts once it has
+held still for **256 consecutive clocks** (5.1 µs at 50 MHz) — far longer than
+a JTAG update takes to settle, and far shorter than any host notices. See
+`src_stable` in `rtl/de10_lite_avl_mm_firewall_demo.sv`.
+
+`board/issp_run.tcl` additionally writes the scenario select **before** the
+start edge and holds start asserted until the design acknowledges, so the
+filter has settled before start rises.
+
+### Result
+
+Six consecutive runs, each with a freshly programmed board, all passing:
 
 ```
-run 1  sweep FFFF (16/16)   step mode wedged      FAILED
+run 1  sweep FFFF (16/16)   b=0x134  C=0x234      PASSED
 run 2  sweep FFFF (16/16)   b=0x134  C=0x234      PASSED
 run 3  sweep FFFF (16/16)   b=0x134  C=0x234      PASSED
-run 4  sweep FFFF (16/16)   step mode wedged      FAILED
+run 4  sweep FFFF (16/16)   b=0x134  C=0x234      PASSED
+run 5  sweep FFFF (16/16)   b=0x134  C=0x234      PASSED
+run 6  sweep FFFF (16/16)   b=0x134  C=0x234      PASSED
 ```
 
-**The sweep reached `bitmap = FFFF` — all sixteen scenarios — on every run,
-including the two that then failed.** What fails is the step-mode section: the
-sequencer ends up with `running` stuck high, no further start pulse is
-accepted, and each subsequent read returns the previous scenario's result. So
-`run_on_board.sh` reports `RESULT: FAILED` roughly half the time, and the
-failure is always in the same place.
-
-### What it is not
-
-- **Not `--no-program`.** It happens on freshly programmed boards. Once wedged
-  the state does persist until a re-program, which is why re-running without
-  programming looks worse, but that is a consequence, not the cause.
-- **Not the ISSP tool version.** 18.1 and 25.1 `quartus_stp` were compared
-  directly against the same bitstream and behave identically.
-- **Not the Quartus build version.** Seen with bitstreams from both 18.1 and
-  25.1 Standard.
-- **Not the demo logic.** From a fresh configuration, stepping `C`, then `b`,
-  then `C` again all run and report correctly, and the sweep exercises all
-  sixteen scenarios every time.
-
-It has **not** been root-caused. The suspect area is the interaction between
-the sweep and the sequencer's `E_IDLE` start handling. One thing worth knowing
-before digging: JTAG probe reads take tens of milliseconds while a scenario
-completes in microseconds, so `running` is frequently never observed high at
-all — any handshake that waits on that edge is racing by construction. Two
-attempted fixes along those lines were tried and discarded.
-
-`issp_run.tcl` now refuses to run against a board that is *already* wedged when
-it starts, printing an instruction to re-program rather than four misleading
-`FAIL:` lines about wrong scenarios and wrong `STATUS`. That guard is verified
-not to false-trigger on a healthy board, but it cannot catch a wedge that
-develops mid-run, which is the common case.
-
-### What to trust meanwhile
-
-Treat `bitmap = FFFF` from the sweep as the authoritative hardware result — it
-is the part that exercises all sixteen scenarios and it has never failed. Treat
-a step-mode `FAILED` as unproven rather than as a firewall defect, and re-run
-before believing it.
+Against the previous ~50% failure rate on the same board and the same test.
 
 ---
 
@@ -483,7 +485,7 @@ before believing it.
 |---|---|
 | **All 16 scenarios on a physical DE10-Lite** | **Passing** — the auto sweep reaches `bitmap = FFFF` on every run |
 | Auto sweep over JTAG (all 16 scenarios) | **Reliable** — `bitmap = FFFF` on every run observed |
-| `run_on_board.sh` step-mode section | **Intermittent** — wedges in roughly half of runs; see *Known issue* above |
+| `run_on_board.sh` step-mode section | **Reliable** — 6/6 fresh-program runs after the `src_stable` fix; see *Resolved* above |
 | All 16 scenarios, board-level simulation | **Passing** under Questa 2024.1, 91/91 checks |
 | Display and LED decode | **Checked** against an independently written glyph table |
 | Step mode, auto sweep, scenario selection | **Checked** by driving the pins |

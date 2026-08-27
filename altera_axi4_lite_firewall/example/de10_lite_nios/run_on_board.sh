@@ -24,9 +24,12 @@ IFS=$' \t\n'
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # TWO Quartus installations, on purpose.
 #
-#   QUARTUS_ROOT   the one that built the design, and the only one that still
-#                  ships Nios II EDS (nios2-download, nios2-terminal). Nios II
-#                  support was dropped after Quartus 20.x in favour of Nios V.
+#   QUARTUS_ROOT   the one that built the design. 18.1 is required because
+#                  newer Quartus Standard releases no longer ship the Nios II
+#                  processor IP (ip/altera/nios2_ip/ is empty in 25.1std), so
+#                  the system cannot be generated there. The software tools
+#                  used below - nios2-download, nios2-terminal - do still ship
+#                  in 25.1std; only the CPU component is missing.
 #   JTAG_ROOT      a newer installation, used ONLY for the JTAG stack.
 #
 # This split is not tidiness, it is a workaround. The 18.1 JTAG server reads

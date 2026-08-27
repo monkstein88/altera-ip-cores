@@ -86,26 +86,55 @@ committing to hardware.
 
 ### For the DE10-Lite
 
-The board this repository's firewall examples target carries an **ISSI
-IS42S16320D**: 64 MB, organised 32M × 16. That geometry is
+The board this repository's examples target carries an **ISSI IS42S16320D**:
+64 MB, organised 32M × 16. That geometry is
 
 ```
 dataWidth      16
 numberOfBanks   4
 rowWidth       13          (8192 rows)
 columnWidth    10          (1024 columns)
+casLatency      3
 ```
 
-which is 4 × 8192 × 1024 × 16 bits = 512 Mbit = 64 MB, as it should be. CAS
-latency and the timing values come from the IS42S16320D datasheet for your
-clock — the `-7` speed grade part on this board is commonly run at CAS 3.
+which is 4 × 8192 × 1024 × 16 bits = 512 Mbit = 64 MB, as it should be.
 
-> **Not verified here.** Those settings follow from the part's organisation,
-> but no SDRAM system was built or run on hardware in this repository. What
-> *was* checked is that the component instantiates and generates: a minimal
-> system containing it produces a 722-line controller carrying the full SDRAM
-> pin set. Treat the geometry as a starting point and confirm against the
-> board's own reference design.
+> **Verified on hardware.** [`example/de10_lite_rtl`](example/de10_lite_rtl/README.md)
+> builds exactly this configuration and runs it on a physical DE10-Lite. All
+> eight of its scenarios pass, including a write-and-verify pass over **every
+> one of the 33,554,432 words** in the chip — which is what actually confirms
+> the geometry, because a wrong `rowWidth` or `columnWidth` folds the address
+> space back on itself and nothing smaller notices.
+>
+> The full parameter set, including the timing values, is in that example's
+> [`qsys/build_system.tcl`](example/de10_lite_rtl/qsys/build_system.tcl); it is
+> taken from Terasic's own `SDRAM_Nios_Test` for the same chip rather than
+> derived by hand.
+
+## Example
+
+[`example/de10_lite_rtl`](example/de10_lite_rtl/README.md) — a CPU-less RTL
+demonstration on a Terasic DE10-Lite. A hardware sequencer masters `s1`
+directly, so what it measures is the controller and the memory with nothing in
+between.
+
+Measured on silicon, at 100 MHz on a 16-bit bus (200 MB/s theoretical peak):
+
+| access pattern | throughput |
+|---|---:|
+| sequential, all 64 MB | **194.0 MB/s** — 97% of peak, 1.03 clocks/word |
+| a row miss on every access | **22.2 MB/s** — 8.7× slower |
+
+It also documents two things about this controller that are not obvious from
+its interface and were read out of its generated RTL:
+
+- **The address decode is not `{bank, row, column}`.** It is
+  `{bank[1], row[12:0], bank[0], column[9:0]}` — the low bank bit sits *below*
+  the row. A linear walk therefore changes bank every 1024 words and row only
+  every 2048.
+- **`chipselect` does not qualify a transaction**, and **read data cannot be
+  stalled** — `waitrequest` is the command FIFO's `full` flag, so it is
+  backpressure on the command side only.
 
 ---
 
@@ -120,7 +149,8 @@ in far more detail than is worth repeating here.
 
 ## Files
 
-Everything in this directory is Intel's, apart from `NOTICE`:
+Everything in this directory is Intel's, apart from `NOTICE`, `README.md` and
+`example/`:
 
 ```
 altera_avalon_new_sdram_controller_hw.tcl   Platform Designer component
@@ -130,6 +160,7 @@ em_sdram.pm, em_sdram_qsys.pm               the generators (Perl)
 em_new_sdram_controller.pl, generate_rtl.pl
 em_altera_sodimm.pl, embedded_ip_generate_common.pm
 NOTICE                                      licence + the change made here
+example/de10_lite_rtl/                      DE10-Lite demonstration (not Intel's)
 ```
 
 The RTL is not checked in — the Perl generators produce it at Qsys generation

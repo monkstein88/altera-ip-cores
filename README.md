@@ -17,24 +17,29 @@ The two firewalls are **MIT licensed**; the vendor core keeps Intel's own terms
 |---|---|---|---|
 | [`altera_avalon_mm_firewall`](altera_avalon_mm_firewall/README.md) | **Avalon-MM Firewall** · v1.0 | Burst-capable access-control and fault-isolation firewall for Avalon-MM. Default-deny address windows with per-window read/write/burst permission, whole-burst range checking, downstream timeout detection and an explicit software recovery sequence | **Verified on hardware.** 632 checks, 22 assertions, 11 cover points |
 | [`altera_axi4_lite_firewall`](altera_axi4_lite_firewall/README.md) | **AXI4-Lite Firewall** · v2.0 | The same idea on AXI4-Lite: single transactions, capture-and-redrive rather than pass-through | **Verified on hardware.** 103 checks, 14 assertions, 6 cover points |
-| [`altera_avalon_new_sdram_controller`](altera_avalon_new_sdram_controller/README.md) | **SDRAM Controller Intel FPGA IP** · v20.1 | Intel's own SDRAM controller, kept here because current Quartus releases no longer ship it | Vendor IP, unhidden so it is usable — see *Provenance* |
+| [`altera_avalon_new_sdram_controller`](altera_avalon_new_sdram_controller/README.md) | **SDRAM Controller Intel FPGA IP** · v20.1 | Intel's own SDRAM controller, kept here because current Quartus releases no longer ship it | Vendor IP, unhidden so it is usable — see *Provenance*. **Demo verified on hardware:** all 64 MB written and read back at 194 MB/s |
 
 Both firewalls appear in the IP Catalog under **Bridges and Adapters / Custom**.
 
 ### Verified on hardware means verified on hardware
 
-Both firewalls ship two DE10-Lite demonstrations (Intel MAX 10,
-`10M50DAF484C7G`) that were built, programmed and run on a physical board, and
-that report their own pass/fail over JTAG rather than asking you to read LEDs:
+Every demonstration here was built, programmed and run on a physical DE10-Lite
+(Intel MAX 10, `10M50DAF484C7G`), and each reports its own pass/fail over JTAG
+rather than asking you to read LEDs:
 
-| | Avalon-MM Firewall | AXI4-Lite Firewall |
-|---|---|---|
-| RTL demo — no CPU, no software | 16/16 scenarios at 50 MHz | 16/16 scenarios at 50 MHz |
-| Nios II/f demo — C, in a generated Qsys system | 41/41 checks at **100 MHz** | 33/33 checks at 100 MHz |
+| | Avalon-MM Firewall | AXI4-Lite Firewall | SDRAM Controller |
+|---|---|---|---|
+| RTL demo — no CPU, no software | 16/16 scenarios at 50 MHz | 16/16 scenarios at 50 MHz | 8/8 scenarios at **100 MHz** |
+| Nios II/f demo — C, in a generated Qsys system | 41/41 checks at **100 MHz** | 33/33 checks at 100 MHz | — |
 
 The Avalon core's demos are the source of its published resource and Fmax
 numbers: 60.77 MHz with the combinational rule lookup, 95.85 MHz with
 `REGISTER_LOOKUP` enabled, at the core's default parameters on a `C7` part.
+
+The SDRAM demo writes and verifies **all 33,554,432 words** of the board's
+64 MB chip and times the transfer: **194 MB/s sequential**, 97% of the 200 MB/s
+theoretical peak for a 16-bit bus at 100 MHz, against 22 MB/s when every access
+is forced to miss its row.
 
 ---
 
@@ -167,6 +172,7 @@ altera-ip-cores/
 │   ├── example/de10_lite_rtl/
 │   └── example/de10_lite_nios/
 └── altera_avalon_new_sdram_controller/ Intel's SDRAM controller, unhidden
+    └── example/de10_lite_rtl/          plus one hardware demo
 ```
 
 Each core's own `README.md` is the real documentation: design rationale,

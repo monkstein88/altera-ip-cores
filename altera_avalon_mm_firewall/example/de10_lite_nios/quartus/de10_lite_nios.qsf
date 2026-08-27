@@ -4,9 +4,11 @@
 # Quartus settings for the Nios II Avalon-MM Firewall example on the Terasic
 # DE10-Lite (Intel MAX 10, 10M50DAF484C7G).
 #
-# Quartus 18.1 is required: it is the last release with Nios II EDS, and MAX 10
-# support was dropped after Quartus 20.x. A newer Quartus can neither target
-# this device nor build this software.
+# Quartus 18.1 is required because newer Quartus Standard releases no longer
+# ship the Nios II processor IP: ip/altera/nios2_ip/ is empty in 25.1std, so
+# Platform Designer cannot instantiate altera_nios2_gen2. MAX 10 support and
+# the Nios II software tools are both still present in 25.1std - it is only
+# the CPU component that is missing.
 #
 # PIN ASSIGNMENTS: the same clock, key, switch and LED pins as the RTL example
 # and the AXI4-Lite demos, which were diffed against the DE10-Lite Golden Top

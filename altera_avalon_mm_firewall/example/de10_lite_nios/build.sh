@@ -8,10 +8,16 @@
 #   ./build.sh fpga       just the Quartus compile
 #   ./build.sh clean      remove build artifacts (leaves firewall_sys.qsys)
 #
-# QUARTUS 18.1 IS REQUIRED. It is the last release with Nios II EDS - Nios II
-# was dropped after Quartus 20.x in favour of Nios V - and MAX 10 support was
-# dropped after 20.x as well, so a newer Quartus can neither target this device
-# nor build this software.
+# QUARTUS 18.1 IS REQUIRED, for one specific reason: newer Quartus Standard
+# releases no longer ship the Nios II PROCESSOR IP. In 25.1std the catalog
+# directory ip/altera/nios2_ip/ is empty, so Platform Designer cannot
+# instantiate altera_nios2_gen2 and this system will not build there.
+#
+# Note what is NOT the reason. 25.1std still ships the Nios II software tools
+# (nios2eds/sdk2/bin: nios2-bsp, nios2-download, nios2-terminal), and it still
+# supports MAX 10 - quartus/common/devkits/max10_de10_lite and the MAX 10
+# ALTPLL libraries are both present. It is only the CPU component that is
+# missing.
 # =============================================================================
 set -euo pipefail
 
