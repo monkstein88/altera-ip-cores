@@ -46,6 +46,11 @@ PLLJ_PLLSPE_INFO.txt
 **/qsys/*_sys/
 *.sopcinfo
 
+# The generated SDRAM memory model, produced by
+# example/de10_lite_rtl/simulation/gen_mem_model.sh from your own Quartus
+# installation. Intel's output, so it is not redistributed here either.
+**/simulation/.gen/
+
 # --- OS / editor cruft ---
 .DS_Store
 Thumbs.db

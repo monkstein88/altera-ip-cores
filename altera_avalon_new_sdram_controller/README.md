@@ -81,8 +81,21 @@ The `model` parameter carries presets for a handful of specific chips —
 others — or `custom`, which is what you want for anything not on that list.
 
 `generateSimulationModel` adds a functional memory model to the generated
-testbench, which is the cheap way to check your geometry and timing before
-committing to hardware.
+testbench. Two things about it are worth knowing before you rely on it:
+
+- **The generator is not in this directory.** `generate_rtl.pl` calls a
+  `make_sodimm` routine that lives in a *separate* Intel component,
+  `altera_sdram_partner_module`, under
+  `$QUARTUS_ROOT/ip/altera/alt_mem_if/alt_mem_if_mem_models/`. Setting this
+  parameter makes `qsys-generate` reach across to it.
+- **It is functional, not timing-accurate.** It decodes `LOAD MODE REGISTER`,
+  `ACTIVATE`, `READ` and `WRITE` and pipelines read data by the CAS latency,
+  but models no `tRCD`/`tRP`/`tRFC`/`tWR`, no refresh interval and no
+  retention — `PRECHARGE` and `AUTO REFRESH` are decoded and ignored. It will
+  not tell you your timing parameters are wrong.
+
+The example below uses it, and documents how to substitute a vendor model if
+you need real timing checks.
 
 ### For the DE10-Lite
 
@@ -124,6 +137,10 @@ Measured on silicon, at 100 MHz on a 16-bit bus (200 MB/s theoretical peak):
 |---|---:|
 | sequential, all 64 MB | **194.0 MB/s** — 97% of peak, 1.03 clocks/word |
 | a row miss on every access | **22.2 MB/s** — 8.7× slower |
+
+It ships a Questa testbench too (`./build.sh sim`, 58 checks) that runs
+against Intel's functional memory model — generated on demand from your own
+Quartus installation, not redistributed here.
 
 It also documents two things about this controller that are not obvious from
 its interface and were read out of its generated RTL:

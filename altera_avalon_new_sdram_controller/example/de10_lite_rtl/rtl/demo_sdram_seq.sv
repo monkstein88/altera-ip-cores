@@ -70,7 +70,12 @@ module demo_sdram_seq #(
     // ~328 us at 100 MHz, covering the controller's 100 us power-up delay
     // plus its precharge / refresh / mode-register init before the first
     // access is offered.
-    parameter int unsigned INIT_WAIT_CYCLES    = 32'd32_768
+    parameter int unsigned INIT_WAIT_CYCLES    = 32'd32_768,
+    // How many words scenario 7 marches over. The default is the whole chip,
+    // which is the point of it on hardware. A testbench overrides this: at
+    // ~1 clock per word a full march is 67 million simulated cycles, so a
+    // simulation that used the default would not finish in any useful time.
+    parameter int unsigned MARCH_WORDS        = 32'd33_554_432
 ) (
     input  logic                     clk,
     input  logic                     resetn,
@@ -132,8 +137,9 @@ module demo_sdram_seq #(
     localparam logic [ADDR_WIDTH-1:0] BE_ADDR   = 25'h0005678;
     localparam logic [ADDR_WIDTH-1:0] REFR_BASE = 25'h0100000;
 
-    // Every word in the chip: 4 banks x 8192 rows x 1024 columns.
-    localparam logic [31:0] TOTAL_WORDS = 32'd33_554_432;
+    // Every word in the chip: 4 banks x 8192 rows x 1024 columns. Scenario 7
+    // marches over MARCH_WORDS of them, which defaults to all of it.
+    localparam logic [31:0] TOTAL_WORDS = MARCH_WORDS;
 
     // -----------------------------------------------------------------------
     // The expected word at an address.
@@ -433,6 +439,10 @@ module demo_sdram_seq #(
                     err_code     <= ERR_NONE;
                     perf_wr_cycles <= '0;
                     perf_rd_cycles <= '0;
+                    // Cleared per run: the two serial scenarios never set it,
+                    // and leaving the previous scenario's count in place made
+                    // the JTAG readout look like they had moved words.
+                    perf_words   <= '0;
                     init_cnt     <= '0;
                     state        <= ST_INIT;
                 end
@@ -616,6 +626,7 @@ module demo_sdram_seq #(
                     pass_acc     <= 1'b1;
                     perf_wr_cycles <= '0;
                     perf_rd_cycles <= '0;
+                    perf_words     <= '0;
                     state        <= ST_SETUP;
                 end else begin
                     state <= ST_IDLE;

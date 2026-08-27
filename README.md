@@ -156,7 +156,9 @@ family or a release. Only the examples are.
 
 For simulation, both firewalls' regressions run under **Questa/ModelSim**
 (coverage and assertions), **Verilator** (licence-free), and **Icarus**
-(functional tests only — a `-DICARUS` define skips the SVA bind). Each core's
+(functional tests only — a `-DICARUS` define skips the SVA bind). The SDRAM
+example carries a Questa testbench that runs against Intel's functional memory
+model, generated on demand from your own Quartus installation. Each core's
 README documents its flows and what each one does and does not cover.
 
 ---

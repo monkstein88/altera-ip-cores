@@ -50,6 +50,7 @@ miss costs on this controller, measured rather than estimated.
 ```bash
 ./build.sh          # Platform Designer system, then Quartus
 ./run_on_board.sh   # program the board, then check it over JTAG
+./build.sh sim      # simulate against a functional SDRAM model (58 checks)
 ```
 
 `run_on_board.sh` exits 0 only if every scenario passes. Nobody has to look at
@@ -219,6 +220,104 @@ notices. See `src_stable` in `rtl/de10_lite_avl_mm_sdram_demo.sv`.
 
 ---
 
+## Simulation
+
+```bash
+./build.sh sim
+```
+
+58 checks, all passing, under Questa/ModelSim. The flow generates what it
+needs, so there is nothing to download.
+
+### Where the memory model comes from
+
+Intel ships a functional SDRAM model generator — but **not** in the SDRAM
+controller's own directory. It lives in a separate component,
+`altera_sdram_partner_module`, under
+`$QUARTUS_ROOT/ip/altera/alt_mem_if/alt_mem_if_mem_models/`.
+
+That is worth knowing, because the controller's `generate_rtl.pl` calls a
+`make_sodimm` routine that **is not in its directory and never was** — it is in
+the partner module. Setting the controller's `generateSimulationModel`
+parameter makes `qsys-generate` reach across and run it.
+
+`simulation/gen_mem_model.sh` calls that generator directly with this board's
+geometry, which is faster than regenerating the whole system and leaves the
+tracked `.qsys` untouched. The output is Intel's, so it is **not committed** —
+it is regenerated from your own Quartus installation, the same way the
+controller's RTL is.
+
+### What the model does and does not do
+
+It is a **functional** model: a memory array behind a command decoder. It
+decodes `LOAD MODE REGISTER` (picking up CAS latency), `ACTIVATE` (latching
+row and bank), `READ` and `WRITE`, and pipelines read data by the CAS latency.
+
+It does **not** model `tRCD`, `tRP`, `tRFC`, `tWR` or `tMRD`, does **not**
+enforce the refresh interval, and does **not** model data retention.
+`PRECHARGE` and `AUTO REFRESH` are decoded and then ignored.
+
+So simulation proves the controller drives the right commands to the right
+addresses and returns the right data. **It cannot tell you your timing
+parameters are wrong** — and scenario 6 passes against it for free. The
+testbench says so on the console rather than quietly counting it as a win.
+
+If you need timing checks, use a vendor model — see *Vendor models* below.
+
+### What the testbench checks
+
+| phase | what |
+|---|---|
+| 1 | all 8 scenarios individually: finished, passed, self-reported correctly, `done_count` incremented exactly once |
+| 2 | the word counts and cycle counts the block scenarios report |
+| 3 | the data really is in the memory, read out of the model's array at the address the sequencer used |
+| 4 | byte enables reached the chip — `0x1234` survives the half-word writes |
+| 5 | **the documented address decode**, by watching which bank and row the controller `ACTIVATE`s during a known walk |
+| 6 | **fault injection** — a word corrupted *between* the write pass and the read pass must be caught, at the right address, with the right expected and actual values |
+| 7 | the auto sweep sets every bit of the bitmap |
+| 8 | select masking, and `seq_reset` returning the machine to idle mid-run |
+| 9 | **the watchdog** — with `waitrequest` held high forever, `running` must not stick |
+
+Phases 5, 6 and 9 are the ones that carry weight. Phase 5 is direct evidence
+for the address decode rather than taking the generated RTL's word for it.
+Phase 6 exists because "all scenarios passed" is worthless if the comparison
+is broken — the check has to be shown to fail when it should. Phase 9 proves
+the design cannot wedge.
+
+> **Simulation reproduces silicon cycle-for-cycle.** The write-pass cycle
+> counts for scenarios 3, 4 and 5 come out as 1046, 2113 and 2311 in
+> simulation — the same numbers measured on the board. The functional model
+> gets the controller's *throughput* right even though it models no timing,
+> because the controller's own state machine is what paces the transfer.
+
+### Vendor models
+
+If you want real timing checks — `$setuphold`, `$width`, and runtime `tRCD` /
+`tRP` / `tRAS` / `tRFC` / `tWR` violations — you need a model from a memory
+vendor. Three routes, in order of how easily they can actually be obtained:
+
+1. **Micron** publishes Verilog models for its SDRAM parts, and they are the
+   de-facto standard: full `specify` blocks and timing violation reporting.
+   The DE10-Lite's part is 512 Mb organised 32M × 16, so the pin- and
+   protocol-compatible Micron equivalent is the **MT48LC32M16A2**. These
+   models carry a Micron copyright and an "AS IS" disclaimer, so they are
+   fine to use locally but should not be committed here — the same reason
+   Intel's generated output is not.
+2. **ISSI** — the actual vendor of the part on this board. Their site offers
+   models on the product pages, but it is behind bot protection; the reliable
+   route is to email ISSI or their FAE department and ask for the Verilog
+   model for the IS42S16320D.
+3. Note the older Micron models state a known limitation of their own:
+   *"Doesn't check for 8192 cycle refresh"* — so even a vendor model may not
+   verify the refresh interval, which remains a hardware-only result.
+
+Dropping one in is a matter of replacing the `sdram_mem_model` instance in
+`tb/de10_lite_avl_mm_sdram_demo_tb.sv`. Note that this testbench is
+zero-delay, so a timing-checking model will need its checks relaxed or the
+testbench given real clock-to-out delays.
+
+---
+
 ## Clocking, and the −3 ns that is not a tuning knob
 
 The SDRAM needs two clocks: the controller runs on 100 MHz at 0°, and the chip
@@ -295,13 +394,13 @@ Quartus 18.1.1 Standard, 10M50DAF484C7G (speed grade 7), worst-case model
 
 | | |
 |---|---|
-| Fmax, system clock | **118.92 MHz** against a 100 MHz requirement |
-| Setup slack, system clock | +1.591 ns |
-| Hold slack, system clock | +0.413 ns (+0.206 ns at the fast corner) |
+| Fmax, system clock | **116.58 MHz** against a 100 MHz requirement |
+| Setup slack, system clock | +1.422 ns |
+| Hold slack, system clock | +0.412 ns (+0.206 ns at the fast corner) |
 | Setup slack, `clk_dram_ext` | +3.640 ns |
 | Hold slack, `clk_dram_ext` | +2.886 ns (+2.469 ns at the fast corner) |
 | Unconstrained clocks | 0 |
-| Logic elements | 1,936 / 49,760 (4%) |
+| Logic elements | 1,937 / 49,760 (4%) |
 | Registers | 1,107 |
 | Pins | 110 / 360 |
 | PLLs | 1 / 4 |
@@ -326,6 +425,9 @@ timing analysis accounts for the actual routing delay, and the +3.6 ns setup /
 
 ```
 qsys/build_system.tcl      Platform Designer system: the controller, nothing else
+tb/de10_lite_avl_mm_sdram_demo_tb.sv   board-level testbench, 58 checks
+simulation/gen_mem_model.sh            generate Intel's functional SDRAM model
+simulation/questa/run_sim.tcl          compile and run the testbench
 rtl/sdram_pll.sv           ALTPLL: 50 → 100 MHz, plus the −3 ns DRAM_CLK
 rtl/demo_avl_mm_master.sv  Avalon-MM shim (active-low read_n/write_n/byteenable_n)
 rtl/demo_sdram_seq.sv      the eight scenarios, the checker, the cycle counters
@@ -360,7 +462,8 @@ the interface:
 | Determinism over JTAG | **5/5 consecutive runs** after the `src_stable` fix, no retries |
 | Throughput figures | **Measured on silicon** by counting clocks, not estimated |
 | Refresh retention | **Checked** — 4096 words survive 250 ms with no access at all |
-| Timing closure at 100 MHz | **Checked** — Fmax 118.92 MHz, 0 unconstrained clocks, both corners |
+| Timing closure at 100 MHz | **Checked** — Fmax 116.58 MHz, 0 unconstrained clocks, both corners |
 | SDRAM pin assignments | **Diffed** against `DE10_LITE_Golden_Top.qsf` on the System CD v2.2.0 |
 | Controller settings | **Taken from** Terasic's `SDRAM_Nios_Test` for the same chip |
-| RTL simulation of the demo | **Not provided** — the controller's behavioural model needs a vendor SDRAM model; the hardware run is the verification here |
+| RTL simulation of the demo | **Passing** — 58/58 checks under Questa against Intel's generated functional model; see *Simulation* |
+| Timing parameters (tRCD, tRP, tRFC, …) | **Not simulated** — the functional model does not check them. Hardware is what validates them |
