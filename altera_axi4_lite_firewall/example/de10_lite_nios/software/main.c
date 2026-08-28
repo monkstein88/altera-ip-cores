@@ -40,7 +40,7 @@
 #include "system.h"
 #include "sys/alt_irq.h"
 #include "altera_avalon_pio_regs.h"
-#include "axi4_lite_firewall.h"
+#include "altera_axi4_lite_firewall.h"
 
 /* ------------------------------------------------------------------ */
 /* Peripheral fault injection, via pio_fault                           */
@@ -70,7 +70,7 @@ static void periph_reset_release(void *ctx)
     fault_write(fault_shadow | FAULT_RESETN);
 }
 
-static void periph_delay_clocks(void *ctx, alt_u32 clocks)
+static void periph_delay_clocks(void *ctx, uint32_t clocks)
 {
     (void)ctx; (void)clocks;
     /* One microsecond is 50 clocks at 50 MHz, comfortably above the 16 the
@@ -78,13 +78,15 @@ static void periph_delay_clocks(void *ctx, alt_u32 clocks)
     usleep(1);
 }
 
-static const firewall_t fw = {
-    FW_S_AXI_CTRL_BASE,
-    periph_reset_assert,
-    periph_reset_release,
-    periph_delay_clocks,
-    0
-};
+/* The BSP constructs and initialises this from alt_sys_init.c before main(),
+   because axi4_lite_firewall_sw.tcl sets auto_initialize. alt_sys_init.c owns
+   the definition; `fw` is the Platform Designer instance name.
+
+   What alt_sys_init() has already done: read CORE_INFO, filled in version and
+   num_rules, and registered the driver's ISR. What it has NOT done, because
+   neither can be derived from hardware, is program the rule table or install
+   the peripheral-reset callbacks - both happen in main(). */
+extern alt_axi4_lite_firewall_dev fw;
 
 /* ------------------------------------------------------------------ */
 /* The demo address map.                                               */
@@ -129,7 +131,7 @@ static void firewall_isr(void *context)
 {
     (void)context;
     irq_count++;
-    irq_status |= firewall_status(&fw);
+    irq_status |= alt_axi4_lite_firewall_status(&fw);
     IOWR_32DIRECT(FW_S_AXI_CTRL_BASE, FW_IRQ_ENABLE, 0u);
 }
 
@@ -138,7 +140,7 @@ static void firewall_isr(void *context)
    STATUS is how software finds out an access was denied. */
 static void probe_begin(void)
 {
-    firewall_ack(&fw, FW_ST_STICKY);
+    alt_axi4_lite_firewall_ack(&fw, FW_ST_STICKY);
     IOWR_32DIRECT(FW_S_AXI_CTRL_BASE, FW_IRQ_ENABLE, FW_IRQ_ALL);   /* re-arm */
     irq_count  = 0;
     irq_status = 0;
@@ -157,19 +159,19 @@ static alt_u32 probe_write(alt_u32 fwaddr, alt_u32 value)
     probe_begin();
     IOWR_32DIRECT(CPU_ADDR(fwaddr), 0, value);
     (void)IORD_32DIRECT(CPU_ADDR(FW_RW), 0);
-    return firewall_status(&fw) | irq_status;
+    return alt_axi4_lite_firewall_status(&fw) | irq_status;
 }
 
 static alt_u32 probe_read(alt_u32 fwaddr, alt_u32 *out)
 {
     probe_begin();
     *out = IORD_32DIRECT(CPU_ADDR(fwaddr), 0);
-    return firewall_status(&fw) | irq_status;
+    return alt_axi4_lite_firewall_status(&fw) | irq_status;
 }
 
 static void show_leds(void)
 {
-    IOWR_ALTERA_AVALON_PIO_DATA(PIO_LED_BASE, firewall_status(&fw) & 0x3FFu);
+    IOWR_ALTERA_AVALON_PIO_DATA(PIO_LED_BASE, alt_axi4_lite_firewall_status(&fw) & 0x3FFu);
 }
 
 int main(void)
@@ -181,25 +183,42 @@ int main(void)
     printf(" AXI4-Lite Firewall - Nios II/f example (DE10-Lite)\n");
     printf("===========================================================\n\n");
 
-    num_rules = firewall_probe(&fw);
-    if (num_rules < 0) {
-        printf("ERROR: no v2.0 firewall at 0x%08x\n", (unsigned)FW_S_AXI_CTRL_BASE);
+    /* alt_sys_init() already probed CORE_INFO and filled these in. Reading
+       them back is how this program confirms auto-initialisation ran at all:
+       a num_rules of 0 means the BSP did not construct the device, which is
+       the symptom of a missing or misnamed _sw.tcl. */
+    num_rules = (int)fw.num_rules;
+    if (fw.version != FW_VERSION_2_0 || num_rules <= 0) {
+        printf("ERROR: no v2.0 firewall at 0x%08x (version=0x%04x, rules=%d)\n",
+               (unsigned)fw.base, (unsigned)fw.version, num_rules);
         return 1;
     }
     printf("Core found: v2.0, %d rules, control port at 0x%08x\n",
-           num_rules, (unsigned)FW_S_AXI_CTRL_BASE);
+           num_rules, (unsigned)fw.base);
     printf("Protected path at 0x%08x (firewall sees offsets 0x000..0xFFF)\n\n",
            (unsigned)FW_S_AXI_BASE);
 
+    /* Override the driver's ISR with this program's own.
+     *
+     * The driver's default ISR acknowledges the sticky bits, which is the
+     * right default for an application: the irq is level sensitive and would
+     * otherwise re-enter forever. It is the WRONG thing here, for the reason
+     * documented above firewall_isr() - acknowledging destroys the very
+     * evidence these checks read back. Registering a second handler on the
+     * same irq replaces the first, so this line is all it takes.
+     */
     alt_ic_isr_register(FW_S_AXI_CTRL_IRQ_INTERRUPT_CONTROLLER_ID,
                         FW_S_AXI_CTRL_IRQ, firewall_isr, NULL, NULL);
 
     /* ---- configure ------------------------------------------------- */
     fault_write(FAULT_RESETN);
-    firewall_init(&fw, (unsigned)num_rules, 50000u);
-    firewall_set_rule(&fw, 0, FW_RW, FW_RW + 0xFu, FW_PERM_READ | FW_PERM_WRITE);
-    firewall_set_rule(&fw, 1, FW_RO, FW_RO + 0xFu, FW_PERM_READ);
-    firewall_set_rule(&fw, 2, FW_WO, FW_WO + 0xFu, FW_PERM_WRITE);
+    alt_axi4_lite_firewall_set_reset_handlers(&fw, periph_reset_assert,
+                                              periph_reset_release,
+                                              periph_delay_clocks, NULL);
+    alt_axi4_lite_firewall_reset_config(&fw, 50000u);
+    alt_axi4_lite_firewall_set_rule(&fw, 0, FW_RW, FW_RW + 0xFu, FW_PERM_READ | FW_PERM_WRITE);
+    alt_axi4_lite_firewall_set_rule(&fw, 1, FW_RO, FW_RO + 0xFu, FW_PERM_READ);
+    alt_axi4_lite_firewall_set_rule(&fw, 2, FW_WO, FW_WO + 0xFu, FW_PERM_WRITE);
 
     printf("--- access control ---\n");
 
@@ -233,13 +252,13 @@ int main(void)
     check("unmapped address: read denied", (st & FW_ST_ADDR_VIOLATION) != 0);
 
     {
-        alt_u32  faddr; int was_write; unsigned type;
-        firewall_fault(&fw, &faddr, &was_write, &type);
+        uint32_t faddr; int was_write; uint32_t type;
+        alt_axi4_lite_firewall_fault(&fw, &faddr, &was_write, &type);
         check("fault registers captured the offending address", faddr == FW_NONE);
         check("fault registers captured the direction", was_write == 0);
         check("fault registers captured the type", type == FW_FAULT_TYPE_ADDR);
     }
-    firewall_ack(&fw, FW_ST_STICKY);
+    alt_axi4_lite_firewall_ack(&fw, FW_ST_STICKY);
     show_leds();
 
     /* ---- timeout, isolation, recovery ------------------------------ */
@@ -263,17 +282,17 @@ int main(void)
     check("while blocked, further traffic is rejected, not stalled",
           (st & FW_ST_BLOCKED) != 0);
 
-    firewall_ack(&fw, FW_ST_STICKY);
-    st = firewall_status(&fw);
+    alt_axi4_lite_firewall_ack(&fw, FW_ST_STICKY);
+    st = alt_axi4_lite_firewall_status(&fw);
     check("acknowledging alone does NOT reopen the downstream",
           (st & FW_ST_BLOCKED) != 0);
 
     printf("  recovering (reset the peripheral, held across UNBLOCK)...\n");
     fault_write(FAULT_RESETN);              /* stop hanging */
-    rc = firewall_recover(&fw, 1000);
+    rc = alt_axi4_lite_firewall_recover(&fw, 1000);
     check("recovery reported success", rc == FW_OK || rc == FW_WARN_NOT_QUIESCED);
 
-    st = firewall_status(&fw);
+    st = alt_axi4_lite_firewall_status(&fw);
     check("downstream is open again", (st & FW_ST_BLOCKED) == 0);
     check("and the core is no longer isolated", (st & FW_ST_ISOLATED) == 0);
 
@@ -302,7 +321,7 @@ int main(void)
            "   would hang; the driver bounds it)\n");
 
     fault_write(FAULT_RESETN);
-    rc = firewall_recover(&fw, 1000);
+    rc = alt_axi4_lite_firewall_recover(&fw, 1000);
     check("bounded recovery completes even so",
           rc == FW_OK || rc == FW_WARN_NOT_QUIESCED);
     show_leds();
@@ -318,7 +337,7 @@ int main(void)
     st = probe_write(FW_NONE, 0u);
     check("and denied again once enforcement is restored",
           (st & FW_ST_ADDR_VIOLATION) != 0);
-    firewall_ack(&fw, FW_ST_STICKY);
+    alt_axi4_lite_firewall_ack(&fw, FW_ST_STICKY);
 
     /* ---- done ------------------------------------------------------ */
     show_leds();

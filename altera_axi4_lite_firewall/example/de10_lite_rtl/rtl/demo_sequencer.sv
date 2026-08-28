@@ -57,6 +57,14 @@ module demo_sequencer #(
     // ------------------------- display outputs ----------------------------
     output logic [3:0]                  cur_scenario,
     output logic                        running,
+    // Increments once per completed scenario, and never decrements.
+    //
+    // `running` is a LEVEL, and a JTAG host cannot reliably see it: a probe
+    // read takes tens of milliseconds while most scenarios finish in
+    // microseconds, so the host asks "did it start?" and the answer is
+    // already "it finished". A monotonic counter has no such window - the
+    // host records it before the request and waits for it to MOVE.
+    output logic [3:0]                  done_count,
     output logic                        result_valid,
     output logic                        result_pass,
     output logic [15:0]                 pass_bitmap,
@@ -619,6 +627,7 @@ module demo_sequencer #(
             pass_acc        <= 1'b1;
             pass_bitmap     <= '0;
             result_valid    <= 1'b0;
+            done_count      <= 4'd0;
             result_pass     <= 1'b0;
             obs             <= '0;
             status_shadow   <= '0;
@@ -788,6 +797,7 @@ module demo_sequencer #(
                     pass_bitmap[scen] <= pass_acc;
                     result_pass       <= pass_acc;
                     result_valid      <= 1'b1;
+                    done_count        <= done_count + 4'd1;
                     if (auto_mode) begin
                         pace_cnt <= '1;
                         state    <= E_PACE;

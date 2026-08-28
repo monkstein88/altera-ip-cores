@@ -163,7 +163,7 @@ an answer in the same cycle without contending.
 The lookup is a priority chain over `NUM_RULES` entries. It is the critical
 path — measured, not merely suspected: on MAX 10 at `NUM_RULES` = 8 the worst
 path runs `captured_awaddr` → `wr_timeout_cnt`, and f<sub>MAX</sub> is
-59.0 MHz. The standard fix if it limits f<sub>MAX</sub> in your system is to
+60.01 MHz. The standard fix if it limits f<sub>MAX</sub> in your system is to
 register the lookup with an extra pipeline stage.
 
 ## 2.2 Timeout and recovery

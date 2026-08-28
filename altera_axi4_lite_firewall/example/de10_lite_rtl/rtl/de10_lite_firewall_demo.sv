@@ -126,6 +126,7 @@ module de10_lite_firewall_demo #(
     // core's README documents this exact trap - it is why the toolchain has
     // three front ends rather than one.
     logic [3:0]  cur_scenario;
+    logic [3:0]  done_count;
     logic        running, result_valid, result_pass;
     logic [15:0] pass_bitmap;
     logic [31:0] obs, status_shadow;
@@ -148,10 +149,11 @@ module de10_lite_firewall_demo #(
     // no source for, and a dead generate block would not save them from
     // having to resolve it.
     // ------------------------------------------------------------------
-    logic [31:0] issp_probe;
+    logic [35:0] issp_probe;
     logic [7:0]  issp_source;
 
-    assign issp_probe = {status_shadow[8:0],   // 31:23
+    assign issp_probe = {done_count,           // 35:32
+                         status_shadow[8:0],   // 31:23
                          running,              // 22
                          result_valid,         // 21
                          result_pass,          // 20
@@ -163,7 +165,7 @@ module de10_lite_firewall_demo #(
         .sld_auto_instance_index ("YES"),
         .sld_instance_index      (0),
         .instance_id             ("FWDM"),
-        .probe_width             (32),
+        .probe_width             (36),
         .source_width            (8),
         .source_initial_value    ("0"),
         .enable_metastability    ("NO")
@@ -175,12 +177,53 @@ module de10_lite_firewall_demo #(
     assign issp_source = 8'h00;
 `endif
 
+    // ------------------------------------------------------------------
+    // THE JTAG SOURCE REGISTER IS NOT UPDATED ATOMICALLY.
+    //
+    // altsource_probe shifts a new source value in over JTAG one bit at a
+    // time, and with enable_metastability = "NO" those bits reach the design
+    // as they land - there is no holding register between the scan chain and
+    // the fabric. For a few microseconds the design therefore sees words that
+    // were never written: a mixture of the old value and the new one.
+    //
+    // Bit 6 is a START edge and bits [3:0] choose WHICH scenario to start, so
+    // if bit 6 rises while the select bits are still half-updated, the wrong
+    // scenario runs - and the host, which asked for the right one, reads back
+    // a result that looks like a firewall failure.
+    //
+    // This was isolated on this repository's SDRAM controller example, which
+    // has the same construct, by asking for scenario 4 and watching scenario
+    // 3 run. It is a general hazard of altsource_probe, not a quirk of any
+    // one design: any multi-bit source where one bit qualifies the others has
+    // it.
+    //
+    // The source word is therefore filtered before anything uses it, exactly
+    // the way key_debounce filters a mechanical button: a new value only
+    // counts once it has held still for 256 consecutive clocks (5.1 us at
+    // 50 MHz), far longer than a JTAG update takes to settle and far shorter
+    // than any host notices.
+    // ------------------------------------------------------------------
+    logic [7:0] src_stable, src_q, src_cnt;
+
+    always_ff @(posedge clk) begin
+        if (!resetn) begin
+            src_q      <= 8'h00;
+            src_cnt    <= 8'h00;
+            src_stable <= 8'h00;
+        end else begin
+            src_q <= issp_source;
+            if (issp_source != src_q)   src_cnt    <= 8'h00;      // still moving
+            else if (!(&src_cnt))       src_cnt    <= src_cnt + 8'd1;
+            else                        src_stable <= src_q;      // held still: accept
+        end
+    end
+
     logic issp_start_q, issp_start_pulse, start_pulse;
     always_ff @(posedge clk) begin
         if (!resetn) issp_start_q <= 1'b0;
-        else         issp_start_q <= issp_source[6];
+        else         issp_start_q <= src_stable[6];
     end
-    assign issp_start_pulse = issp_source[6] & ~issp_start_q;
+    assign issp_start_pulse = src_stable[6] & ~issp_start_q;
     assign start_pulse      = key_start_pulse | issp_start_pulse;
 
     // ------------------------------------------------------------------
@@ -336,12 +379,13 @@ module de10_lite_firewall_demo #(
         .resetn (resetn),
 
         .start     (start_pulse),
-        .select    (sw_s1[3:0] | issp_source[3:0]),
-        .auto_mode (sw_s1[9]   | issp_source[4]),
-        .freeze    (sw_s1[8]   | issp_source[5]),
+        .select    (sw_s1[3:0] | src_stable[3:0]),
+        .auto_mode (sw_s1[9]   | src_stable[4]),
+        .freeze    (sw_s1[8]   | src_stable[5]),
 
         .cur_scenario  (cur_scenario),
         .running       (running),
+        .done_count    (done_count),
         .result_valid  (result_valid),
         .result_pass   (result_pass),
         .pass_bitmap   (pass_bitmap),

@@ -111,10 +111,23 @@ opening a Nios II system fails to resolve `demo_avl_mm_target_slave` or
 
 ### Nios II software
 
-`altera_avalon_mm_firewall` ships a HAL driver and an `avl_mm_firewall_sw.tcl`,
-so `nios2-bsp-generate-files` finds the driver on the same IP search path and
+**Both firewalls** ship a Nios II HAL driver and a `*_sw.tcl`, so
+`nios2-bsp-generate-files` finds the driver on the same IP search path and
 compiles it into your BSP automatically. Adding the component to the system is
 the whole integration step — there is nothing to copy by hand.
+
+| Core | Driver | BSP description |
+|---|---|---|
+| `altera_avalon_mm_firewall` | `HAL/src/altera_avalon_mm_firewall.c` | `avl_mm_firewall_sw.tcl` |
+| `altera_axi4_lite_firewall` | `HAL/src/altera_axi4_lite_firewall.c` | `axi4_lite_firewall_sw.tcl` |
+
+Both set `auto_initialize`, so the BSP constructs every instance in
+`alt_sys_init.c` and runs it before `main()`: base address and interrupt from
+`system.h`, a version check against `CORE_INFO`, and the ISR registered. What
+that deliberately does *not* do is program the rule table or install the
+peripheral-reset callbacks — neither can be derived from the hardware. That
+division is the safe one: the table resets empty and the hardware is
+default-deny, so the state after `alt_sys_init()` is *everything denied*.
 
 ---
 
@@ -168,9 +181,11 @@ README documents its flows and what each one does and does not cover.
 ```
 altera-ip-cores/
 ├── altera_avalon_mm_firewall/          Avalon-MM Firewall: rtl, tb, doc,
-│   ├── example/de10_lite_rtl/          HAL driver, and two hardware demos
+│   ├── HAL/ inc/ *_sw.tcl             HAL driver the BSP picks up itself,
+│   ├── example/de10_lite_rtl/         and two hardware demos
 │   └── example/de10_lite_nios/
 ├── altera_axi4_lite_firewall/          AXI4-Lite Firewall, same shape
+│   ├── HAL/ inc/ *_sw.tcl
 │   ├── example/de10_lite_rtl/
 │   └── example/de10_lite_nios/
 └── altera_avalon_new_sdram_controller/ Intel's SDRAM controller, unhidden

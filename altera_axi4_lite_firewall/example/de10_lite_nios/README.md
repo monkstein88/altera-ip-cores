@@ -199,7 +199,7 @@ By entity:
 | `firewall_sys_cpu` (Nios II/f) | 2,594 | 1,526 |
 | `demo_target_slave` | 726 | 598 |
 
-The core is 1,391 LEs here against **1,869** in the RTL example, for the same
+The core is 1,391 LEs here against **1,908** in the RTL example, for the same
 `NUM_RULES` = 8. The only difference is `ADDR_WIDTH`, 12 versus 32 — which is
 direct evidence that the rule table and its comparators dominate the core's
 area, as the user guide predicts.
@@ -234,7 +234,7 @@ user guide describes.
 | Nios II/f BSP and application | **Built and run** — 75 KB ELF, `ALT_CPU_FREQ` = 100 MHz |
 | Timing closure at 100 MHz | **Met**, +1.117 ns |
 | Pin assignments | **Diffed against the DE10-Lite Golden Top — all match** |
-| Driver host tests | **29/29** (`software/test/`) |
+| Driver host tests | **30/30** (`software/test/`) |
 | `NUM_RULES` other than 8, `ADDR_WIDTH` other than 12 | **Not swept** in this system |
 
 ---
@@ -253,10 +253,36 @@ example/de10_lite_nios/
 │   └── de10_lite_nios_top.sv   Board wrapper: clock, PLL reset sequencing, fault wiring
 ├── quartus/                    Project, pin assignments, 100 MHz constraints
 └── software/
-    ├── axi4_lite_firewall.h/.c The v2.0 driver
     ├── main.c                  The 33-check application
-    └── test/                   29 host tests for the driver's ordering
+    └── test/                   30 host tests for the driver's ordering
 ```
+
+**There is no copy of the driver here.** It comes from the component's
+[`axi4_lite_firewall_sw.tcl`](../../axi4_lite_firewall_sw.tcl), which the BSP
+generator finds on the IP search path and matches to the hardware by
+`hw_class_name`. Adding the firewall to a Platform Designer system is enough:
+the BSP compiles `drivers/src/altera_axi4_lite_firewall.c` and puts the headers
+on the include path.
+
+That also means `alt_sys_init.c` constructs and initialises the device before
+`main()` runs — it emits
+
+```c
+ALTERA_AXI4_LITE_FIREWALL_INSTANCE ( FW, fw);
+ALTERA_AXI4_LITE_FIREWALL_INIT ( FW, fw);
+```
+
+so `main.c` only declares `extern alt_axi4_lite_firewall_dev fw;`. The
+"Core found: v2.0, 8 rules" line it prints is read back out of that structure,
+which is how the program proves auto-initialisation actually ran.
+
+> **The application overrides the driver's ISR, on purpose.** The driver's
+> default ISR acknowledges the sticky STATUS bits, which is right for an
+> application — the irq is level sensitive and would otherwise re-enter
+> forever. It is wrong for *this* program, whose checks read those bits back:
+> acknowledging destroys the evidence. `main.c` registers its own handler,
+> which masks instead of acknowledging. Registering a second handler on the
+> same irq replaces the first, so that is all it takes.
 
 The protected peripheral is shared with the RTL example and lives in
 [`../common/`](../common/).

@@ -59,3 +59,6 @@ Thumbs.db
 
 # --- Local tooling config (Cowork / Claude Code) ---
 .claude/
+
+# Hardware-run capture written by each example's run_on_board.sh
+run_on_board.log

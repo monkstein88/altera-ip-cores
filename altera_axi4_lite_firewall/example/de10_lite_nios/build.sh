@@ -61,8 +61,13 @@ do_sw() {
     echo "=== application ==="
     cd "$HERE/software"
     rm -rf obj firewall_demo.elf firewall_demo.map firewall_demo.objdump Makefile
+    # main.c only. The driver is NOT listed here and is not copied into this
+    # directory: it comes from the component's axi4_lite_firewall_sw.tcl, which
+    # the BSP generator matches to the hardware by hw_class_name. That is the
+    # whole point of shipping a _sw.tcl - adding the component to a Platform
+    # Designer system is enough.
     nios2-app-generate-makefile --bsp-dir bsp --app-dir . \
-        --elf-name firewall_demo.elf --src-files main.c axi4_lite_firewall.c
+        --elf-name firewall_demo.elf --src-files main.c
     make
 }
 

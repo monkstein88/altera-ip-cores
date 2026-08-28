@@ -115,8 +115,8 @@ that have been run on physical hardware.
 
 | Item | Logic elements | Dedicated registers |
 |---|---|---|
-| `axi_firewall_top`, `ADDR_WIDTH` = 32 | 1,869 | 768 |
-| of which `axi_firewall_regs` | 1,624 | 618 |
+| `axi_firewall_top`, `ADDR_WIDTH` = 32 | 1,908 | 768 |
+| of which `axi_firewall_regs` | 1,657 | 618 |
 | `axi_firewall_top`, `ADDR_WIDTH` = 12 | 1,391 | 544 |
 | of which `axi_firewall_regs` | 1,050 | 327 |
 
@@ -130,8 +130,8 @@ at 12 bits than at 32. That is direct evidence for the area analysis below: the
 rule table and its comparators dominate, and both scale with the address
 width.
 
-f<sub>MAX</sub> on the slow 1200 mV 85 &deg;C model is **59.0 MHz** at
-`ADDR_WIDTH` = 32 (in a system closed at 50 MHz, +3.052 ns of setup slack) and
+f<sub>MAX</sub> on the slow 1200 mV 85 &deg;C model is **60.01 MHz** at
+`ADDR_WIDTH` = 32 (in a system closed at 50 MHz, +3.336 ns of setup slack) and
 **112.57 MHz** at `ADDR_WIDTH` = 12 (closed at 100 MHz, +1.117 ns). The
 100 MHz result needs Quartus's High Performance Effort and physical synthesis;
 at default settings that design reaches 95.27 MHz and misses by 0.496 ns.
@@ -311,7 +311,11 @@ vvp tb.out
 | `simulation/questa/run_sim.tcl` | Questa flow with coverage |
 | `simulation/verilator/run_sim.sh` | Verilator flow |
 | `simulation/verilator/slangcheck.py` | Strict elaboration gate |
-| `example/de10_lite_rtl/` | DE10-Lite example design: sixteen self-checking scenarios in synthesisable RTL, a board-level testbench, a Quartus project, and a version 2.0 C driver. See its `README.md` |
+| `example/de10_lite_rtl/` | DE10-Lite example design: sixteen self-checking scenarios in synthesisable RTL, a board-level testbench and a Quartus project. See its `README.md` |
+| `example/de10_lite_nios/` | Nios II/f example in a generated Platform Designer system, 33 checks on hardware. See its `README.md` |
+| `HAL/inc/`, `HAL/src/` | Nios II HAL driver for the core, version 2.0 |
+| `inc/` | Register map alone, usable without the driver |
+| `axi4_lite_firewall_sw.tcl` | BSP driver description. Its presence is what makes the driver automatic: add the component to a Platform Designer system and the BSP compiles the driver, exposes the headers, and constructs each instance in `alt_sys_init.c` before `main()` |
 | `doc/` | Block diagrams and this user guide |
 
 ---
@@ -1116,7 +1120,7 @@ int fw_recover(void *base,
 
 > **Note:** A tested implementation of this function, with the reset hooks
 > parameterised and the ordering checked by host tests, is provided as
-> `example/de10_lite_nios/software/axi4_lite_firewall.c`.
+> `HAL/src/altera_axi4_lite_firewall.c`.
 
 > **Caution:** The bound on step 3 is the important part. `WR_RESP_BUSY` and
 > `RD_RESP_BUSY` clear when the peripheral delivers what it owes, and a dead
@@ -1289,8 +1293,8 @@ Avalon-to-AXI bridge and a processor data cache.
 | **Passing on a physical DE10-Lite** | **16 / 16 scenarios** | **33 / 33 checks** |
 | Board-level checks in simulation | 80 / 80, Questa and Verilator | not applicable |
 | Quartus 18.1.1 compilation | 0 errors | 0 errors |
-| Timing closure | met, +3.052 ns | met, +1.117 ns |
-| Driver host tests | not applicable | 29 / 29 |
+| Timing closure | met, +3.336 ns | met, +1.117 ns |
+| Driver host tests | not applicable | 30 / 30 |
 
 Two results from that work are folded back into this document. The resource
 and f<sub>MAX</sub> figures in

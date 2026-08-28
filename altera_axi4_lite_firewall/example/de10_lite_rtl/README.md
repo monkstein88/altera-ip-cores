@@ -97,6 +97,43 @@ so simulation never has to resolve the `altsource_probe` megafunction, and the
 sources are OR-ed with the physical switches rather than replacing them — the
 board behaves exactly as before with nothing attached.
 
+```
+probe[35:0] = { done_count[3:0], status[8:0], running, result_valid,
+                result_pass, scenario[3:0], pass_bitmap[15:0] }
+source[7:0] = { -, start, freeze, auto_mode, select[3:0] }
+```
+
+### Two JTAG hazards this design handles
+
+Both are general to `altsource_probe`, not quirks of this example. They are
+worth knowing because each one presents as *the firewall failing*, which is
+what neither of them is.
+
+**The source register is not written atomically.** `altsource_probe` shifts a
+new source value in over JTAG one bit at a time, and with
+`enable_metastability = "NO"` those bits reach the fabric as they land — there
+is no holding register between the scan chain and the design. For a few
+microseconds the design sees words that were never written: a mixture of the
+old value and the new one. Source bit 6 is a **start edge** and bits `[3:0]`
+choose **which scenario to start**, so a start edge arriving while the select
+bits are still half-updated runs the *wrong scenario*, and the host reports a
+wrong scenario number and a wrong `STATUS`.
+
+The fix is `src_stable` in the top level: the source word is filtered the way
+`key_debounce` filters a mechanical button, and only counts as a new value once
+it has held still for **256 consecutive clocks** (5.1 µs at 50 MHz). This was
+isolated on the SDRAM controller example, which has the same construct, by
+asking for scenario 4 and watching scenario 3 run.
+
+**`running` is a level, and a JTAG host cannot reliably see it.** A probe read
+takes tens of milliseconds while most scenarios finish in microseconds, so the
+host asks "did it start?" and the answer is already "it finished" — waiting on
+that edge is racing by construction. `done_count` exists for this: it
+increments once per completed scenario and never decrements, so the host
+records it before the request and waits for it to *move*. Observed directly
+here — before `done_count` was added, scenario 9 ran correctly and the script
+still called it a failure because `running` was never sampled high.
+
 ---
 
 ## How it is wired
@@ -188,7 +225,7 @@ scenarios you can run on a board.
 > before the `UNBLOCK`. It must not be. Building this demo is what surfaced
 > that: with the reset released first, the window is not merely theoretical but
 > deterministic. Both the heal sequence here and
-> [the driver](../de10_lite_nios/software/axi4_lite_firewall.c) hold the
+> [the driver](../../HAL/src/altera_axi4_lite_firewall.c) hold the
 > reset across the `UNBLOCK` write. The core's user guide has not been changed.
 
 ---
@@ -263,7 +300,7 @@ Everything below was produced on this repository's current sources.
 | Questa 2024.1 | **80 / 80 board-level checks pass** |
 | Verilator 5.020 (`--binary --timing`) | **80 / 80** |
 | `verilator --lint-only -Wall` | clean, waiving only `DECLFILENAME` and `UNUSEDSIGNAL` — the same two the core's own flow waives |
-| Driver host tests | **29 / 29** |
+| Driver host tests | **30 / 30** |
 | `nios2-elf-gcc -Wall -Wextra -Wpedantic -Werror` | clean, against the real HAL `io.h` |
 
 ### Synthesis — Quartus Prime 18.1.1 Standard, `10M50DAF484C7G`
@@ -272,9 +309,9 @@ Everything below was produced on this repository's current sources.
 
 | Resource | Used | Device | % |
 |---|---|---|---|
-| Total logic elements | 3,848 | 49,760 | 8% |
-| — combinational functions | 3,550 | 49,760 | 7% |
-| — dedicated logic registers | 1,792 | 49,760 | 4% |
+| Total logic elements | 4,127 | 49,760 | 8% |
+| — combinational functions | 3,791 | 49,760 | 8% |
+| — dedicated logic registers | 1,951 | 49,760 | 4% |
 | Total pins | 71 | 360 | 20% |
 | Total memory bits | 0 | 1,677,312 | 0% |
 | Embedded multiplier 9-bit elements | 0 | 288 | 0% |
@@ -288,10 +325,11 @@ Broken down by entity:
 
 | Entity | Logic elements | Registers |
 |---|---|---|
-| **`axi_firewall_top` — the IP core** | **1,869** | **768** |
-|  └ `axi_firewall_regs` | 1,624 | 618 |
-| `demo_sequencer` (incl. both AXI masters and the 200-instruction ROM) | 1,192 | 397 |
-| `demo_target_slave` | 644 | 577 |
+| **`axi_firewall_top` — the IP core** | **1,908** | **768** |
+|  └ `axi_firewall_regs` | 1,657 | 618 |
+| `demo_sequencer` (incl. both AXI masters and the 200-instruction ROM) | 1,202 | 401 |
+| `demo_target_slave` | 643 | 577 |
+| `altsource_probe` (the JTAG instance, only with `ENABLE_ISSP`) | 70 | 53 |
 | `hex7seg` ×6 | 54 | 0 |
 | `key_debounce` | 28 | 21 |
 
@@ -299,16 +337,23 @@ The core's README lists synthesis results as *"Not measured"* — the numbers in
 bold above are the first measurement, at `NUM_RULES = 8`, and cover the core
 alone rather than the demo around it.
 
+> The core figure moved from 1,869 to 1,908 LEs when the JTAG source filter and
+> `done_count` were added. **The core's RTL did not change.** Quartus optimises
+> across entity boundaries, so logic on the boundary is attributed differently
+> once the surrounding design changes. Expect a percent or two of movement in
+> any per-entity figure for this reason; the register count, which is not
+> subject to that, stayed at 768.
+
 ### Timing — 50 MHz, slow 1200 mV 85 °C model
 
 | Metric | Value |
 |---|---|
-| Fmax | **59.0 MHz** |
-| Setup slack | **+3.052 ns** |
-| Hold slack | **+0.340 ns** |
+| Fmax | **60.01 MHz** |
+| Setup slack | **+3.336 ns** |
+| Hold slack | **+0.341 ns** |
 | Total negative slack | 0.000 |
 
-Timing closes, with about 18% margin over the board's 50 MHz oscillator.
+Timing closes, with about 20% margin over the board's 50 MHz oscillator.
 
 The critical path is **inside the IP core**:
 
@@ -334,11 +379,12 @@ where that pipeline stage starts to be needed.
 | Item | Status |
 |---|---|
 | **All 16 scenarios on a physical DE10-Lite** | **Passing** — driven and read back over JTAG |
+| Determinism over JTAG | **6/6 fresh-program runs** after the `src_stable` and `done_count` fixes |
 | All 16 scenarios, board-level simulation | **Passing** under Questa 2024.1 and Verilator 5.020 |
 | Display and LED decode | **Checked** against an independently written glyph table |
 | Step mode, auto sweep, scenario selection | **Checked** by driving the pins |
 | Synthesis for `10M50DAF484C7G` | **Clean**, 0 errors, `.sof` produced |
-| Timing closure at 50 MHz | **Closed**, +3.052 ns setup slack |
+| Timing closure at 50 MHz | **Closed**, +3.336 ns setup slack |
 | Core resource usage and Fmax | **Measured** — first numbers for this core |
 | Driver ordering and bounded poll | **Checked** by host tests against a register model |
 | Driver compiles for Nios II | **Checked** with the real toolchain and HAL headers |

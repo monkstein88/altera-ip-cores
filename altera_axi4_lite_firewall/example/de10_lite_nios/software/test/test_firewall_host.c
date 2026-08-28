@@ -30,7 +30,10 @@ static void     model_write(uintptr_t base, uint32_t off, uint32_t val);
 #define FW_IORD32(base, off)       model_read((uintptr_t)(base), (uint32_t)(off))
 #define FW_IOWR32(base, off, val)  model_write((uintptr_t)(base), (uint32_t)(off), (uint32_t)(val))
 
-#include "../axi4_lite_firewall.c"
+/* The driver source is compiled straight into the test so the register
+   accessors above can be substituted. Found via -I in the Makefile, which
+   points at the component rather than at a copy in this directory. */
+#include "altera_axi4_lite_firewall.c"
 
 /* ------------------------------------------------------------------ */
 /* Model of the core                                                   */
@@ -162,10 +165,17 @@ static void hook_assert(void *c)  { (void)c; m.periph_in_reset = 1; ev(EV_RESET_
 static void hook_release(void *c) { (void)c; m.periph_in_reset = 0; ev(EV_RESET_RELEASE, 0, 0); }
 static void hook_delay(void *c, uint32_t n) { (void)c; ev(EV_DELAY, 0, n); }
 
-static const firewall_t fw_full = {
-    MODEL_BASE, hook_assert, hook_release, hook_delay, 0
+/* Not const: the driver fills in version and num_rules from CORE_INFO. */
+static alt_axi4_lite_firewall_dev fw_full = {
+    .base = MODEL_BASE,
+    .irq_controller_id = -1, .irq = -1,          /* no interrupt off-target */
+    .assert_reset = hook_assert,
+    .release_reset = hook_release,
+    .delay_clocks = hook_delay
 };
-static const firewall_t fw_nohooks = { MODEL_BASE, 0, 0, 0, 0 };
+static alt_axi4_lite_firewall_dev fw_nohooks = {
+    .base = MODEL_BASE, .irq_controller_id = -1, .irq = -1
+};
 
 /* ------------------------------------------------------------------ */
 /* Test harness                                                        */
@@ -220,18 +230,23 @@ int main(void)
     /* ---- probe ---------------------------------------------------- */
     printf("-- version probe --\n");
     reset_model();
-    check("probe returns the rule count on a v2.0 core", firewall_probe(&fw_full) == 8);
+    check("init accepts a v2.0 core",
+          alt_axi4_lite_firewall_init(&fw_full) == FW_OK);
+    check("init reads the rule count out of CORE_INFO", fw_full.num_rules == 8);
 
     reset_model();
     m.core_info = (0x0102u << 16) | 8u;          /* a v1.2 core */
-    check("probe rejects a v1.x core rather than mis-driving it",
-          firewall_probe(&fw_full) == FW_ERR_BAD_VERSION);
+    check("init rejects a v1.x core rather than mis-driving it",
+          alt_axi4_lite_firewall_init(&fw_full) == FW_ERR_BAD_VERSION);
+    /* Put the device back in a usable state for the tests that follow. */
+    reset_model();
+    (void)alt_axi4_lite_firewall_init(&fw_full);
 
     /* ---- rule programming ordering -------------------------------- */
     printf("\n-- rule programming --\n");
     reset_model();
     m.rule_perm[2] = FW_PERM_RW;                  /* rule 2 is LIVE */
-    firewall_set_rule(&fw_full, 2, 0x2000, 0x2FFF, FW_PERM_READ);
+    alt_axi4_lite_firewall_set_rule(&fw_full, 2, 0x2000, 0x2FFF, FW_PERM_READ);
     {
         int i_retire = index_of_write(FW_RULE_PERM(2), 0u);
         int i_base   = index_of_write(FW_RULE_BASE(2), 0x2000u);
@@ -245,18 +260,19 @@ int main(void)
     }
 
     reset_model();
-    firewall_init(&fw_full, 8, 50000);
-    check("init retires every rule (default-deny)",
+    fw_full.num_rules = 8;
+    alt_axi4_lite_firewall_reset_config(&fw_full, 50000);
+    check("reset_config retires every rule (default-deny)",
           m.rule_perm[0] == 0 && m.rule_perm[7] == 0);
-    check("init enables enforcement and auto-isolate",
+    check("reset_config enables enforcement and auto-isolate",
           m.reg[FW_CTRL / 4] == (FW_CTRL_GLOBAL_ENABLE | FW_CTRL_AUTO_ISOLATE));
-    check("init programs the timeout", m.reg[FW_TIMEOUT_VALUE / 4] == 50000u);
+    check("reset_config programs the timeout", m.reg[FW_TIMEOUT_VALUE / 4] == 50000u);
 
     /* ---- ack only touches the sticky bits ------------------------- */
     printf("\n-- fault acknowledge --\n");
     reset_model();
     inject_write_timeout();
-    firewall_ack(&fw_full, 0xFFFFFFFFu);
+    alt_axi4_lite_firewall_ack(&fw_full, 0xFFFFFFFFu);
     check("ack clears the sticky bits", m.sticky == 0);
     check("ack does NOT reopen the downstream - that needs UNBLOCK", m.blocked == 1);
 
@@ -264,7 +280,7 @@ int main(void)
     printf("\n-- recovery ordering (the point of this file) --\n");
     reset_model();
     inject_write_timeout();
-    rc = firewall_recover(&fw_full, 1000);
+    rc = alt_axi4_lite_firewall_recover(&fw_full, 1000);
     {
         int i_assert  = index_of(EV_RESET_ASSERT);
         int i_unblock = index_of_write(FW_RECOVERY, FW_RECOVERY_UNBLOCK);
@@ -291,7 +307,7 @@ int main(void)
     reset_model();
     inject_write_timeout();
     m.wr_resp_busy = 1;                 /* a peripheral that owes a response forever */
-    rc = firewall_recover(&fw_full, 50);
+    rc = alt_axi4_lite_firewall_recover(&fw_full, 50);
     check("a never-clearing busy bit does not hang the driver",
           rc == FW_WARN_NOT_QUIESCED);
     check("the poll stopped at the caller's bound, and nowhere later",
@@ -303,7 +319,7 @@ int main(void)
     printf("\n-- misuse --\n");
     reset_model();
     inject_write_timeout();
-    rc = firewall_recover(&fw_nohooks, 1000);
+    rc = alt_axi4_lite_firewall_recover(&fw_nohooks, 1000);
     check("recovery without reset hooks is refused, not attempted",
           rc == FW_ERR_NO_RESET_HOOK);
     check("and nothing was written - the downstream is untouched",
@@ -315,8 +331,8 @@ int main(void)
     m.reg[FW_FAULT_ADDR / 4] = 0x00001030u;
     m.reg[FW_FAULT_INFO / 4] = (FW_FAULT_TYPE_ADDR << FW_FAULT_TYPE_SHIFT); /* read */
     {
-        uint32_t addr; int was_write; unsigned type;
-        firewall_fault(&fw_full, &addr, &was_write, &type);
+        uint32_t addr; int was_write; uint32_t type;
+        alt_axi4_lite_firewall_fault(&fw_full, &addr, &was_write, &type);
         check("fault address decoded", addr == 0x00001030u);
         check("fault direction decoded (a read)", was_write == 0);
         check("fault type decoded (unmapped address)", type == FW_FAULT_TYPE_ADDR);
@@ -324,8 +340,8 @@ int main(void)
     reset_model();
     m.reg[FW_FAULT_INFO / 4] = (FW_FAULT_TYPE_TMO << FW_FAULT_TYPE_SHIFT) | FW_FAULT_WAS_WRITE;
     {
-        int was_write; unsigned type;
-        firewall_fault(&fw_full, 0, &was_write, &type);   /* NULL addr is allowed */
+        int was_write; uint32_t type;
+        alt_axi4_lite_firewall_fault(&fw_full, 0, &was_write, &type);   /* NULL addr is allowed */
         check("a NULL output pointer is tolerated", 1);
         check("timeout-on-write decoded",
               was_write == 1 && type == FW_FAULT_TYPE_TMO);
