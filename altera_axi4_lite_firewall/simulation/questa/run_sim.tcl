@@ -26,13 +26,13 @@ vlib work
 vmap work work
 
 # Compile design, SVA, and testbench with full coverage tracking
-vlog -sv +acc +cover=sbceft ../../rtl/axi_firewall_regs.sv
-vlog -sv +acc +cover=sbceft ../../rtl/axi_firewall_top.sv
-vlog -sv +acc +cover=sbceft ../../tb/axi_firewall_sva.sv
-vlog -sv +acc +cover=sbceft ../../tb/axi_firewall_tb.sv
+vlog -sv +acc +cover=sbceft ../../rtl/axi4_lite_firewall_regs.sv
+vlog -sv +acc +cover=sbceft ../../rtl/axi4_lite_firewall_top.sv
+vlog -sv +acc +cover=sbceft ../../tb/axi4_lite_firewall_sva.sv
+vlog -sv +acc +cover=sbceft ../../tb/axi4_lite_firewall_tb.sv
 
 # Optimize with assertion visibility and code coverage
-vopt axi_firewall_tb -o tb_opt +acc -cover sbceft -assertdebug
+vopt axi4_lite_firewall_tb -o tb_opt +acc -cover sbceft -assertdebug
 
 # Execute
 vsim tb_opt -coverage -assertdebug

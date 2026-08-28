@@ -5,8 +5,8 @@ either one so there is a single copy to keep correct.
 
 | File | What it is |
 |---|---|
-| `demo_target_slave.sv` | The peripheral the firewall protects: an AXI4-Lite scratchpad with injectable faults |
-| `demo_target_slave_hw.tcl` | Platform Designer component wrapper for it, used by the Nios II example |
+| `demo_axi4_lite_target_slave.sv` | The peripheral the firewall protects: an AXI4-Lite scratchpad with injectable faults |
+| `demo_axi4_lite_target_slave_hw.tcl` | Platform Designer component wrapper for it, used by the Nios II example |
 
 ## Why a custom peripheral rather than an on-chip RAM
 
@@ -16,7 +16,7 @@ that stops responding on command. An on-chip RAM always answers, which makes
 the timeout, isolation and recovery scenarios — the half of the core that
 matters most — unreachable.
 
-`demo_target_slave` has two failure modes, and the firewall reports them
+`demo_axi4_lite_target_slave` has two failure modes, and the firewall reports them
 through *different* `STATUS` bits. That distinction is the whole reason both
 exist:
 

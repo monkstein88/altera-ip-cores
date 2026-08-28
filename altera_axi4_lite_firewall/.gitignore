@@ -76,7 +76,7 @@ example/de10_lite_nios/qsys/.qsys_edit/
 example/de10_lite_nios/software/bsp/
 example/de10_lite_nios/software/obj/
 example/de10_lite_nios/software/Makefile
-example/de10_lite_nios/software/test/test_firewall_host
+example/de10_lite_nios/software/test/test_axi4_lite_firewall_host
 *.sopcinfo
 *.elf
 *.map

@@ -150,7 +150,7 @@ set_instance_parameter_value fw {TIMEOUT_WIDTH} {20}
 # ---------------------------------------------------------------------------
 # The peripheral being protected - 16 words, with injectable faults
 # ---------------------------------------------------------------------------
-add_instance tgt demo_target_slave
+add_instance tgt demo_axi4_lite_target_slave
 set_instance_parameter_value tgt {ADDR_WIDTH} {6}
 set_instance_parameter_value tgt {DATA_WIDTH} {32}
 set_instance_parameter_value tgt {MEM_WORDS} {16}

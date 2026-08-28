@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 
 // =============================================================================
-// demo_target_slave.sv
+// demo_axi4_lite_target_slave.sv
 //
 // The peripheral being protected. A small AXI4-Lite scratchpad - MEM_WORDS
 // 32-bit registers, byte-strobed - plus a switchable fault injector, because
@@ -45,7 +45,7 @@
 // (reads back the orphaned data) with no ambiguity.
 // =============================================================================
 
-module demo_target_slave #(
+module demo_axi4_lite_target_slave #(
     parameter int ADDR_WIDTH = 32,
     parameter int DATA_WIDTH = 32,
     parameter int MEM_WORDS  = 16

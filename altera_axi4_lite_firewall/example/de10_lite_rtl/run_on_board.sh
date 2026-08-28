@@ -22,7 +22,7 @@ QUARTUS_ROOT="${QUARTUS_ROOT:-/opt/intelFPGA/18.1}"
 JTAG_ROOT="${JTAG_ROOT:-/opt/altera/25.1std}"
 [[ -x "$JTAG_ROOT/quartus/bin/quartus_pgm" ]] || JTAG_ROOT="$QUARTUS_ROOT"
 
-SOF="$HERE/quartus/output_files/de10_lite_firewall_demo.sof"
+SOF="$HERE/quartus/output_files/de10_lite_axi4_lite_firewall_demo.sof"
 STP="$QUARTUS_ROOT/quartus/bin/quartus_stp"
 
 if [[ "${1:-}" != "--no-program" ]]; then

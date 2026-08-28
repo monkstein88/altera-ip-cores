@@ -20,7 +20,7 @@
 // the abandoned transaction's late reply. Sweep K. If the master ever sees
 // SLVERR, the stale response was mis-attributed.
 //
-// Timing discipline is the same as tb/axi_firewall_tb.sv: sample and drive one
+// Timing discipline is the same as tb/axi4_lite_firewall_tb.sv: sample and drive one
 // delta after each clock edge, and hold every *VALID through the edge at which
 // its handshake is sampled. Driving at the edge itself races the DUT's own
 // always blocks and deadlocks under Verilator.
@@ -52,7 +52,7 @@ module orphan_tb #(
     logic irq;
     logic periph_rst = 1'b0;   // driven by this bench, as an integrator would
 
-    axi_firewall_top #(.ADDR_WIDTH(AW),.DATA_WIDTH(DW),.CTRL_ADDR_WIDTH(CAW),.NUM_RULES(NR),.TIMEOUT_WIDTH(TW)) dut (
+    axi4_lite_firewall_top #(.ADDR_WIDTH(AW),.DATA_WIDTH(DW),.CTRL_ADDR_WIDTH(CAW),.NUM_RULES(NR),.TIMEOUT_WIDTH(TW)) dut (
       .clk(clk),.resetn(resetn),
       .s_axi_awaddr(s_awaddr),.s_axi_awprot(3'b0),.s_axi_awvalid(s_awvalid),.s_axi_awready(s_awready),
       .s_axi_wdata(s_wdata),.s_axi_wstrb(s_wstrb),.s_axi_wvalid(s_wvalid),.s_axi_wready(s_wready),

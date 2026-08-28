@@ -24,7 +24,7 @@ directory, so all of the commands below work from anywhere.
 | File | Purpose |
 |---|---|
 | `build_pdf.py` | Markdown → HTML → PDF for both documents: title page, TOC with page numbers, running headers/footers, numbered captions, Note/Caution callouts, landscape plates for wide figures |
-| `check_facts.py` | Re-derives every number in **both** documents from the RTL, `axi_firewall_hw.tcl` and the committed Questa artefacts, and fails if any has drifted |
+| `check_facts.py` | Re-derives every number in **both** documents from the RTL, `axi4_lite_firewall_hw.tcl` and the committed Questa artefacts, and fails if any has drifted |
 
 `pypdf` is optional. With it installed, `check_facts.py` also verifies that the
 page counts the READMEs quote match the built PDFs — a claim that had been

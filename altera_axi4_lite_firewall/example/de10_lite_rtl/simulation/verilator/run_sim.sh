@@ -34,14 +34,14 @@ command -v verilator >/dev/null 2>&1 || {
 }
 
 SOURCES=(
-    "$CORE/rtl/axi_firewall_regs.sv"
-    "$CORE/rtl/axi_firewall_top.sv"
-    "$DEMO/rtl/demo_axi_lite_master.sv"
-    "$DEMO/../common/demo_target_slave.sv"
+    "$CORE/rtl/axi4_lite_firewall_regs.sv"
+    "$CORE/rtl/axi4_lite_firewall_top.sv"
+    "$DEMO/rtl/demo_axi4_lite_master.sv"
+    "$DEMO/../common/demo_axi4_lite_target_slave.sv"
     "$DEMO/rtl/demo_sequencer.sv"
     "$DEMO/rtl/hex7seg.sv"
     "$DEMO/rtl/key_debounce.sv"
-    "$DEMO/rtl/de10_lite_firewall_demo.sv"
+    "$DEMO/rtl/de10_lite_axi4_lite_firewall_demo.sv"
 )
 
 # ---------------------------------------------------------------------------
@@ -51,7 +51,7 @@ SOURCES=(
 # ---------------------------------------------------------------------------
 echo "=== lint (-Wall) ==="
 verilator --lint-only -Wall -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL \
-    --top-module de10_lite_firewall_demo "${SOURCES[@]}" || {
+    --top-module de10_lite_axi4_lite_firewall_demo "${SOURCES[@]}" || {
     echo "error: lint failed" >&2
     exit 1
 }
@@ -63,9 +63,9 @@ echo
 echo "=== build + run ==="
 verilator --binary --timing -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
     +define+DEMO_TRACE \
-    --top-module de10_lite_firewall_demo_tb \
+    --top-module de10_lite_axi4_lite_firewall_demo_tb \
     -o simx -Mdir "$BUILD" \
-    "${SOURCES[@]}" "$DEMO/tb/de10_lite_firewall_demo_tb.sv" || {
+    "${SOURCES[@]}" "$DEMO/tb/de10_lite_axi4_lite_firewall_demo_tb.sv" || {
     echo "error: verilator build failed" >&2
     exit 1
 }

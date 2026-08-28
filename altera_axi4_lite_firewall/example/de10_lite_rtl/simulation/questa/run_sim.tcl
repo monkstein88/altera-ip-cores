@@ -31,17 +31,17 @@ set TB   ../../tb
 # +define+DEMO_TRACE makes every failing check print its program counter,
 # what was observed and what was expected. On the board a failure is one
 # letter; here it should say why.
-vlog -sv -quiet +define+DEMO_TRACE $CORE/axi_firewall_regs.sv
-vlog -sv -quiet +define+DEMO_TRACE $CORE/axi_firewall_top.sv
-vlog -sv -quiet +define+DEMO_TRACE $DEMO/demo_axi_lite_master.sv
-vlog -sv -quiet +define+DEMO_TRACE $COMMON/demo_target_slave.sv
+vlog -sv -quiet +define+DEMO_TRACE $CORE/axi4_lite_firewall_regs.sv
+vlog -sv -quiet +define+DEMO_TRACE $CORE/axi4_lite_firewall_top.sv
+vlog -sv -quiet +define+DEMO_TRACE $DEMO/demo_axi4_lite_master.sv
+vlog -sv -quiet +define+DEMO_TRACE $COMMON/demo_axi4_lite_target_slave.sv
 vlog -sv -quiet +define+DEMO_TRACE $DEMO/demo_sequencer.sv
 vlog -sv -quiet +define+DEMO_TRACE $DEMO/hex7seg.sv
 vlog -sv -quiet +define+DEMO_TRACE $DEMO/key_debounce.sv
-vlog -sv -quiet +define+DEMO_TRACE $DEMO/de10_lite_firewall_demo.sv
-vlog -sv -quiet +define+DEMO_TRACE $TB/de10_lite_firewall_demo_tb.sv
+vlog -sv -quiet +define+DEMO_TRACE $DEMO/de10_lite_axi4_lite_firewall_demo.sv
+vlog -sv -quiet +define+DEMO_TRACE $TB/de10_lite_axi4_lite_firewall_demo_tb.sv
 
-vsim -c de10_lite_firewall_demo_tb
+vsim -c de10_lite_axi4_lite_firewall_demo_tb
 set NoQuitOnFinish 1
 onbreak {resume}
 

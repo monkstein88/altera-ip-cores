@@ -1,9 +1,9 @@
 package require -exact qsys 14.0
 
 # =============================================================================
-# axi_firewall_hw.tcl
+# axi4_lite_firewall_hw.tcl
 #
-# Platform Designer / Qsys component description for axi_firewall_top.
+# Platform Designer / Qsys component description for axi4_lite_firewall_top.
 #
 # IMPORTANT: hand-written hw.tcl syntax has drifted across Quartus versions
 # (Standard vs Pro, and release to release - see Intel's "_hw.tcl Command
@@ -12,8 +12,8 @@ package require -exact qsys 14.0
 #
 # The robust way to package this component, recommended over trusting this
 # file blindly:
-#   1. In Platform Designer, Component Editor -> add axi_firewall_top.sv and
-#      axi_firewall_regs.sv as synthesis files, set axi_firewall_top.sv as the
+#   1. In Platform Designer, Component Editor -> add axi4_lite_firewall_top.sv and
+#      axi4_lite_firewall_regs.sv as synthesis files, set axi4_lite_firewall_top.sv as the
 #      top-level file, then "Analyze Synthesis Files".
 #   2. Because every port below follows the s_axi_*/m_axi_*/s_axi_ctrl_*
 #      naming convention with standard AXI4-Lite signal suffixes (awaddr,
@@ -31,7 +31,7 @@ set_module_property DESCRIPTION "Access-control + fault-isolation firewall for a
 set_module_property VERSION 2.0
 set_module_property GROUP "Bridges and Adapters/Custom"
 set_module_property AUTHOR "monkstein88"
-#set_module_property TOP_LEVEL_HDL_MODULE axi_firewall_top
+#set_module_property TOP_LEVEL_HDL_MODULE axi4_lite_firewall_top
 set_module_property INSTANTIATE_IN_SYSTEM_MODULE true
 set_module_property EDITABLE false
 set_module_property ELABORATION_CALLBACK elaborate
@@ -49,14 +49,14 @@ set_module_property VALIDATION_CALLBACK validate
 # Platform Designer, independent of the language of the files inside it.
 # -----------------------------------------------------------------------
 add_fileset QUARTUS_SYNTH QUARTUS_SYNTH generate_synth_files ""
-set_fileset_property QUARTUS_SYNTH TOP_LEVEL axi_firewall_top
-add_fileset_file axi_firewall_regs.sv SYSTEM_VERILOG PATH rtl/axi_firewall_regs.sv
-add_fileset_file axi_firewall_top.sv  SYSTEM_VERILOG PATH rtl/axi_firewall_top.sv TOP_LEVEL_FILE
+set_fileset_property QUARTUS_SYNTH TOP_LEVEL axi4_lite_firewall_top
+add_fileset_file axi4_lite_firewall_regs.sv SYSTEM_VERILOG PATH rtl/axi4_lite_firewall_regs.sv
+add_fileset_file axi4_lite_firewall_top.sv  SYSTEM_VERILOG PATH rtl/axi4_lite_firewall_top.sv TOP_LEVEL_FILE
 
 add_fileset SIM_VERILOG SIM_VERILOG generate_sim_files ""
-set_fileset_property SIM_VERILOG TOP_LEVEL axi_firewall_top
-add_fileset_file axi_firewall_regs.sv SYSTEM_VERILOG PATH rtl/axi_firewall_regs.sv
-add_fileset_file axi_firewall_top.sv  SYSTEM_VERILOG PATH rtl/axi_firewall_top.sv TOP_LEVEL_FILE
+set_fileset_property SIM_VERILOG TOP_LEVEL axi4_lite_firewall_top
+add_fileset_file axi4_lite_firewall_regs.sv SYSTEM_VERILOG PATH rtl/axi4_lite_firewall_regs.sv
+add_fileset_file axi4_lite_firewall_top.sv  SYSTEM_VERILOG PATH rtl/axi4_lite_firewall_top.sv TOP_LEVEL_FILE
 
 proc generate_synth_files {entity_name} { }
 proc generate_sim_files {entity_name} { }

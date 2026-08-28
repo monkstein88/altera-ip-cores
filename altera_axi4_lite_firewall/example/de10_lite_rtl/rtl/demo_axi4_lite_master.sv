@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 
 // =============================================================================
-// demo_axi_lite_master.sv
+// demo_axi4_lite_master.sv
 //
 // Minimal synthesisable AXI4-Lite master, single-outstanding, driven by a
 // simple request/done handshake. The demo sequencer instantiates two of these:
@@ -38,7 +38,7 @@
 // throttle and no deadlock to design around.
 // =============================================================================
 
-module demo_axi_lite_master #(
+module demo_axi4_lite_master #(
     parameter int ADDR_WIDTH = 32,
     parameter int DATA_WIDTH = 32
 ) (

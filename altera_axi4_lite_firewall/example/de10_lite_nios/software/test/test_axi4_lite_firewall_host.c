@@ -1,5 +1,5 @@
 /* ===========================================================================
- * test_firewall_host.c - host-runnable tests for the firewall driver.
+ * test_axi4_lite_firewall_host.c - host-runnable tests for the firewall driver.
  *
  *     make            (from this directory)
  *
@@ -136,7 +136,7 @@ static void model_write(uintptr_t base, uint32_t off, uint32_t val)
             m.blocked        = 0;
             m.wr_cmd_stuck   = 0;
             /* UNBLOCK also clears the response trackers - see
-               rtl/axi_firewall_top.sv, where `unblock` resets wr_aw_taken /
+               rtl/axi4_lite_firewall_top.sv, where `unblock` resets wr_aw_taken /
                wr_w_taken / rd_ar_taken alongside the block latch. Modelling
                this matters: it is why the busy bits a driver could never
                poll to zero do reach zero once recovery completes. */

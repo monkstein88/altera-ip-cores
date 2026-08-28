@@ -7,13 +7,13 @@
 `timescale 1ns/1ps
 
 // =============================================================================
-// axi_firewall_regs.sv
+// axi4_lite_firewall_regs.sv
 //
 // Control & status register block for the AXI4-Lite Firewall core.
 // Owns: the programmable rule table, global enable/isolate control, sticky
 // fault status, interrupt generation, and two independent purely-combinational
 // rule-lookup ports (one for the write datapath, one for the read datapath in
-// axi_firewall_top.sv) so both channels get an answer in the same cycle without
+// axi4_lite_firewall_top.sv) so both channels get an answer in the same cycle without
 // contending for a single shared lookup.
 //
 // AXI4-Lite slave port: single-outstanding, fully synchronous reset (resetn,
@@ -25,7 +25,7 @@
 // needs a simulator-only construct.
 // =============================================================================
 
-module axi_firewall_regs #(
+module axi4_lite_firewall_regs #(
     parameter int ADDR_WIDTH      = 32,  // data-path address width (rule base/limit width)
     parameter int CTRL_ADDR_WIDTH = 12,  // control port address width
     parameter int NUM_RULES       = 8,
@@ -92,7 +92,7 @@ module axi_firewall_regs #(
     // the "downstream broken" latch AND is the one point at which a stuck
     // m_axi_*VALID may be withdrawn without a handshake. Software must have
     // reset the protected peripheral before issuing it - see the header of
-    // axi_firewall_top.sv.
+    // axi4_lite_firewall_top.sv.
     output logic                        unblock
 );
 
@@ -407,7 +407,7 @@ module axi_firewall_regs #(
             // timeout landing in the same cycle as a W1C of STATUS.TIMEOUT_ERROR
             // left TIMEOUT_ERROR=1 (forced below) but ISOLATED=0, because the
             // W1C's clear of the latch is the later assignment and wins. That
-            // also disagreed with axi_firewall_top.sv, where the fault
+            // also disagreed with axi4_lite_firewall_top.sv, where the fault
             // unconditionally beats unblock for `downstream_broken`.
             if (fault_addr_violation) reg_addr_violation <= 1'b1;
             if (fault_perm_violation) reg_perm_violation <= 1'b1;

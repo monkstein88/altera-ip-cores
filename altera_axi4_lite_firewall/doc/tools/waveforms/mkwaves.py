@@ -11,7 +11,7 @@ benches; this module only renders what it captured.
 
     cd verification
     verilator --binary --trace --top-module wave_capture_tb \\
-        ../rtl/axi_firewall_regs.sv ../rtl/axi_firewall_top.sv wave_capture_tb.sv
+        ../rtl/axi4_lite_firewall_regs.sv ../rtl/axi4_lite_firewall_top.sv wave_capture_tb.sv
     ./obj_dir/Vwave_capture_tb        # writes wave.vcd
 
     cd ../doc/tools/waveforms

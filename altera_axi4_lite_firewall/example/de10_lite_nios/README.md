@@ -91,7 +91,7 @@ that one is 18.1.
                     │              ├─▶ fw.s_axi_ctrl                                 │
                     │              └─▶ fw.s_axi ──▶│ AXI4-Lite Firewall │            │
                     │                              │        m_axi       │            │
-                    │                              └────────▶ demo_target_slave      │
+                    │                              └────────▶ demo_axi4_lite_target_slave      │
                     │                                 hang/hang_late/soft_resetn ◀───┘
                     └────────────────────────────────────────────────────────────────┘
 ```
@@ -194,10 +194,10 @@ By entity:
 
 | Entity | Logic elements | Registers |
 |---|---|---|
-| **`axi_firewall_top`** (`ADDR_WIDTH` = 12) | **1,391** | **544** |
-| └ `axi_firewall_regs` | 1,050 | 327 |
+| **`axi4_lite_firewall_top`** (`ADDR_WIDTH` = 12) | **1,391** | **544** |
+| └ `axi4_lite_firewall_regs` | 1,050 | 327 |
 | `firewall_sys_cpu` (Nios II/f) | 2,594 | 1,526 |
-| `demo_target_slave` | 726 | 598 |
+| `demo_axi4_lite_target_slave` | 726 | 598 |
 
 The core is 1,391 LEs here against **1,908** in the RTL example, for the same
 `NUM_RULES` = 8. The only difference is `ADDR_WIDTH`, 12 versus 32 — which is
@@ -228,7 +228,7 @@ user guide describes.
 
 | Item | Status |
 |---|---|
-| Platform Designer import of `axi_firewall_hw.tcl` | **Works.** All six interfaces and five parameters are recognised — this was previously listed as never attempted |
+| Platform Designer import of `axi4_lite_firewall_hw.tcl` | **Works.** All six interfaces and five parameters are recognised — this was previously listed as never attempted |
 | Behaviour inside generated Qsys interconnect | **Verified** — Avalon-MM master through an Avalon-to-AXI bridge |
 | **All 33 checks on a physical DE10-Lite** | **Passing** |
 | Nios II/f BSP and application | **Built and run** — 75 KB ELF, `ALT_CPU_FREQ` = 100 MHz |

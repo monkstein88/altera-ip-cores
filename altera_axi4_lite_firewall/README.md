@@ -32,7 +32,7 @@ Sits between a bus master and a peripheral you want to protect:
                   ┌──────────────────────────────┐
    AXI4-Lite      │                              │    AXI4-Lite
  ────────────────▶│  s_axi            m_axi      │───────────────▶
-  (from master,   │      axi_firewall_top        │   (to protected
+  (from master,   │      axi4_lite_firewall_top        │   (to protected
    e.g. Nios II)  │                              │    peripheral)
                   │       s_axi_ctrl    irq      │
                   └───────────┬──────────┬───────┘
@@ -66,14 +66,14 @@ rules, nor blockable by an isolated peripheral.
 ```
 altera_axi4_lite_firewall/
 ├── README.md                     This file
-├── axi_firewall_hw.tcl           Platform Designer component description
+├── axi4_lite_firewall_hw.tcl           Platform Designer component description
 ├── rtl/
-│   ├── axi_firewall_top.sv       Datapath: s_axi, m_axi, permission checks,
+│   ├── axi4_lite_firewall_top.sv       Datapath: s_axi, m_axi, permission checks,
 │   │                             timeout / isolate FSMs
-│   └── axi_firewall_regs.sv      Rule table, status/IRQ, control AXI4-Lite slave
+│   └── axi4_lite_firewall_regs.sv      Rule table, status/IRQ, control AXI4-Lite slave
 ├── tb/
-│   ├── axi_firewall_tb.sv        Self-checking testbench (103 checks) + SVA bind
-│   └── axi_firewall_sva.sv       SystemVerilog assertions & cover points
+│   ├── axi4_lite_firewall_tb.sv        Self-checking testbench (103 checks) + SVA bind
+│   └── axi4_lite_firewall_sva.sv       SystemVerilog assertions & cover points
 ├── simulation/
 │   ├── questa/run_sim.tcl        Compile + run + coverage (incl. assertions)
 │   ├── verilator/run_sim.sh      Licence-free regression (assertions, no coverage)
@@ -347,7 +347,7 @@ numbers with and without them.
 
 ## Performance
 
-Measured by the latency benchmark in `tb/axi_firewall_tb.sv` against the
+Measured by the latency benchmark in `tb/axi4_lite_firewall_tb.sv` against the
 zero-wait-state downstream slave model, counting clock edges from request
 assertion to response valid:
 
@@ -375,7 +375,7 @@ use a burst-capable AXI4 variant instead (see *Roadmap*).
 
 ### Test suite — 103/103 passing
 
-`tb/axi_firewall_tb.sv` is self-checking and runs under Questa,
+`tb/axi4_lite_firewall_tb.sv` is self-checking and runs under Questa,
 Verilator 5.x (`--timing --assert`), and Icarus Verilog. The SVA
 bind is wrapped in `` `ifndef ICARUS ``, so the Icarus command below works
 unmodified.
@@ -438,7 +438,7 @@ Coverage:
 
 ### Assertions
 
-`tb/axi_firewall_sva.sv` is bound into `axi_firewall_top` and checks:
+`tb/axi4_lite_firewall_sva.sv` is bound into `axi4_lite_firewall_top` and checks:
 
 Fourteen assertions and six cover points:
 
@@ -496,7 +496,7 @@ Icarus cannot compile). Note `-g2012`, not `-g2005`: the sources are
 SystemVerilog now.
 
 ```bash
-iverilog -g2012 -DICARUS -o tb.out rtl/axi_firewall_regs.sv rtl/axi_firewall_top.sv tb/axi_firewall_tb.sv
+iverilog -g2012 -DICARUS -o tb.out rtl/axi4_lite_firewall_regs.sv rtl/axi4_lite_firewall_top.sv tb/axi4_lite_firewall_tb.sv
 vvp tb.out
 ```
 
@@ -593,7 +593,7 @@ evaluated.
 2. **Confirm the component packages cleanly for your Quartus version.**
    `hw.tcl` syntax has drifted across releases (Standard vs Pro, version to
    version). If it doesn't import: open Component Editor, add both files
-   under `rtl/` as synthesis files with `axi_firewall_top.sv` as top level,
+   under `rtl/` as synthesis files with `axi4_lite_firewall_top.sv` as top level,
    and click **Analyze Synthesis Files**. Every port follows the
    `s_axi_*` / `m_axi_*` / `s_axi_ctrl_*` convention with standard AXI4-Lite
    suffixes, so signal analysis should auto-group them into three AXI4-Lite
@@ -754,7 +754,7 @@ void firewall_recover(void)
 | Control-port single-outstanding backpressure | **Measured** — regression test fails on the pre-v1.2 RTL and passes on v1.2 |
 | Cost of skipping the peripheral reset (0/25 vs 1/25) | **Measured** — `verification/orphan_response_tb.sv`, both parameterisations |
 | Code coverage figures | **Not quoted** — regenerate with the Questa flow. Toggle and condition coverage in particular are far from 100%, and a single number here would rot |
-| Synthesis results (LE/register count, Fmax) | **Measured at `NUM_RULES = 8`** by the [DE10-Lite example](example/de10_lite_rtl/README.md): 1,908 LEs and 768 registers for `axi_firewall_top`, and 60.01 MHz Fmax on a MAX 10 `10M50DAF484C7G` (`C7`, slow 1200 mV 85 °C). The critical path is `captured_awaddr → wr_timeout_cnt` — the combinational rule lookup, as predicted below. **Fmax as a function of `NUM_RULES` is still unmeasured**, as is any other device family |
+| Synthesis results (LE/register count, Fmax) | **Measured at `NUM_RULES = 8`** by the [DE10-Lite example](example/de10_lite_rtl/README.md): 1,908 LEs and 768 registers for `axi4_lite_firewall_top`, and 60.01 MHz Fmax on a MAX 10 `10M50DAF484C7G` (`C7`, slow 1200 mV 85 °C). The critical path is `captured_awaddr → wr_timeout_cnt` — the combinational rule lookup, as predicted below. **Fmax as a function of `NUM_RULES` is still unmeasured**, as is any other device family |
 | Behaviour inside a real Platform Designer system | **Verified.** The [Nios II example](example/de10_lite_nios/README.md) runs the core behind generated Qsys interconnect and an Avalon-to-AXI bridge, on hardware |
 | `hw.tcl` import into a specific Quartus release | **Verified for Quartus 18.1.1 Standard.** All six interfaces and five parameters are recognised by Platform Designer |
 | Behaviour on physical hardware | **Verified on a Terasic DE10-Lite** (MAX 10 `10M50DAF484C7G`): 16/16 scenarios in the RTL example, 33/33 checks in the Nios II example |

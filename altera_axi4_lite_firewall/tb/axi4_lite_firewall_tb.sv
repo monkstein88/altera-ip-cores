@@ -1,9 +1,9 @@
 `timescale 1ns/1ps
 
 // =============================================================================
-// axi_firewall_tb.sv
+// axi4_lite_firewall_tb.sv
 //
-// Self-checking testbench for axi_firewall_top. Runs under Questa (with the
+// Self-checking testbench for axi4_lite_firewall_top. Runs under Questa (with the
 // SVA bind and coverage), Verilator (--timing --assert), and Icarus Verilog
 // with -g2012.
 //
@@ -38,7 +38,7 @@
 // (warning INITIALDLY). The `#1` settle is the portable fix.
 // =============================================================================
 
-module axi_firewall_tb;
+module axi4_lite_firewall_tb;
 
     localparam int ADDR_WIDTH      = 32;
     localparam int DATA_WIDTH      = 32;
@@ -121,7 +121,7 @@ module axi_firewall_tb;
     int pass_count = 0;
     int fail_count = 0;
 
-    axi_firewall_top #(
+    axi4_lite_firewall_top #(
         .ADDR_WIDTH      (ADDR_WIDTH),
         .DATA_WIDTH      (DATA_WIDTH),
         .CTRL_ADDR_WIDTH (CTRL_ADDR_WIDTH),
@@ -153,7 +153,7 @@ module axi_firewall_tb;
 
 
 `ifndef ICARUS
-    bind axi_firewall_top axi_firewall_sva #(
+    bind axi4_lite_firewall_top axi4_lite_firewall_sva #(
         .ADDR_WIDTH(ADDR_WIDTH),
         .DATA_WIDTH(DATA_WIDTH)
     ) u_axi_firewall_sva (
@@ -896,7 +896,7 @@ module axi_firewall_tb;
         resetn = 1;
         wait_cycles(2);
 
-        $display("=== axi_firewall self-check ===");
+        $display("=== axi4_lite_firewall self-check ===");
 
         // Speed up simulation: small timeout window (cycles)
         ctrl_write(OFF_TMOUT, 32'd15);
@@ -1269,7 +1269,7 @@ module axi_firewall_tb;
 `ifdef ICARUS
                 $finish;
 `else
-                $fatal(1, "axi_firewall_tb: %0d checks failed", fail_count);
+                $fatal(1, "axi4_lite_firewall_tb: %0d checks failed", fail_count);
 `endif
             end else begin
                 $display("*** ALL TESTS PASSED ***");

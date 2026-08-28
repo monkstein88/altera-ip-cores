@@ -60,14 +60,14 @@ do_sw() {
 
     echo "=== application ==="
     cd "$HERE/software"
-    rm -rf obj firewall_demo.elf firewall_demo.map firewall_demo.objdump Makefile
+    rm -rf obj axi4_lite_firewall_demo.elf axi4_lite_firewall_demo.map axi4_lite_firewall_demo.objdump Makefile
     # main.c only. The driver is NOT listed here and is not copied into this
     # directory: it comes from the component's axi4_lite_firewall_sw.tcl, which
     # the BSP generator matches to the hardware by hw_class_name. That is the
     # whole point of shipping a _sw.tcl - adding the component to a Platform
     # Designer system is enough.
     nios2-app-generate-makefile --bsp-dir bsp --app-dir . \
-        --elf-name firewall_demo.elf --src-files main.c
+        --elf-name axi4_lite_firewall_demo.elf --src-files main.c
     make
 }
 
@@ -83,7 +83,7 @@ do_clean() {
     # never delete it here, or a clean would leave the working tree dirty.
     rm -rf qsys/firewall_sys qsys/firewall_sys.sopcinfo
     rm -rf software/bsp software/obj software/Makefile
-    rm -f  software/firewall_demo.elf software/firewall_demo.map software/firewall_demo.objdump
+    rm -f  software/axi4_lite_firewall_demo.elf software/axi4_lite_firewall_demo.map software/axi4_lite_firewall_demo.objdump
     rm -rf quartus/db quartus/incremental_db quartus/output_files
     (cd software/test && make clean >/dev/null 2>&1) || true
     echo "cleaned"
@@ -98,11 +98,11 @@ case "${1:-all}" in
            echo
            echo "=== done ==="
            echo "  bitstream : quartus/output_files/de10_lite_nios.sof"
-           echo "  software  : software/firewall_demo.elf"
+           echo "  software  : software/axi4_lite_firewall_demo.elf"
            echo
            echo "To run it:"
            echo "  quartus_pgm -m jtag -o \"p;quartus/output_files/de10_lite_nios.sof\""
-           echo "  nios2-download -g software/firewall_demo.elf && nios2-terminal"
+           echo "  nios2-download -g software/axi4_lite_firewall_demo.elf && nios2-terminal"
            ;;
     *)     echo "usage: $0 [all|qsys|sw|fpga|clean]" >&2; exit 2 ;;
 esac

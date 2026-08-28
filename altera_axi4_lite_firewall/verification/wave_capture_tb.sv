@@ -23,7 +23,7 @@ module wave_capture_tb;
   logic irq;
   int marker = 0;              // tags each scenario window in the VCD
 
-  axi_firewall_top #(.ADDR_WIDTH(AW),.DATA_WIDTH(DW),.CTRL_ADDR_WIDTH(CAW),
+  axi4_lite_firewall_top #(.ADDR_WIDTH(AW),.DATA_WIDTH(DW),.CTRL_ADDR_WIDTH(CAW),
                      .NUM_RULES(NR),.TIMEOUT_WIDTH(TW)) dut (
     .clk,.resetn,
     .s_axi_awaddr(s_awaddr),.s_axi_awprot(3'b0),.s_axi_awvalid(s_awvalid),.s_axi_awready(s_awready),

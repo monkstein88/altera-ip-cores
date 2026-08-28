@@ -30,10 +30,10 @@ command -v verilator >/dev/null 2>&1 || {
 }
 
 SOURCES=(
-    "$ROOT/rtl/axi_firewall_regs.sv"
-    "$ROOT/rtl/axi_firewall_top.sv"
-    "$ROOT/tb/axi_firewall_sva.sv"
-    "$ROOT/tb/axi_firewall_tb.sv"
+    "$ROOT/rtl/axi4_lite_firewall_regs.sv"
+    "$ROOT/rtl/axi4_lite_firewall_top.sv"
+    "$ROOT/tb/axi4_lite_firewall_sva.sv"
+    "$ROOT/tb/axi4_lite_firewall_tb.sv"
 )
 
 # WIDTHEXPAND/WIDTHTRUNC fire on the testbench's deliberately oversized
@@ -49,8 +49,8 @@ WARN_OFF=(-Wno-WIDTHEXPAND -Wno-WIDTHTRUNC)
 if python3 -c 'import pyslang' 2>/dev/null; then
     echo "== strict elaboration (slang) =="
     python3 "$HERE/slangcheck.py" "RTL + TB + SVA" \
-        "$ROOT/rtl/axi_firewall_regs.sv" "$ROOT/rtl/axi_firewall_top.sv" \
-        "$ROOT/tb/axi_firewall_sva.sv"   "$ROOT/tb/axi_firewall_tb.sv" || exit 1
+        "$ROOT/rtl/axi4_lite_firewall_regs.sv" "$ROOT/rtl/axi4_lite_firewall_top.sv" \
+        "$ROOT/tb/axi4_lite_firewall_sva.sv"   "$ROOT/tb/axi4_lite_firewall_tb.sv" || exit 1
 else
     echo "== strict elaboration skipped (pip install pyslang to enable) =="
 fi
@@ -60,12 +60,12 @@ fi
 # without also relaxing them for the RTL.
 echo "== linting RTL (-Wall, nothing waived) =="
 verilator --lint-only -Wall -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL \
-    --top-module axi_firewall_top \
-    "$ROOT/rtl/axi_firewall_regs.sv" "$ROOT/rtl/axi_firewall_top.sv" || exit $?
+    --top-module axi4_lite_firewall_top \
+    "$ROOT/rtl/axi4_lite_firewall_regs.sv" "$ROOT/rtl/axi4_lite_firewall_top.sv" || exit $?
 
 echo "== verilating =="
 verilator --binary --timing --assert "${WARN_OFF[@]}" \
-    --top-module axi_firewall_tb -o simx -Mdir "$BUILD" \
+    --top-module axi4_lite_firewall_tb -o simx -Mdir "$BUILD" \
     "${SOURCES[@]}" || exit $?
 
 echo "== running =="

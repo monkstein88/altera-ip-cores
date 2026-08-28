@@ -1,13 +1,13 @@
 `timescale 1ns/1ps
 
 // =============================================================================
-// axi_firewall_sva.sv  (v1.1)
+// axi4_lite_firewall_sva.sv  (v1.1)
 //
 // Change from the previous revision
 // --------------------------------
 // The old assertion #2 took a single merged `access_violation` input and
 // required an error response on s_axi_bvalid — the WRITE response channel.
-// But in axi_firewall_top.sv:
+// But in axi4_lite_firewall_top.sv:
 //
 //     wire fault_addr_violation = wr_fault_addr_violation | rd_fault_addr_violation;
 //     wire fault_perm_violation = wr_fault_perm_violation | rd_fault_perm_violation;
@@ -41,7 +41,7 @@
 // vacuous attempts, because no test ever made a response wait for READY.
 // =============================================================================
 
-module axi_firewall_sva #(
+module axi4_lite_firewall_sva #(
     parameter ADDR_WIDTH = 32,
     parameter DATA_WIDTH = 32
 )(

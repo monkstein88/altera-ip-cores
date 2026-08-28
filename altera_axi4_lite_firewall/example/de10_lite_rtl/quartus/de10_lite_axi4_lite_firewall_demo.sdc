@@ -1,5 +1,5 @@
 # =============================================================================
-# de10_lite_firewall_demo.sdc
+# de10_lite_axi4_lite_firewall_demo.sdc
 #
 # Timing constraints for the AXI4-Lite Firewall demo on the DE10-Lite.
 #

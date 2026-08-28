@@ -8,7 +8,7 @@
 # These run on the build machine, not on the target. The driver's correctness
 # is mostly about ORDERING - which register is written while which other thing
 # is true - which a compiler cannot see and which is awkward to observe on
-# hardware. test_firewall_host.c checks it against a model of the core's
+# hardware. test_axi4_lite_firewall_host.c checks it against a model of the core's
 # register file that also models the orphaned-command hazard.
 #
 # `make nios` is a compile check, not a link; a linkable image needs the BSP,
@@ -43,12 +43,12 @@ NIOS_CFLAGS  := -std=c99 -Wall -Wextra -Werror -Os \
 
 .PHONY: all test nios clean
 
-test: test_firewall_host
-	./test_firewall_host
+test: test_axi4_lite_firewall_host
+	./test_axi4_lite_firewall_host
 
 # The test #includes the driver's .c directly so it can substitute the register
 # accessors; there is deliberately no separate object to keep in step.
-test_firewall_host: test_firewall_host.c \
+test_axi4_lite_firewall_host: test_axi4_lite_firewall_host.c \
                     $(CORE)/HAL/src/altera_axi4_lite_firewall.c \
                     $(CORE)/HAL/inc/altera_axi4_lite_firewall.h \
                     $(CORE)/inc/altera_axi4_lite_firewall_regs.h
@@ -71,4 +71,4 @@ nios:
 all: test nios
 
 clean:
-	rm -f test_firewall_host *.o
+	rm -f test_axi4_lite_firewall_host *.o

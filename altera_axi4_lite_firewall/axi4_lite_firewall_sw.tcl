@@ -25,7 +25,7 @@
 
 create_driver altera_axi4_lite_firewall_driver
 
-# Must equal `set_module_property NAME` in axi_firewall_hw.tcl. This is the
+# Must equal `set_module_property NAME` in axi4_lite_firewall_hw.tcl. This is the
 # only link between the hardware component and this driver; get it wrong and
 # the BSP silently generates nothing, which looks exactly like the driver
 # having no effect.

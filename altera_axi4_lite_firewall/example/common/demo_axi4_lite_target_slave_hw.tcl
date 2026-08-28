@@ -1,9 +1,9 @@
 package require -exact qsys 14.0
 
 # =============================================================================
-# demo_target_slave_hw.tcl
+# demo_axi4_lite_target_slave_hw.tcl
 #
-# Platform Designer component for demo_target_slave - the peripheral the
+# Platform Designer component for demo_axi4_lite_target_slave - the peripheral the
 # firewall protects in the Nios II example.
 #
 # It exists as a component (rather than the example just using an on-chip RAM)
@@ -12,14 +12,14 @@ package require -exact qsys 14.0
 # access control and nothing else. The `fault` conduit below is what makes
 # the timeout, isolation and recovery scenarios reachable from software.
 #
-# The two resets are deliberate; see the header of demo_target_slave.sv.
+# The two resets are deliberate; see the header of demo_axi4_lite_target_slave.sv.
 # `reset` is a genuine reset sink tied to the system reset network, and
 # `soft_resetn` arrives on the conduit from a PIO, so software can reset this
 # peripheral without resetting the rest of the system. Recovery from a
 # firewall timeout requires exactly that.
 # =============================================================================
 
-set_module_property NAME demo_target_slave
+set_module_property NAME demo_axi4_lite_target_slave
 set_module_property DISPLAY_NAME "Demo Target Slave (protected peripheral)"
 set_module_property DESCRIPTION "AXI4-Lite scratchpad with injectable faults, for demonstrating the AXI4-Lite Firewall."
 set_module_property VERSION 1.0
@@ -30,12 +30,12 @@ set_module_property EDITABLE false
 set_module_property VALIDATION_CALLBACK validate
 
 add_fileset QUARTUS_SYNTH QUARTUS_SYNTH generate_synth_files ""
-set_fileset_property QUARTUS_SYNTH TOP_LEVEL demo_target_slave
-add_fileset_file demo_target_slave.sv SYSTEM_VERILOG PATH demo_target_slave.sv TOP_LEVEL_FILE
+set_fileset_property QUARTUS_SYNTH TOP_LEVEL demo_axi4_lite_target_slave
+add_fileset_file demo_axi4_lite_target_slave.sv SYSTEM_VERILOG PATH demo_axi4_lite_target_slave.sv TOP_LEVEL_FILE
 
 add_fileset SIM_VERILOG SIM_VERILOG generate_sim_files ""
-set_fileset_property SIM_VERILOG TOP_LEVEL demo_target_slave
-add_fileset_file demo_target_slave.sv SYSTEM_VERILOG PATH demo_target_slave.sv TOP_LEVEL_FILE
+set_fileset_property SIM_VERILOG TOP_LEVEL demo_axi4_lite_target_slave
+add_fileset_file demo_axi4_lite_target_slave.sv SYSTEM_VERILOG PATH demo_axi4_lite_target_slave.sv TOP_LEVEL_FILE
 
 proc generate_synth_files {name} {}
 proc generate_sim_files   {name} {}

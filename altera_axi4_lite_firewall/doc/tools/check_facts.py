@@ -6,7 +6,7 @@ A document that has quietly gone out of date is worse than no document, and
 none of this is checkable by reading. Every register offset, bit position,
 reset value, parameter range, port count, assertion pass count, cover hit and
 FSM transition count quoted in either document is re-derived here from the RTL,
-axi_firewall_hw.tcl, the committed Questa coverage report and run log - and
+axi4_lite_firewall_hw.tcl, the committed Questa coverage report and run log - and
 compared. Anything that drifts fails the run.
 
 This is the reason the block-diagram document is Markdown rather than ODF. It
@@ -23,9 +23,9 @@ import sys
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 UG   = open(f"{ROOT}/doc/axi4_lite_firewall_user_guide.md").read()
 BD   = open(f"{ROOT}/doc/axi4_lite_firewall_block_diagrams.md").read()
-TOP  = open(f"{ROOT}/rtl/axi_firewall_top.sv").read()
-REGS = open(f"{ROOT}/rtl/axi_firewall_regs.sv").read()
-TCL  = open(f"{ROOT}/axi_firewall_hw.tcl").read()
+TOP  = open(f"{ROOT}/rtl/axi4_lite_firewall_top.sv").read()
+REGS = open(f"{ROOT}/rtl/axi4_lite_firewall_regs.sv").read()
+TCL  = open(f"{ROOT}/axi4_lite_firewall_hw.tcl").read()
 # The Questa artefacts are deliberately gitignored - a stale coverage report
 # lying around in a working copy is how wrong numbers get cited as current.
 # So they may legitimately be absent. When they are, the checks that depend on
@@ -191,7 +191,7 @@ else:
       "coverage report does not show 6/6 directives")
   chk("Total Coverage By Instance (filtered view): 85.96%" in COV,
       "total coverage is not 85.96%")
-  chk("wr_cycles > 8 || rd_cycles > 8" in open(f"{ROOT}/tb/axi_firewall_tb.sv").read(),
+  chk("wr_cycles > 8 || rd_cycles > 8" in open(f"{ROOT}/tb/axi4_lite_firewall_tb.sv").read(),
       "TB latency guard is no longer 8 cycles")
 
   # assertion pass counts quoted in the UG

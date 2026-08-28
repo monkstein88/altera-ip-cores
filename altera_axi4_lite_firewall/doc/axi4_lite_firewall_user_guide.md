@@ -115,10 +115,10 @@ that have been run on physical hardware.
 
 | Item | Logic elements | Dedicated registers |
 |---|---|---|
-| `axi_firewall_top`, `ADDR_WIDTH` = 32 | 1,908 | 768 |
-| of which `axi_firewall_regs` | 1,657 | 618 |
-| `axi_firewall_top`, `ADDR_WIDTH` = 12 | 1,391 | 544 |
-| of which `axi_firewall_regs` | 1,050 | 327 |
+| `axi4_lite_firewall_top`, `ADDR_WIDTH` = 32 | 1,908 | 768 |
+| of which `axi4_lite_firewall_regs` | 1,657 | 618 |
+| `axi4_lite_firewall_top`, `ADDR_WIDTH` = 12 | 1,391 | 544 |
+| of which `axi4_lite_firewall_regs` | 1,050 | 327 |
 
 Conditions: Intel MAX 10 `10M50DAF484C7G` (speed grade 7), Quartus Prime
 18.1.1 Standard Edition, `DATA_WIDTH` = 32, `CTRL_ADDR_WIDTH` = 12,
@@ -146,7 +146,7 @@ source, and both are now confirmed by measurement:
 * **The rule table** is `NUM_RULES` &times; (2 &times; `ADDR_WIDTH` + 3)
   registers. At the default `NUM_RULES` = 8 and `ADDR_WIDTH` = 32 that is 536
   registers, which accounts for most of the 618 measured in
-  `axi_firewall_regs`; the remainder are the control, status, interrupt and
+  `axi4_lite_firewall_regs`; the remainder are the control, status, interrupt and
   fault-capture registers.
 * **The rule lookup** is a purely combinational priority chain over
   `NUM_RULES` entries, duplicated for the read and write paths. Each entry is
@@ -200,7 +200,7 @@ The core appears in the IP Catalog as **AXI4-Lite Firewall** under
 *Bridges and Adapters / Custom*.
 
 > **Note:** `_hw.tcl` syntax has changed across Quartus Prime releases, and
-> between Standard and Pro editions. The supplied `axi_firewall_hw.tcl` has
+> between Standard and Pro editions. The supplied `axi4_lite_firewall_hw.tcl` has
 > not been validated against any specific release. If the component fails to
 > import, see [Section 2.1.1](#211-if-the-component-does-not-import).
 
@@ -210,9 +210,9 @@ Package the component manually. This takes a few minutes and produces a
 `_hw.tcl` guaranteed correct for your installed toolchain:
 
 1. In Platform Designer, click **File ▸ New Component**.
-2. On the **Files** tab, add `rtl/axi_firewall_regs.sv` and
-   `rtl/axi_firewall_top.sv` as synthesis files. Set
-   `axi_firewall_top.sv` as the top-level file.
+2. On the **Files** tab, add `rtl/axi4_lite_firewall_regs.sv` and
+   `rtl/axi4_lite_firewall_top.sv` as synthesis files. Set
+   `axi4_lite_firewall_top.sv` as the top-level file.
 3. Click **Analyze Synthesis Files**.
 4. On the **Signals & Interfaces** tab, confirm the grouping. Every port
    follows the `s_axi_*` / `m_axi_*` / `s_axi_ctrl_*` convention with standard
@@ -290,7 +290,7 @@ instance.
 
 ```bash
 iverilog -g2012 -DICARUS -o tb.out \
-    rtl/axi_firewall_regs.sv rtl/axi_firewall_top.sv tb/axi_firewall_tb.sv
+    rtl/axi4_lite_firewall_regs.sv rtl/axi4_lite_firewall_top.sv tb/axi4_lite_firewall_tb.sv
 vvp tb.out
 ```
 
@@ -302,11 +302,11 @@ vvp tb.out
 
 | File | Description |
 |---|---|
-| `rtl/axi_firewall_top.sv` | Top level: datapaths, timeout, isolation, block/unblock |
-| `rtl/axi_firewall_regs.sv` | Register block: rule table, status, interrupt, control slave |
-| `axi_firewall_hw.tcl` | Platform Designer component description |
-| `tb/axi_firewall_tb.sv` | Self-checking testbench, 103 checks |
-| `tb/axi_firewall_sva.sv` | SystemVerilog assertions and cover points |
+| `rtl/axi4_lite_firewall_top.sv` | Top level: datapaths, timeout, isolation, block/unblock |
+| `rtl/axi4_lite_firewall_regs.sv` | Register block: rule table, status, interrupt, control slave |
+| `axi4_lite_firewall_hw.tcl` | Platform Designer component description |
+| `tb/axi4_lite_firewall_tb.sv` | Self-checking testbench, 103 checks |
+| `tb/axi4_lite_firewall_sva.sv` | SystemVerilog assertions and cover points |
 | `verification/orphan_response_tb.sv` | Standalone measurement of the recovery hazard |
 | `simulation/questa/run_sim.tcl` | Questa flow with coverage |
 | `simulation/verilator/run_sim.sh` | Verilator flow |
@@ -609,7 +609,7 @@ runtime-reconfigurable except the rule table and the control registers.
 | `NUM_RULES` | Integer | 8 | 1–64 | Number of address-range rules. |
 | `TIMEOUT_WIDTH` | Integer | 20 | 8–32 | Width of the timeout counter. Maximum programmable timeout is 2<sup>`TIMEOUT_WIDTH`</sup> − 1 clock cycles. |
 
-Ranges are enforced by `axi_firewall_hw.tcl`. `DATA_WIDTH` is restricted to 32
+Ranges are enforced by `axi4_lite_firewall_hw.tcl`. `DATA_WIDTH` is restricted to 32
 and 64 because AXI4-Lite defines only those two.
 
 ### Sizing `CTRL_ADDR_WIDTH`
@@ -632,7 +632,7 @@ CTRL_ADDR_WIDTH ≥ ceil(log2(0x40 + NUM_RULES × 16))
 | 64 | 0x440 bytes | 0x43F | 11 |
 
 The default of 12 covers every legal `NUM_RULES`. A validation callback in
-`axi_firewall_hw.tcl` rejects an undersized value, because the failure mode is
+`axi4_lite_firewall_hw.tcl` rejects an undersized value, because the failure mode is
 silent: high-index rules simply become unreachable, the rule table looks like
 it programmed correctly, and the firewall quietly enforces fewer rules than you
 configured.

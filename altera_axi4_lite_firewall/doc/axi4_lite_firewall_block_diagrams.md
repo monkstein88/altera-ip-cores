@@ -123,7 +123,7 @@ control, or a PIO output, both work.
 
 # 2. Internal architecture
 
-Inside `axi_firewall_top`: two independent datapaths, one register block, one
+Inside `axi4_lite_firewall_top`: two independent datapaths, one register block, one
 recovery controller.
 
 The datapaths are fully independent — separate FSMs, capture registers, lookup
@@ -156,7 +156,7 @@ EVAL is where policy is decided, in strict priority order:
 
 ## 2.1 The register block
 
-`axi_firewall_regs` owns the rule table and all software-visible state, and
+`axi4_lite_firewall_regs` owns the rule table and all software-visible state, and
 exposes two independent purely combinational lookup ports so both datapaths get
 an answer in the same cycle without contending.
 
@@ -327,7 +327,7 @@ shown; the core comes up secure by default.
 
 `i` runs 0 to `NUM_RULES − 1`. With the default 8 rules the table spans
 0x40–0xBF. `CTRL_ADDR_WIDTH` must be wide enough to reach the whole table; a
-validation callback in `axi_firewall_hw.tcl` enforces this, because an
+validation callback in `axi4_lite_firewall_hw.tcl` enforces this, because an
 undersized control port silently makes high-index rules unreachable.
 
 ## 4.3 Bit fields

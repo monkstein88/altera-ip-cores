@@ -141,8 +141,8 @@ still called it a failure because `running` was never sampled high.
 ```
     ┌────────────────┐  s_axi_ctrl   ┌──────────────────┐
     │                ├──────────────►│                  │
-    │ demo_sequencer │               │ axi_firewall_top │  m_axi   ┌──────────────────┐
-    │                │    s_axi      │                  ├─────────►│ demo_target_slave│
+    │ demo_sequencer │               │ axi4_lite_firewall_top │  m_axi   ┌──────────────────┐
+    │                │    s_axi      │                  ├─────────►│ demo_axi4_lite_target_slave│
     │  (the driver)  ├──────────────►│  (the IP core)   │          │ (the peripheral  │
     │                │               │                  │          │  being protected)│
     └───────┬────────┘               └────────┬─────────┘          └────────▲─────────┘
@@ -152,7 +152,7 @@ still called it a failure because `running` was never sampled high.
             └──────────────────────►  LEDR, HEX0..HEX5
 ```
 
-`demo_sequencer` plays the part a Nios II driver would play. `demo_target_slave`
+`demo_sequencer` plays the part a Nios II driver would play. `demo_axi4_lite_target_slave`
 is a small AXI4-Lite scratchpad with an injectable fault, because demonstrating
 a *fault-isolation* firewall needs something that can actually fail on cue.
 
@@ -234,13 +234,13 @@ scenarios you can run on a board.
 
 ```bash
 cd quartus
-quartus_sh --flow compile de10_lite_firewall_demo
+quartus_sh --flow compile de10_lite_axi4_lite_firewall_demo
 ```
 
-Then program `output_files/de10_lite_firewall_demo.sof` with the Programmer, or:
+Then program `output_files/de10_lite_axi4_lite_firewall_demo.sof` with the Programmer, or:
 
 ```bash
-quartus_pgm -m jtag -o "p;output_files/de10_lite_firewall_demo.sof"
+quartus_pgm -m jtag -o "p;output_files/de10_lite_axi4_lite_firewall_demo.sof"
 ```
 
 The project references the core's RTL directly at `../../../rtl/`, so it always
@@ -325,10 +325,10 @@ Broken down by entity:
 
 | Entity | Logic elements | Registers |
 |---|---|---|
-| **`axi_firewall_top` — the IP core** | **1,908** | **768** |
-|  └ `axi_firewall_regs` | 1,657 | 618 |
+| **`axi4_lite_firewall_top` — the IP core** | **1,908** | **768** |
+|  └ `axi4_lite_firewall_regs` | 1,657 | 618 |
 | `demo_sequencer` (incl. both AXI masters and the 200-instruction ROM) | 1,202 | 401 |
-| `demo_target_slave` | 643 | 577 |
+| `demo_axi4_lite_target_slave` | 643 | 577 |
 | `altsource_probe` (the JTAG instance, only with `ENABLE_ISSP`) | 70 | 53 |
 | `hex7seg` ×6 | 54 | 0 |
 | `key_debounce` | 28 | 21 |
@@ -358,7 +358,7 @@ Timing closes, with about 20% margin over the board's 50 MHz oscillator.
 The critical path is **inside the IP core**:
 
 ```
-axi_firewall_top|captured_awaddr[1]  →  axi_firewall_top|wr_timeout_cnt[*]
+axi4_lite_firewall_top|captured_awaddr[1]  →  axi4_lite_firewall_top|wr_timeout_cnt[*]
 ```
 
 That is the combinational rule lookup feeding the forward/reject decision that
@@ -399,20 +399,20 @@ where that pipeline stage starts to be needed.
 example/de10_lite_rtl/
 ├── README.md                        This file
 ├── rtl/
-│   ├── de10_lite_firewall_demo.sv   Top level: pins, reset, display, watcher
+│   ├── de10_lite_axi4_lite_firewall_demo.sv   Top level: pins, reset, display, watcher
 │   ├── demo_sequencer.sv            Microcoded engine + the 16-scenario program
-│   ├── demo_axi_lite_master.sv      AXI4-Lite master used for both ports
+│   ├── demo_axi4_lite_master.sv      AXI4-Lite master used for both ports
 │   ├── hex7seg.sv                   Seven-segment decode
 │   └── key_debounce.sv              Button synchroniser and debouncer
 ├── tb/
-│   └── de10_lite_firewall_demo_tb.sv  Board-level self-checking testbench
+│   └── de10_lite_axi4_lite_firewall_demo_tb.sv  Board-level self-checking testbench
 ├── simulation/
 │   ├── questa/run_sim.tcl
 │   └── verilator/run_sim.sh
 └── quartus/
-    ├── de10_lite_firewall_demo.qpf  Project
-    ├── de10_lite_firewall_demo.qsf  Device, pins, source list
-    └── de10_lite_firewall_demo.sdc  Timing constraints
+    ├── de10_lite_axi4_lite_firewall_demo.qpf  Project
+    ├── de10_lite_axi4_lite_firewall_demo.qsf  Device, pins, source list
+    └── de10_lite_axi4_lite_firewall_demo.sdc  Timing constraints
 ```
 
 The protected peripheral is shared with the Nios II example and lives in

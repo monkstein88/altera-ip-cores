@@ -65,7 +65,7 @@ if [[ -z "${NIOS2_SHELL_ACTIVE:-}" ]]; then
 fi
 
 SOF="$HERE/quartus/output_files/de10_lite_nios.sof"
-ELF="$HERE/software/firewall_demo.elf"
+ELF="$HERE/software/axi4_lite_firewall_demo.elf"
 LOG="$HERE/run_on_board.log"
 CAPTURE_SECS="${CAPTURE_SECS:-90}"
 

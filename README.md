@@ -101,7 +101,7 @@ It is purely how far the scan reaches.
 
 Without those paths the catalog looks correct — the firewalls are there — and
 opening a Nios II system fails to resolve `demo_avl_mm_target_slave` or
-`demo_target_slave`.
+`demo_axi4_lite_target_slave`.
 
 > This affects the **GUI only**. Each Nios II example's `build.sh` passes the
 > paths it needs to `qsys-script` directly, so building one from the command

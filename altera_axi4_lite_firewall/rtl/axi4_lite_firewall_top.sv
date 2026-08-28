@@ -7,7 +7,7 @@
 `timescale 1ns/1ps
 
 // =============================================================================
-// axi_firewall_top.sv
+// axi4_lite_firewall_top.sv
 //
 // AXI4-Lite Access-Control + Fault-Isolation Firewall
 //
@@ -96,7 +96,7 @@
 // its FSM coverage report rather than showing bare 2'b encodings.
 // =============================================================================
 
-module axi_firewall_top #(
+module axi4_lite_firewall_top #(
     parameter int ADDR_WIDTH        = 32,
     parameter int DATA_WIDTH        = 32,
     parameter int CTRL_ADDR_WIDTH   = 12,
@@ -210,7 +210,7 @@ module axi_firewall_top #(
     logic unblock;
     logic wr_resp_busy, rd_resp_busy, wr_cmd_stuck, rd_cmd_stuck;
 
-    // Declared HERE, above the axi_firewall_regs instantiation, not next to
+    // Declared HERE, above the axi4_lite_firewall_regs instantiation, not next to
     // the logic that drives them. Connecting an undeclared identifier to a
     // port creates an implicit net at that point, which then collides with
     // the later explicit declaration. Verilator accepts it; Questa correctly
@@ -230,7 +230,7 @@ module axi_firewall_top #(
     assign fault_addr_value = wr_fault_any ? captured_awaddr : captured_araddr;
     assign fault_was_write  = wr_fault_any;
 
-    axi_firewall_regs #(
+    axi4_lite_firewall_regs #(
         .ADDR_WIDTH      (ADDR_WIDTH),
         .CTRL_ADDR_WIDTH (CTRL_ADDR_WIDTH),
         .NUM_RULES       (NUM_RULES),

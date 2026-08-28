@@ -205,7 +205,9 @@ demo peripheral.
 
 **Two components shared a name.** Both examples in this repository defined a
 `demo_target_slave`, so Qsys resolved the AXI one and rejected the Avalon
-parameters. The Avalon one is now `demo_avl_mm_target_slave`.
+parameters. Both are now qualified by their bus — `demo_avl_mm_target_slave`
+here and `demo_axi4_lite_target_slave` on the AXI side — so the clash cannot
+recur.
 
 **`recover()` left `STATUS` dirty.** A command the peripheral never accepted
 keeps re-firing the no-progress timeout until `UNBLOCK` retires it, so the

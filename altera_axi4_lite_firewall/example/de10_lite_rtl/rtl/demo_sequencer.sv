@@ -545,7 +545,7 @@ module demo_sequencer #(
     logic [DATA_WIDTH-1:0]      dat_wdata, dat_rdata;
     logic [1:0]                 dat_resp;
 
-    demo_axi_lite_master #(
+    demo_axi4_lite_master #(
         .ADDR_WIDTH (CTRL_ADDR_WIDTH),
         .DATA_WIDTH (32)
     ) u_ctl (
@@ -560,7 +560,7 @@ module demo_sequencer #(
         .m_rdata(c_rdata), .m_rresp(c_rresp), .m_rvalid(c_rvalid), .m_rready(c_rready)
     );
 
-    demo_axi_lite_master #(
+    demo_axi4_lite_master #(
         .ADDR_WIDTH (ADDR_WIDTH),
         .DATA_WIDTH (DATA_WIDTH)
     ) u_dat (

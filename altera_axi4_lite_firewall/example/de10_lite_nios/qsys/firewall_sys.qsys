@@ -605,7 +605,11 @@
    enabled="1">
   <parameter name="id" value="-1431655766" />
  </module>
- <module name="tgt" kind="demo_target_slave" version="1.0" enabled="1">
+ <module
+   name="tgt"
+   kind="demo_axi4_lite_target_slave"
+   version="1.0"
+   enabled="1">
   <parameter name="ADDR_WIDTH" value="6" />
   <parameter name="DATA_WIDTH" value="32" />
   <parameter name="MEM_WORDS" value="16" />

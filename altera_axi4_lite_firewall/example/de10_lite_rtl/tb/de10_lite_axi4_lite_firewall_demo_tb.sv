@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 
 // =============================================================================
-// de10_lite_firewall_demo_tb.sv
+// de10_lite_axi4_lite_firewall_demo_tb.sv
 //
 // Self-checking testbench for the DE10-Lite demo. It drives the BOARD PINS -
 // clock, KEY, SW - and reads the BOARD OUTPUTS - LEDR, HEX0..HEX5 - and
@@ -27,7 +27,7 @@
 // firewall configuration that is synthesised.
 // =============================================================================
 
-module de10_lite_firewall_demo_tb;
+module de10_lite_axi4_lite_firewall_demo_tb;
 
     localparam int PACE_BITS      = 4;
     localparam int DEBOUNCE_BITS  = 3;
@@ -43,7 +43,7 @@ module de10_lite_firewall_demo_tb;
 
     always #(CLK_PERIOD/2) MAX10_CLK1_50 = ~MAX10_CLK1_50;
 
-    de10_lite_firewall_demo #(
+    de10_lite_axi4_lite_firewall_demo #(
         .PACE_BITS      (PACE_BITS),
         .DEBOUNCE_BITS  (DEBOUNCE_BITS),
         .TIMEOUT_CYCLES (TIMEOUT_CYCLES)

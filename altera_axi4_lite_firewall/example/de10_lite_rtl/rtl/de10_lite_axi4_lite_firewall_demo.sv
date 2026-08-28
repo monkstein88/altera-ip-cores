@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 
 // =============================================================================
-// de10_lite_firewall_demo.sv
+// de10_lite_axi4_lite_firewall_demo.sv
 //
 // AXI4-Lite Firewall demonstration for the Terasic DE10-Lite
 // (Intel MAX 10, 10M50DAF484C7G).
@@ -12,7 +12,7 @@
 //                  s_axi_ctrl                       LEDR[8:0] = STATUS[8:0]
 //                 +-----------+                     LEDR[9]   = irq
 //   demo_sequencer|           |
-//   (plays the    +---------->| axi_firewall_top |------> demo_target_slave
+//   (plays the    +---------->| axi4_lite_firewall_top |------> demo_axi4_lite_target_slave
 //    part of the  |  s_axi     |   (the IP core)  | m_axi   (the peripheral
 //    driver)      +---------->|                  |          being protected,
 //                             +------------------+          with an injectable
@@ -46,7 +46,7 @@
 // All switch inputs are resynchronised here; nothing downstream sees a raw pin.
 // =============================================================================
 
-module de10_lite_firewall_demo #(
+module de10_lite_axi4_lite_firewall_demo #(
     // Overridden by the testbench to keep simulation short. On the board the
     // defaults give a ~168 ms pause between scenarios and a 2.6 ms debounce.
     parameter int PACE_BITS      = 23,
@@ -296,7 +296,7 @@ module de10_lite_firewall_demo #(
     // ==================================================================
     // The IP core under demonstration
     // ==================================================================
-    axi_firewall_top #(
+    axi4_lite_firewall_top #(
         .ADDR_WIDTH      (ADDR_WIDTH),
         .DATA_WIDTH      (DATA_WIDTH),
         .CTRL_ADDR_WIDTH (CTRL_ADDR_WIDTH),
@@ -343,7 +343,7 @@ module de10_lite_firewall_demo #(
     // ==================================================================
     // The peripheral being protected
     // ==================================================================
-    demo_target_slave #(
+    demo_axi4_lite_target_slave #(
         .ADDR_WIDTH (ADDR_WIDTH),
         .DATA_WIDTH (DATA_WIDTH),
         .MEM_WORDS  (MEM_WORDS)

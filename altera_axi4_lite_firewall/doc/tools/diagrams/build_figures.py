@@ -193,7 +193,7 @@ d.rect(0.9, 7.4, 4.9, 3.6, "gExt",
 # --- the core
 CX, CY, CWD, CHT = 8.4, 4.3, 12.4, 10.6
 d.rect(CX, CY, CWD, CHT, "gCoreT",
-       [("axi_firewall_top", "tH2c")])
+       [("axi4_lite_firewall_top", "tH2c")])
 d.text(CX, CY + 0.95, CWD, 0.6,
        [("access control  +  fault isolation", "tSmallI")], pstyle="pC")
 
@@ -293,12 +293,12 @@ d.text(lg + 7.7, 18.68, 3.2, 0.5, [("outside the core", "tTiny")], pstyle="pL")
 # ================================================================ PAGE 4
 d.page("Internal architecture")
 chrome("2.  Internal architecture", 4,
-       "Inside axi_firewall_top: two independent datapaths, one register "
+       "Inside axi4_lite_firewall_top: two independent datapaths, one register "
        "block, one recovery controller.")
 
 OX, OY, OW, OH = 0.8, 3.4, 28.1, 14.7
 d.rect(OX, OY, OW, OH, "gCoreT", None)
-d.text(OX + 0.35, OY + 0.12, 8.0, 0.6, [("axi_firewall_top", "tH2c")],
+d.text(OX + 0.35, OY + 0.12, 8.0, 0.6, [("axi4_lite_firewall_top", "tH2c")],
        pstyle="pL")
 
 # Layout note: the datapaths own the left third, the register block the right
@@ -339,7 +339,7 @@ d.text(VX + 0.3, VY + 0.12, VW - 0.6, 0.0, [
 ], pstyle="pLg")
 
 d.rect(GX, GY, GW, GH, "gRegT", None)
-d.text(GX + 0.35, GY + 0.12, 8.0, 0.6, [("axi_firewall_regs", "tH2g")],
+d.text(GX + 0.35, GY + 0.12, 8.0, 0.6, [("axi4_lite_firewall_regs", "tH2g")],
        pstyle="pL")
 d.rect(GX + 0.4, GY + 0.85, GW - 0.8, 1.25, "gWhite",
        [("AXI4-Lite control slave", "tBlkS"),

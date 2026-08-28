@@ -31,7 +31,7 @@ cd verification
 for H in 1 0; do
   verilator --binary --timing -Wno-TIMESCALEMOD -GRESET_PERIPHERAL=$H \
       --top-module orphan_tb -o oz$H -Mdir obj_$H \
-      ../rtl/axi_firewall_regs.sv ../rtl/axi_firewall_top.sv orphan_response_tb.sv
+      ../rtl/axi4_lite_firewall_regs.sv ../rtl/axi4_lite_firewall_top.sv orphan_response_tb.sv
   ./obj_$H/oz$H
 done
 ```
@@ -41,13 +41,13 @@ done
 ```bash
 # correct: software resets the peripheral before unblocking
 iverilog -g2012 -Porphan_tb.RESET_PERIPHERAL=1 -o o1.out \
-    ../rtl/axi_firewall_regs.sv ../rtl/axi_firewall_top.sv orphan_response_tb.sv
+    ../rtl/axi4_lite_firewall_regs.sv ../rtl/axi4_lite_firewall_top.sv orphan_response_tb.sv
 vvp o1.out
 # => 0 of 25 offsets affected
 
 # skipped: software unblocks without resetting the peripheral
 iverilog -g2012 -Porphan_tb.RESET_PERIPHERAL=0 -o o0.out \
-    ../rtl/axi_firewall_regs.sv ../rtl/axi_firewall_top.sv orphan_response_tb.sv
+    ../rtl/axi4_lite_firewall_regs.sv ../rtl/axi4_lite_firewall_top.sv orphan_response_tb.sv
 vvp o0.out
 # => 1 of 25 offsets affected  (at k=3)
 ```
@@ -93,7 +93,7 @@ figure.
 ```bash
 cd verification
 verilator --binary --trace --top-module wave_capture_tb \
-    ../rtl/axi_firewall_regs.sv ../rtl/axi_firewall_top.sv wave_capture_tb.sv
+    ../rtl/axi4_lite_firewall_regs.sv ../rtl/axi4_lite_firewall_top.sv wave_capture_tb.sv
 ./obj_dir/Vwave_capture_tb            # writes wave.vcd
 ```
 
