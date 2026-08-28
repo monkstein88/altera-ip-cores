@@ -29,6 +29,23 @@ command -v verilator >/dev/null 2>&1 || {
     exit 127
 }
 
+# ---------------------------------------------------------------------------
+# Minimum Verilator version.
+#
+# The assertions use `default disable iff`, ranged cycle delays (##[a:b],
+# ##[1:$]) and consecutive repetition ([*n]). Verilator implements none of
+# those before 5.050, and what it prints instead is a wall of
+# "Unsupported: ## (in sequence expression)" that says nothing about the real
+# problem. 5.020 additionally miscompiles `disable fork` inside an initial
+# block, emitting an undeclared `vlProcess` that fails in g++.
+# ---------------------------------------------------------------------------
+VER=$(verilator --version 2>/dev/null | sed -n 's/^Verilator \([0-9]*\)\.\([0-9]*\).*/\1\2/p')
+if [ -n "$VER" ] && [ "$VER" -lt 5050 ] 2>/dev/null; then
+    echo "error: Verilator $(verilator --version | awk '{print $2}') is too old for this testbench." >&2
+    echo "       5.050 or newer is required - see this core's README." >&2
+    exit 127
+fi
+
 SOURCES=(
     "$ROOT/rtl/axi4_lite_firewall_regs.sv"
     "$ROOT/rtl/axi4_lite_firewall_top.sv"

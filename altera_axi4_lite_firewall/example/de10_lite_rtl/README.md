@@ -298,7 +298,7 @@ Everything below was produced on this repository's current sources.
 | Flow | Result |
 |---|---|
 | Questa 2024.1 | **80 / 80 board-level checks pass** |
-| Verilator 5.020 (`--binary --timing`) | **80 / 80** |
+| Verilator 5.050 (`--binary --timing`) | **80 / 80** |
 | `verilator --lint-only -Wall` | clean, waiving only `DECLFILENAME` and `UNUSEDSIGNAL` — the same two the core's own flow waives |
 | Driver host tests | **30 / 30** |
 | `nios2-elf-gcc -Wall -Wextra -Wpedantic -Werror` | clean, against the real HAL `io.h` |
@@ -380,7 +380,7 @@ where that pipeline stage starts to be needed.
 |---|---|
 | **All 16 scenarios on a physical DE10-Lite** | **Passing** — driven and read back over JTAG |
 | Determinism over JTAG | **6/6 fresh-program runs** after the `src_stable` and `done_count` fixes |
-| All 16 scenarios, board-level simulation | **Passing** under Questa 2024.1 and Verilator 5.020 |
+| All 16 scenarios, board-level simulation | **Passing** under Questa 2024.1 and Verilator 5.050 |
 | Display and LED decode | **Checked** against an independently written glyph table |
 | Step mode, auto sweep, scenario selection | **Checked** by driving the pins |
 | Synthesis for `10M50DAF484C7G` | **Clean**, 0 errors, `.sof` produced |

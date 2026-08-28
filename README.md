@@ -168,7 +168,8 @@ primitives, no vendor attributes and no inferred memory, so it is not tied to a
 family or a release. Only the examples are.
 
 For simulation, both firewalls' regressions run under **Questa/ModelSim**
-(coverage and assertions), **Verilator** (licence-free), and **Icarus**
+(coverage and assertions), **Verilator 5.050 or newer** (licence-free — older
+releases do not implement the SVA the assertions use), and **Icarus**
 (functional tests only — a `-DICARUS` define skips the SVA bind). The SDRAM
 example carries a Questa testbench that runs against Intel's functional memory
 model, generated on demand from your own Quartus installation. Each core's

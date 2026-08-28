@@ -50,7 +50,12 @@ SOURCES=(
 # than a functional one, so it goes first and stops the run.
 # ---------------------------------------------------------------------------
 echo "=== lint (-Wall) ==="
-verilator --lint-only -Wall -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL \
+# -Wno-PROCASSINIT: the demo's power-on-reset shift register and the KEY[1]
+# synchroniser are declared with `= '0`, which is a REGISTER POWER-UP VALUE
+# that Quartus honours and simulators start from - the standard MAX 10 idiom,
+# and documented as deliberate at the declaration. Verilator 5.050 added this
+# lint; 5.020 did not have it.
+verilator --lint-only -Wall -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-PROCASSINIT \
     --top-module de10_lite_axi4_lite_firewall_demo "${SOURCES[@]}" || {
     echo "error: lint failed" >&2
     exit 1
@@ -61,7 +66,7 @@ echo "lint clean"
 # check_eq() arguments, not on the RTL - which lints clean above.
 echo
 echo "=== build + run ==="
-verilator --binary --timing -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
+verilator --binary --timing -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-PROCASSINIT \
     +define+DEMO_TRACE \
     --top-module de10_lite_axi4_lite_firewall_demo_tb \
     -o simx -Mdir "$BUILD" \

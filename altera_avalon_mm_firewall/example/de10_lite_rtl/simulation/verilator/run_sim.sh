@@ -49,7 +49,27 @@ SOURCES=(
 # design (hex7seg, key_debounce). UNUSEDSIGNAL: the demo deliberately leaves
 # spare switches and master status bits unread. Same two the core's own flow
 # waives, and nothing else is waived.
-WARN_OFF=(-Wall -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC)
+# -Wno-PROCASSINIT: the demo's power-on-reset shift register and the KEY[1]
+# synchroniser are declared with `= '0`, which is a REGISTER POWER-UP VALUE
+# that Quartus honours and simulators start from - the standard MAX 10 idiom,
+# and documented as deliberate at the declaration. Verilator 5.050 added this
+# lint; 5.020 did not have it.
+#
+# -Wno-PINCONNECTEMPTY: demo_sequencer instantiates its CSR master with
+# .beats(), .data_ok(), .cycles(), .stuck() and .m_burstcount() deliberately
+# empty - that port has no bursts and no beat accounting to report. Naming a
+# port and leaving it empty is the explicit way to say "unused".
+#
+# -Wno-UNUSEDPARAM: two hits, and they are not the same kind of thing.
+#   * BEATCNT_W in the demo testbench IS used - it is passed to the assertion
+#     bind on the next line. Verilator does not count a bind's parameter list
+#     as a use, so this one is a false positive.
+#   * DATA_WIDTH in avl_mm_firewall_sva.sv genuinely is unused; it is carried
+#     for symmetry with the other three parameters the bind passes. Harmless,
+#     but real - removing it would mean editing the core testbench and the
+#     demo testbench together, which is not worth doing from a lint flag.
+WARN_OFF=(-Wall -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC
+          -Wno-PROCASSINIT -Wno-PINCONNECTEMPTY -Wno-UNUSEDPARAM)
 
 echo "== linting the demo RTL =="
 verilator --lint-only "${WARN_OFF[@]}" \
