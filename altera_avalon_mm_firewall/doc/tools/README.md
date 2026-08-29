@@ -13,7 +13,8 @@ doc/tools/
 │   └── svg_lib.py          SVG canvas with real-font text layout
 └── waveforms/
     ├── mkwaves.py          Cuts four scenarios out of a VCD
-    └── wavedraw.py         VCD parser and SVG waveform renderer
+    ├── wavedraw.py         VCD parser and SVG waveform renderer
+    └── check_figures.py    Reads the SVGs back and compares them to the VCD
 ```
 
 `svg_lib.py` and `wavedraw.py` are shared verbatim with the AXI4-Lite
@@ -30,6 +31,7 @@ python3 waveforms/mkwaves.py               # timing figures
 python3 diagrams/build_figures.py          # block diagrams
 python3 build_pdf.py all                   # both PDFs
 python3 check_facts.py                     # the part that matters
+python3 waveforms/check_figures.py         # 558 sampled points vs the VCD
 ```
 
 `check_facts.py` exits non-zero if anything has drifted. Run it after any
@@ -49,6 +51,14 @@ fields straight out of `build_figures.py` and compares them with the RTL. The
 timing diagrams are cut from a VCD produced by a real simulation, so if the
 design's behaviour changes, either the figure changes with it or `mkwaves.py`
 fails to find its markers and says so.
+
+Generating a figure only stops it being *drawn* wrong, though. It does not stop
+it being *rendered* wrong, and it does not notice a hand-edited SVG. So
+`waveforms/check_figures.py` closes the loop: it reads each SVG back, recovers
+the logic level the renderer drew in every cycle from the path geometry, and
+compares that against the same sample taken from the VCD — **558 points across
+the four figures**. Invert one row of one waveform and it reports the cycle,
+the figure and the signal.
 
 ## What check_facts.py actually verifies
 

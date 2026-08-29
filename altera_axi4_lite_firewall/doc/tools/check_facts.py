@@ -447,6 +447,32 @@ chk("not used in rule evaluation" in UG,
 chk("if (s_axi_awvalid && s_axi_wvalid) begin" in TOP,
     "the write path no longer waits for both AWVALID and WVALID")
 
+# ---- 21. no contradictory assertion / cover counts anywhere -------------
+# The earlier checks assert that the RIGHT number appears somewhere. They do
+# not notice a WRONG number appearing somewhere else. That blind spot let the
+# sibling Avalon-MM guide say "every one of the 20 assertions" in one section
+# while two others correctly said 22. Scan for any count attached to these
+# nouns and require it to be right wherever it appears.
+#
+# "0 assertion failures" counts failures, not assertions, so a following
+# qualifier that changes what is being counted excludes the match.
+SVA = open(f"{ROOT}/tb/axi4_lite_firewall_sva.sv").read()
+n_assert = len(re.findall(r"assert property", SVA))
+n_cover = len(re.findall(r"cover property", SVA))
+RM = open(f"{ROOT}/README.md").read()
+QUALIFIED = r"(?!\s+(?:failure|failures|fail|fails|miss|misses|hit|hits)\b)"
+for noun, truth in (("assertions", n_assert), ("assertion", n_assert),
+                    ("cover points", n_cover), ("cover point", n_cover),
+                    ("cover directives", n_cover), ("cover directive", n_cover)):
+    pat = re.compile(r"(\d+)\s+" + noun.replace(" ", r"\s+") + r"\b" + QUALIFIED)
+    for doc_name, doc in (("user guide", UG), ("block diagrams", BD),
+                          ("README", RM)):
+        for m in pat.finditer(doc):
+            line = doc[:m.start()].count("\n") + 1
+            chk(int(m.group(1)) == truth,
+                f"{doc_name}:{line} says '{m.group(1)} {noun}', but the SVA "
+                f"file has {truth}")
+
 print("\n".join("  FAIL: " + b for b in bad) or "  (no failures)")
 for reason in skips:
     print("  SKIPPED: " + reason)

@@ -59,6 +59,18 @@ SOURCES=(
 # TIMESCALEMOD no longer needs suppressing.
 WARN_OFF=(-Wno-WIDTHEXPAND -Wno-WIDTHTRUNC)
 
+# --timing compiles to C++20 coroutines. GCC before 12 has them behind a flag
+# and defaults to a standard that predates them, so a stock Ubuntu 22.04 host
+# fails to build the runtime with "the coroutine header requires -fcoroutines".
+CXX_EXTRA=""
+if command -v g++ >/dev/null 2>&1; then
+    GCC_MAJOR="$(g++ -dumpversion | cut -d. -f1)"
+    if [[ "$GCC_MAJOR" -lt 12 ]]; then
+        CXX_EXTRA="-std=gnu++20 -fcoroutines"
+        echo "note: gcc $GCC_MAJOR - adding $CXX_EXTRA for --timing coroutines"
+    fi
+fi
+
 # Strict LRM elaboration with slang, if available. This is not redundant with
 # Verilator: slang rejects use-before-declaration and implicit-net collisions
 # that Verilator silently resolves, and those are exactly what Questa rejects
@@ -81,9 +93,10 @@ verilator --lint-only -Wall -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL \
     "$ROOT/rtl/axi4_lite_firewall_regs.sv" "$ROOT/rtl/axi4_lite_firewall_top.sv" || exit $?
 
 echo "== verilating =="
-verilator --binary --timing --assert "${WARN_OFF[@]}" \
-    --top-module axi4_lite_firewall_tb -o simx -Mdir "$BUILD" \
-    "${SOURCES[@]}" || exit $?
+VFLAGS=(--binary --timing --assert "${WARN_OFF[@]}"
+        --top-module axi4_lite_firewall_tb -o simx -Mdir "$BUILD")
+[[ -n "$CXX_EXTRA" ]] && VFLAGS+=(-CFLAGS "$CXX_EXTRA")
+verilator "${VFLAGS[@]}" "${SOURCES[@]}" || exit $?
 
 echo "== running =="
 "$BUILD/simx" 2>&1 | tee "$LOG"

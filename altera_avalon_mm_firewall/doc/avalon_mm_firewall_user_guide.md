@@ -995,7 +995,7 @@ read data. Running only the default leaves half the write channel unexercised.
 
 **Result: 632 checks pass** — each of the four runs is 153 checks with write
 responses disabled or 163 with them enabled. Zero assertion failures, zero `m0` protocol violations, and every
-one of the 20 assertions has a non-zero pass count, so none of them is passing
+one of the 22 assertions has a non-zero pass count, so none of them is passing
 vacuously.
 
 Coverage includes:

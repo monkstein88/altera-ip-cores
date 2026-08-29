@@ -49,6 +49,18 @@ SOURCES=(
 # the two the core's own flow waives. A lint regression is cheaper to read
 # than a functional one, so it goes first and stops the run.
 # ---------------------------------------------------------------------------
+# --timing compiles to C++20 coroutines. GCC before 12 has them behind a flag
+# and defaults to a standard that predates them, so a stock Ubuntu 22.04 host
+# fails to build the runtime with "the coroutine header requires -fcoroutines".
+CXX_EXTRA=""
+if command -v g++ >/dev/null 2>&1; then
+    GCC_MAJOR="$(g++ -dumpversion | cut -d. -f1)"
+    if [[ "$GCC_MAJOR" -lt 12 ]]; then
+        CXX_EXTRA="-std=gnu++20 -fcoroutines"
+        echo "note: gcc $GCC_MAJOR - adding $CXX_EXTRA for --timing coroutines"
+    fi
+fi
+
 echo "=== lint (-Wall) ==="
 # -Wno-PROCASSINIT: the demo's power-on-reset shift register and the KEY[1]
 # synchroniser are declared with `= '0`, which is a REGISTER POWER-UP VALUE
@@ -66,10 +78,12 @@ echo "lint clean"
 # check_eq() arguments, not on the RTL - which lints clean above.
 echo
 echo "=== build + run ==="
-verilator --binary --timing -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-PROCASSINIT \
-    +define+DEMO_TRACE \
-    --top-module de10_lite_axi4_lite_firewall_demo_tb \
-    -o simx -Mdir "$BUILD" \
+VFLAGS=(--binary --timing -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-PROCASSINIT
+        +define+DEMO_TRACE
+        --top-module de10_lite_axi4_lite_firewall_demo_tb
+        -o simx -Mdir "$BUILD")
+[[ -n "$CXX_EXTRA" ]] && VFLAGS+=(-CFLAGS "$CXX_EXTRA")
+verilator "${VFLAGS[@]}" \
     "${SOURCES[@]}" "$DEMO/tb/de10_lite_axi4_lite_firewall_demo_tb.sv" || {
     echo "error: verilator build failed" >&2
     exit 1

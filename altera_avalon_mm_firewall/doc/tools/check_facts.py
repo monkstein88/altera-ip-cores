@@ -475,6 +475,28 @@ for name in re.findall(r"`(c_\w+)`", RM):
 chk(len(sva_covers) == n_cover,
     f"{n_cover} cover properties but {len(sva_covers)} distinct names")
 
+# The checks above assert that the RIGHT number appears somewhere. They do not
+# notice a WRONG number appearing somewhere else, which is how "every one of
+# the 20 assertions" survived in section 8.1 while 8.2 and the summary table
+# both said 22. Scan for any count attached to these nouns and require it to
+# be correct wherever it appears.
+#
+# "0 assertion failures" counts failures, not assertions, so a following
+# qualifier that changes what is being counted excludes the match.
+QUALIFIED = r"(?!\s+(?:failure|failures|fail|fails|miss|misses|hit|hits)\b)"
+for noun, truth in (("assertions", n_assert), ("assertion", n_assert),
+                    ("cover points", n_cover), ("cover point", n_cover),
+                    ("cover directives", n_cover), ("cover directive", n_cover)):
+    pat = re.compile(r"(\d+)\s+" + noun.replace(" ", r"\s+") + r"\b" + QUALIFIED)
+    for doc_name, doc in (("user guide", UG), ("block diagrams", BD),
+                          ("README", RM)):
+        for m in pat.finditer(doc):
+            got = int(m.group(1))
+            line = doc[:m.start()].count("\n") + 1
+            chk(got == truth,
+                f"{doc_name}:{line} says '{got} {noun}', but the SVA file has "
+                f"{truth}")
+
 # ---- 10. measured results ----------------------------------------------
 if HAVE_RUN:
     counts = [len(re.findall(r"^  PASS", L, re.M)) for L in LOGS]
