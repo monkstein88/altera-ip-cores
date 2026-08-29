@@ -318,8 +318,12 @@ for name, rng in DOC_RANGES.items():
     chk(tcl_rng.get(name, "").strip() == rng,
         f"{name}: hw.tcl range '{tcl_rng.get(name)}', documents say '{rng}'")
     lo, hi = rng.split(":")
+    # Match the PARAMETER TABLE's shape - "| `NAME` | default | range | ..." -
+    # rather than the first line that merely mentions the name. Section 1.3's
+    # resource table also names parameters ("| `NUM_RULES` = 8, ... |") and,
+    # being earlier in the document, used to be picked up instead.
     row = next((ln for ln in UG.splitlines()
-                if ln.startswith("|") and f"`{name}`" in ln), None)
+                if re.match(rf"\|\s*`{name}`\s*\|", ln)), None)
     chk(row is not None, f"user guide has no parameter table row for {name}")
     chk(row is not None and lo in row and hi in row,
         f"user guide parameter table row for {name} does not show {lo}-{hi}")

@@ -389,7 +389,7 @@ where that pipeline stage starts to be needed.
 | Driver ordering and bounded poll | **Checked** by host tests against a register model |
 | Driver compiles for Nios II | **Checked** with the real toolchain and HAL headers |
 | **Pin assignments** | **Verified** — diffed against the DE10-Lite Golden Top project on the System CD; all 71 match exactly |
-| Nios II application linked and run | **Not verified** — needs a BSP from your own Platform Designer system |
+| Nios II application linked and run | **Verified** — the [Nios II example](../de10_lite_nios/README.md) builds a BSP, links the driver the component ships, and passes 33/33 checks on hardware |
 
 ---
 

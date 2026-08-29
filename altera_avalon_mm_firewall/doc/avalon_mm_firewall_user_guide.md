@@ -113,13 +113,32 @@ for any Intel/Altera family supported by your Quartus Prime installation.
 
 ## 1.3 Resource Utilization
 
-Not characterised. The design is a rule table plus comparators and a handful
-of counters; the dominant term is `NUM_RULES`, which instantiates two
-`ADDR_WIDTH`-wide magnitude comparators per rule per channel.
+Measured standalone with virtual pins on an Intel MAX 10 `10M50DAF484C7G`
+(speed grade 7), Quartus Prime 18.1.1 Standard Edition, slow 1200 mV 85 &deg;C
+timing model.
 
-> **Caution:** No synthesis results are quoted anywhere in this document. A
-> number here would be a guess, and a guess in a resource table is
-> indistinguishable from a measurement.
+| Configuration | `REGISTER_LOOKUP` = 0 | `REGISTER_LOOKUP` = 1 |
+|---|---|---|
+| `NUM_RULES` = 8, `ADDR_WIDTH` = 32 (defaults) | 60.77 MHz &middot; 2,649 LEs | **95.85 MHz** &middot; 2,736 LEs |
+| `NUM_RULES` = 5, `ADDR_WIDTH` = 12 | 73.44 MHz &middot; 1,183 LEs | **107.43 MHz** &middot; 1,213 LEs |
+| `NUM_RULES` = 2, `ADDR_WIDTH` = 12 | 83.31 MHz &middot; 928 LEs | &mdash; |
+
+The dominant term is `NUM_RULES`, which instantiates two `ADDR_WIDTH`-wide
+magnitude comparators per rule per channel &mdash; two because the core checks
+the **first and last byte** of every transaction, and every carry chain in them
+is `ADDR_WIDTH` bits long. The core infers no memory blocks, multipliers or
+PLLs.
+
+The critical path at `REGISTER_LOOKUP` = 0 is that lookup, combinational end to
+end, from the rule table through the comparators and the priority chain to the
+verdict. Registering it costs about 90 logic elements and buys 46-58 % more
+clock; the path then moves off the lookup entirely, onto a loop through the
+denied-read beat counter and the `waitrequest` handshake, which is inherent to
+the zero-latency Avalon-MM handshake and is where the remaining ceiling sits.
+
+> **100 MHz is reachable, but not at the widest settings.** It needs
+> `REGISTER_LOOKUP` = 1 and `NUM_RULES` / `ADDR_WIDTH` sized to the system.
+> Confirmed on hardware &mdash; see [Section 9.2](#92-verification-status).
 
 ## 1.4 Release Information
 
@@ -1065,15 +1084,25 @@ Every run of `simulation/verilator/run_sim.sh` also performs:
 | No transaction is stalled during recovery | Traffic during a block is answered with an error, so drivers need a retry path |
 | Truncated bursts reach the peripheral | An abandoned forwarded burst leaves the peripheral mid-transfer. Unavoidable; it is why the reset is mandatory |
 
-## 9.2 What has not been verified
+## 9.2 Verification status
+
+Stated plainly in both directions, because the absence of a result is easy to
+mistake for a passing one.
 
 | Item | Status |
 |---|---|
-| Synthesis results, Fmax, resource usage | Not measured |
-| Behaviour in a real Platform Designer system | Not verified end to end. The testbench models a well-behaved bursting peripheral, not generated interconnect |
-| `hw.tcl` import into a specific Quartus release | Not verified — see [Section 2.1](#21-installing-the-ip-core) |
-| Assertion non-vacuity | Requires the Questa flow; not quoted here |
-| Device family support | Not characterised on hardware |
+| Functional simulation | **632 checks** across four parameterisations (`USE_WRITE_RESPONSE` &times; `REGISTER_LOOKUP`), Questa and Verilator agreeing |
+| Assertions | **22 / 22 non-vacuous** in every parameterisation, under Questa `-cover sbceft` |
+| Cover directives | **11 / 11 hit** |
+| Synthesis results, f<sub>MAX</sub>, resource usage | **Measured** on MAX 10 `10M50DAF484C7G` &mdash; see [Section 1.3](#13-resource-utilization) |
+| Behaviour on physical hardware | **Verified on a Terasic DE10-Lite:** 16/16 scenarios in the RTL example at 50 MHz, 41/41 checks in the Nios II example at 100 MHz |
+| Behaviour in a real Platform Designer system | **Verified.** The Nios II example runs the core behind generated Qsys interconnect, a pipeline bridge and a Nios II/f data cache |
+| Operation at 100 MHz | **Verified on hardware** with `REGISTER_LOOKUP` = 1 and the parameters sized to the system |
+| `hw.tcl` import into a specific Quartus release | **Verified for Quartus 18.1.1 Standard:** the component packages and generates in Platform Designer, and the BSP picks the driver up from `avl_mm_firewall_sw.tcl`. Other releases untested |
+| f<sub>MAX</sub> vs `NUM_RULES` | **Three data points only** &mdash; see Table 2. Not swept |
+| Device families other than MAX 10 | **None characterised** |
+| Wrapping (line-wrap) bursts | **Not supported.** Both interfaces declare `linewrapBursts false`; Platform Designer inserts an adapter if a master needs them |
+| Formal property proof | **Not attempted**; the assertions are simulation-only |
 
 ## 9.3 Security considerations
 
@@ -1106,4 +1135,5 @@ Use this core unless you specifically need an AXI4-Lite interface.
 
 | Document version | Core version | Date | Changes |
 |---|---|---|---|
+| 1.1 | 1.0 | August 2026 | Recorded the verification that had been done but not written down. [Section 1.3](#13-resource-utilization) now carries measured resource and f<sub>MAX</sub> figures at three configurations instead of declining to quote any, and [Section 9.2](#92-verification-status) reports status in both directions rather than listing only what was missing: hardware runs on a Terasic DE10-Lite, the Platform Designer flow, the `hw.tcl` import, assertion non-vacuity and the Verilator flow all moved out of "not verified". No RTL change. |
 | 1.0 | 1.0 | August 2026 | Initial release |
