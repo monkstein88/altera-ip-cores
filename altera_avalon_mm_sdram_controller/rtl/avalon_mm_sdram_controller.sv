@@ -6,8 +6,9 @@
 //
 // WHAT THIS DOES DIFFERENTLY
 // --------------------------
-// The controller this replaces tracks ONE open row and requires the access
-// direction to match for its fast path:
+// Intel's core (altera_avalon_new_sdram_controller), which this replaces,
+// tracks ONE open row and requires the access direction to match for its
+// fast path:
 //
 //     assign pending = csn_match && rnw_match && bank_match && row_match ...
 //                                   ^^^^^^^^^
@@ -76,7 +77,7 @@ module avalon_mm_sdram_controller #(
 
     // ---- controller options ----
     // ADDR_MAP 0: bank[0] directly above the column, remaining bank bits at
-    //             the top - the map the incumbent uses. Interleaves banks
+    //             the top - the map Intel's core uses. Interleaves banks
     //             every 2^COL_BITS words, which suits streaming.
     // ADDR_MAP 1: {row, bank, col}, bank bits contiguous.
     parameter int  ADDR_MAP    = 0,

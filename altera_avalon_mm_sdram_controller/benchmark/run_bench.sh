@@ -2,12 +2,16 @@
 # =============================================================================
 # run_bench.sh - generate what is missing, build, and run the benchmark.
 #
-#   ./run_bench.sh                 measure the incumbent Intel controller
-#   ./run_bench.sh <module> <file> measure a replacement instead
+#   ./run_bench.sh                 measure INTEL'S CORE (sdram_mem_ctrl)
+#   ./run_bench.sh <module> <file> measure any other controller instead
 #
-# The second form lets the same stimulus drive this project's controller once
-# it exists, which is the entire point: "faster" has to be the same numbers on
-# the same patterns, not a different benchmark.
+# The second form is how THE CUSTOM CORE is measured:
+#
+#   ./run_bench.sh avalon_mm_sdram_controller \
+#       ../rtl/avalon_mm_sdram_controller.sv
+#
+# Identical stimulus either way, which is the entire point: "faster" has to be
+# the same numbers on the same patterns, not a different benchmark.
 # =============================================================================
 set -euo pipefail
 
@@ -47,8 +51,8 @@ verilator --binary --timing --top-module timing_check_selftest \
     "$HERE/sdram_timing_check.sv" "$HERE/timing_check_selftest.sv" || exit $?
 "$BUILD.selftest/selftest" | grep -E "FAIL|passed" || exit $?
 
-# ---- generate the incumbent, which is Intel's and is never committed --------
-# Only the incumbent needs Quartus. The memory model is ours
+# ---- generate Intel's core, which is not ours and is never committed --------
+# Only Intel's core needs Quartus. The memory model is ours
 # (sdram_device_model.sv), so measuring this project's controller needs no
 # Quartus installation at all.
 if [[ "$DUT_FILE" == "$GEN/sdram_mem_ctrl.v" && ! -f "$DUT_FILE" ]]; then

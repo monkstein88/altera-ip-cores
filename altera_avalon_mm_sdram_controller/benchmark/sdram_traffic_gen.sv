@@ -16,7 +16,7 @@
 // benchmark blurs together:
 //
 //   SEQ_RD / SEQ_WR   one direction, ascending - the best case, and the one
-//                     the incumbent already runs at 97% of the bus limit.
+//                     Intel's core already runs at 97% of the bus limit.
 //   SEQ_RW            ascending but alternating direction. Isolates the cost
 //                     of a read/write turnaround. Never previously measured.
 //   ROW_RW            alternating direction inside ONE open row. Removes row
@@ -68,7 +68,8 @@ module sdram_traffic_gen #(
     output logic [31:0]         errors,
 
     // ---------------- Avalon-MM master (legacy az_/za_ naming, to match
-    //                  the incumbent controller's slave port) -------------
+    //                  the slave port Intel's core presents, so that either
+    //                  controller can be driven) ------------------------
     output logic [ADDR_W-1:0]   az_addr,
     output logic [DATA_W/8-1:0] az_be_n,
     output logic                az_cs,
@@ -96,7 +97,7 @@ module sdram_traffic_gen #(
     // ------------------------------------------------------------------
     // ADDRESS MAPPING OF THE PART UNDER TEST
     //
-    // The incumbent controller maps the Avalon WORD address as
+    // Intel's core maps the Avalon WORD address as
     //
     //     bank = { addr[24], addr[10] }    row = addr[23:11]    col = addr[9:0]
     //

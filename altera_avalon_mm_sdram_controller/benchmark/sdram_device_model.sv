@@ -18,14 +18,14 @@
 // a controller that keeps one row open per bank, reads and writes silently
 // land in the wrong place.
 //
-// That is invisible with the incumbent controller, which only ever has one row
+// That is invisible with Intel's core, which only ever has one row
 // open, and it is exactly the wrong bug to have in the reference model when the
 // change being measured is per-bank row tracking: the model reports data
 // corruption for legal command streams. A real device has a row register per
 // bank; this model has one too.
 //
-// It also removes Quartus from the loop. Only the incumbent needs generating
-// now, so measuring THIS project's controller needs no Quartus installation.
+// It also removes Quartus from the loop. Only Intel's core needs generating
+// now, so measuring the custom core needs no Quartus installation.
 //
 // WHAT IT DOES AND DOES NOT MODEL
 // -------------------------------

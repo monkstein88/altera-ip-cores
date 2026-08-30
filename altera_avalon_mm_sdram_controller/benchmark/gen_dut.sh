@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# gen_dut.sh - generate the incumbent Intel SDRAM controller as the baseline DUT.
+# gen_dut.sh - generate INTEL'S CORE, the baseline this project is measured against.
 #
 #   ./gen_dut.sh [output_dir]        (default: ./.gen)
 #
 # The benchmark measures two controllers against identical stimulus: the
-# incumbent (altera_avalon_new_sdram_controller) and this project's
-# replacement. The incumbent's RTL is Intel's, is generated rather than
+# Intel's core (altera_avalon_new_sdram_controller) and this project's
+# custom core. Intel's RTL is not ours, is generated rather than
 # committed - the same rule the SDRAM example follows - so this script produces
 # it from your own Quartus installation.
 #

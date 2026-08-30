@@ -14,12 +14,12 @@
 #
 # so any ACTIVATE overwrites it regardless of bank, and a column command is
 # serviced using whichever row was activated last on whichever bank. A
-# controller that keeps a row open per bank - the entire point of this project
-# - gets silent data corruption reported against a legal command stream.
+# controller that keeps a row open per bank - the entire point of the custom
+# core - gets silent data corruption reported against a legal command stream.
 #
 # The benchmark uses sdram_device_model.sv instead, which has a row register
-# per bank like a real device, and which reproduces the incumbent controller's
-# cycle counts against this model exactly. Run this script if you want to read
+# per bank like a real device, and which reproduces the cycle counts Intel's
+# core produces against this model exactly. Run this script if you want to read
 # the line above in context.
 #
 # Intel's functional SDRAM model lives in a separate component from the SDRAM
