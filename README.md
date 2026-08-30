@@ -205,36 +205,15 @@ altera-ip-cores/
 │   └── example/de10_lite_nios/
 ├── altera_avalon_mm_sdram_controller/  SDRAM controller, per-bank open rows
 │   ├── rtl/                            the controller
-│   ├── benchmark/                      the ruler it and Intel's are measured on
-│   └── tools/                          Platform Designer component check
-├── altera_avalon_new_sdram_controller/ Intel's SDRAM controller, unhidden
-│   └── example/de10_lite_rtl/          plus one hardware demo
-└── tools/check_docs.py                 checks this file against the repository
+│   └── benchmark/                      the ruler it and Intel's are measured on
+└── altera_avalon_new_sdram_controller/ Intel's SDRAM controller, unhidden
+    └── example/de10_lite_rtl/          plus one hardware demo
 ```
 
 Each core's own `README.md` is the real documentation: design rationale,
 register map, parameters, verification status and known limitations. The
 firewalls additionally carry a full user guide and an architecture document, in
 Markdown and PDF, under `doc/`.
-
-### The documentation is checked, not just written
-
-Numbers in these documents are re-derived from the repository rather than
-trusted, because they have drifted before:
-
-```bash
-python3 tools/check_docs.py                                  # 270 claims - this file, licensing, links
-python3 altera_axi4_lite_firewall/doc/tools/check_facts.py   # 309 claims
-python3 altera_avalon_mm_firewall/doc/tools/check_facts.py   # 312 claims
-altera_avalon_mm_sdram_controller/tools/check_component.sh   # 10 checks, needs Quartus
-```
-
-The firewalls' checkers re-derive every register offset, bit position,
-parameter range and assertion count quoted anywhere in their documents from the
-RTL and the committed simulation artefacts. `tools/check_docs.py` does the same
-for this file — including that every core is named in the Licence section, and
-that a directory with a `NOTICE` is excluded from the MIT grant while one
-without is placed under it. See [`tools/README.md`](tools/README.md).
 
 ---
 

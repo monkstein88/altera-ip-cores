@@ -125,11 +125,11 @@ Info: At 143.000 MHz the HDL will use: tRC=9 tRAS=6 tRP=3 tRCD=3 tRRD=3
       tWR=3 tRFC=9 cycles, CAS=3, one refresh every 1118 cycles.
 ```
 
-`tools/check_component.sh` exercises all of that against a real Quartus
-installation — the component loads, a system generates clean, the preset lands
-its values, every parameter reaches the HDL as an unquoted number, and each
-validation rule fires on a configuration that should trip it. No licence
-needed.
+All of that was verified against Quartus 18.1 Standard: the component and its
+presets load with no errors, a system generates with no errors or warnings, the
+preset lands its datasheet values, every parameter reaches the HDL as an
+unquoted number, and each validation rule fires on a configuration that should
+trip it.
 
 ## Configurability
 
@@ -151,8 +151,8 @@ project, in two different ways, and both were silent:
   `.T_RC_NS("60.0")` — and a string assigned to a `real` is its ASCII bytes
   read as a number, so 60 ns arrived as 909127216.0 and a 6-cycle tRC became
   90 million. Hence integer picoseconds: nothing crosses the tool boundary as
-  a float. `tools/check_component.sh` fails if any parameter ever again reaches
-  the HDL quoted.
+  a float. If you ever add a parameter here, check the generated wrapper and
+  make sure it arrives unquoted.
 
 Geometry (`ROW_BITS`, `COL_BITS`, `BANK_BITS`, `DATA_BITS`), CAS latency,
 refresh period and row count, and the address map are all parameters.
@@ -167,7 +167,6 @@ altera_avalon_mm_sdram_controller/
 ├── altera_avalon_mm_sdram_controller_hw.tcl    Platform Designer component
 ├── altera_avalon_mm_sdram_controller.qprs      device presets
 ├── rtl/                the controller
-├── tools/              check_component.sh - verifies the component
 └── benchmark/          the ruler - measures Intel's core and the custom core
 ```
 
