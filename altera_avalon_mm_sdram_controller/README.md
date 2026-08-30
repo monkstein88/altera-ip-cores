@@ -1,6 +1,7 @@
 # Avalon-MM SDRAM Controller
 
-**Status: working controller, measured in simulation. Not yet on hardware.**
+**Status: working controller, packaged for Platform Designer, measured in
+simulation. Not yet on hardware.**
 
 A from-scratch SDR SDRAM controller for Avalon-MM, intended to replace
 [`altera_avalon_new_sdram_controller`](../altera_avalon_new_sdram_controller)
@@ -79,27 +80,79 @@ be measured on this same ruler before being believed.
 
 Also outstanding:
 
-- **Hardware.** Everything here is simulation. No Quartus licence in the
-  development environment, so no f_MAX, no resource numbers, no board run.
-- **Device profiles and `_hw.tcl`**, so a part is selected by name and an
-  impossible configuration is rejected at generation time rather than at
-  temperature.
-- **A parameter sweep in the regression** — several device profiles × clock
-  rates, rather than testing one configuration and shipping N untested ones.
+- **Hardware.** Everything here is simulation and component generation. No
+  Quartus licence in the development environment, so no f_MAX, no resource
+  numbers, no board run.
+- **More device presets.** Only the DE10-Lite's part is supplied, because it is
+  the only one whose timing has been checked against a datasheet and exercised
+  through the benchmark. Adding one is a block of XML; inventing the numbers is
+  the part that would be wrong.
+- **A parameter sweep in the regression** — several presets × clock rates,
+  rather than testing one configuration and shipping N untested ones.
+
+## Using it in Platform Designer
+
+Add the folder to the IP search path (Tools -> Options -> IP Search Path, or
+`--search-path` on the command line) and the component appears under
+**Memory Interfaces and Controllers / Custom** as *Avalon-MM SDRAM Controller
+(per-bank rows)*.
+
+It presents exactly what the core it replaces presents — a `clk` sink, a
+`reset` sink, a word-addressed memory slave `s1` carrying the legacy `az_`/`za_`
+signals, and a `wire` conduit for the SDRAM pins — so swapping one component
+for the other in an existing system leaves every connection and every address
+assignment alone.
+
+Start from the **preset** for your part rather than typing timings in. Only
+the DE10-Lite's ISSI IS42S16320D is supplied today; adding one is a block of
+XML in the `.qprs`.
+
+Two things it will not let you get wrong:
+
+**The clock is not a parameter.** It is read from whatever clock source you
+connect, so the controller cannot be configured for 100 MHz and clocked at 143.
+
+**The configuration is checked at generation time.** An address bus too narrow
+for the row, a tRAS mistyped longer than tRC, a refresh rate the controller
+cannot sustain, or an address map that would silently move every address in
+memory — each is an error or a warning before anything is built. It also
+reports the memory size and the exact cycle counts the HDL will derive at your
+clock, so they can be read against the datasheet:
+
+```
+Info: Memory: 64 MByte - 4 banks x 8192 rows x 1024 columns x 16 bits.
+Info: At 143.000 MHz the HDL will use: tRC=9 tRAS=6 tRP=3 tRCD=3 tRRD=3
+      tWR=3 tRFC=9 cycles, CAS=3, one refresh every 1118 cycles.
+```
+
+`tools/check_component.sh` exercises all of that against a real Quartus
+installation — the component loads, a system generates clean, the preset lands
+its values, every parameter reaches the HDL as an unquoted number, and each
+validation rule fires on a configuration that should trip it. No licence
+needed.
 
 ## Configurability
 
-Timings are parameterised in **nanoseconds** and converted to cycles internally
-with ceiling division, never below one cycle. Exposing cycle counts would push
-that arithmetic onto every integrator, and a timing parameter rounded the wrong
-way is silent data corruption rather than a clean failure.
+Timings are parameterised in **time, not cycles** — integer picoseconds in the
+HDL, nanoseconds in the Platform Designer GUI — and converted to cycles inside
+the HDL with ceiling division, never below one cycle. Exposing cycle counts
+would push that arithmetic onto every integrator, and a timing parameter
+rounded the wrong way is silent data corruption rather than a clean failure.
 
-That is not hypothetical: the `ns`→cycles helper was wrong in its first
-version, in both this controller and the timing checker, because
-`int'((ns*khz + 999_999.0)/1_000_000.0)` looks like a ceiling and is not —
-`int'(real)` rounds to nearest in SystemVerilog. It is now `$ceil`, and the
-checker has a self-test that pins the threshold. See
-[`benchmark/README.md`](benchmark/README.md).
+That is not hypothetical. The conversion has been got wrong twice in this
+project, in two different ways, and both were silent:
+
+- `int'((ns*khz + 999_999.0)/1_000_000.0)` looks like a ceiling and is not —
+  `int'(real)` rounds to *nearest* in SystemVerilog, so the bias and the
+  rounding compound. It is now `$ceil`, and the timing checker has a self-test
+  pinning the threshold. See [`benchmark/README.md`](benchmark/README.md).
+- Timings were `parameter real` in nanoseconds until Platform Designer got
+  hold of them. It emits a FLOAT parameter as a **quoted string** —
+  `.T_RC_NS("60.0")` — and a string assigned to a `real` is its ASCII bytes
+  read as a number, so 60 ns arrived as 909127216.0 and a 6-cycle tRC became
+  90 million. Hence integer picoseconds: nothing crosses the tool boundary as
+  a float. `tools/check_component.sh` fails if any parameter ever again reaches
+  the HDL quoted.
 
 Geometry (`ROW_BITS`, `COL_BITS`, `BANK_BITS`, `DATA_BITS`), CAS latency,
 refresh period and row count, and the address map are all parameters.
@@ -111,7 +164,10 @@ substitution is transparent; `ADDR_MAP 1` is the conventional
 
 ```
 altera_avalon_mm_sdram_controller/
+├── altera_avalon_mm_sdram_controller_hw.tcl    Platform Designer component
+├── altera_avalon_mm_sdram_controller.qprs      device presets
 ├── rtl/                the controller
+├── tools/              check_component.sh - verifies the component
 └── benchmark/          the ruler - measures Intel's core and the custom core
 ```
 

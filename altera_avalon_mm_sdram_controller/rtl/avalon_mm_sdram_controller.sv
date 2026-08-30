@@ -23,14 +23,16 @@
 // datasheet says it is: free write->read, one cycle read->write. Row commands
 // are issued only when the row actually has to change.
 //
-// PARAMETERISED IN NANOSECONDS
-// ----------------------------
-// Every device timing is a real number of nanoseconds, converted to cycles
+// PARAMETERISED IN TIME, NOT IN CYCLES
+// ------------------------------------
+// Every device timing is an integer number of picoseconds, converted to cycles
 // here with ceiling division and never allowed below one cycle. Cycle counts
 // are deliberately NOT exposed: a timing parameter rounded the wrong way is
 // silent data corruption at temperature months later, not a clean failure, and
 // pushing that arithmetic onto the integrator guarantees someone gets it
-// wrong. Retarget by changing ns and the clock, not by recomputing cycles.
+// wrong. Retarget by changing the timings and the clock, not by recomputing
+// cycles. The Platform Designer component asks for nanoseconds and scales
+// them; picoseconds are the wire format, for the reason given below.
 //
 // COMMAND TIMING CONVENTION
 // -------------------------
@@ -52,22 +54,35 @@ module avalon_mm_sdram_controller #(
     // it appears in the parameter list only because it sizes a port.
     parameter int  ADDR_W      = ROW_BITS + COL_BITS + BANK_BITS,
 
-    // ---- device timings, nanoseconds ----
-    parameter real T_RC_NS     = 60.0,  // ACT -> ACT, same bank
-    parameter real T_RAS_NS    = 37.0,  // ACT -> PRE, same bank
-    parameter real T_RP_NS     = 15.0,  // PRE -> ACT, same bank
-    parameter real T_RCD_NS    = 15.0,  // ACT -> READ/WRITE, same bank
-    parameter real T_RRD_NS    = 14.0,  // ACT -> ACT, different bank
-    parameter real T_WR_NS     = 14.0,  // last write data -> PRE
-    parameter real T_MRD_NS    = 14.0,  // LOAD MODE -> any command
-    parameter real T_RFC_NS    = 60.0,  // REFRESH -> ACT/REFRESH
-    parameter real T_INIT_US   = 100.0, // power-on NOP wait
+    // ---- device timings, PICOSECONDS ----
+    //
+    // Integers, not `parameter real` in nanoseconds, because Platform Designer
+    // emits a FLOAT parameter as a QUOTED STRING - `.T_RC_NS("60.0")`. A string
+    // literal assigned to a real parameter is its ASCII bytes read as a number:
+    // "60.0" arrives as 909127216.0, and a 60 ns tRC silently becomes 90 million
+    // cycles. That is why Intel's own SDRAM component declares every one of its
+    // nanosecond parameters HDL_PARAMETER {0} and converts them in Tcl.
+    //
+    // This core keeps the conversion in the HDL - there is exactly one ceiling
+    // division and it should exist exactly once - and takes integer picoseconds
+    // so nothing has to cross the tool boundary as a float. The Platform
+    // Designer component still asks for nanoseconds and derives these; see
+    // altera_avalon_mm_sdram_controller_hw.tcl.
+    parameter int  T_RC_PS     = 60_000,  // ACT -> ACT, same bank      (60 ns)
+    parameter int  T_RAS_PS    = 37_000,  // ACT -> PRE, same bank      (37 ns)
+    parameter int  T_RP_PS     = 15_000,  // PRE -> ACT, same bank      (15 ns)
+    parameter int  T_RCD_PS    = 15_000,  // ACT -> READ/WRITE          (15 ns)
+    parameter int  T_RRD_PS    = 14_000,  // ACT -> ACT, different bank (14 ns)
+    parameter int  T_WR_PS     = 14_000,  // last write data -> PRE     (14 ns)
+    parameter int  T_MRD_PS    = 14_000,  // LOAD MODE -> any command   (14 ns)
+    parameter int  T_RFC_PS    = 60_000,  // REFRESH -> ACT/REFRESH     (60 ns)
+    parameter int  T_INIT_US   = 100,     // power-on NOP wait, microseconds
     parameter int  CAS_LAT     = 3,
     parameter int  INIT_REFS   = 8,     // refreshes during initialisation
 
     // ---- refresh ----
     parameter int  REF_ROWS      = 8192,
-    parameter real REF_PERIOD_MS = 64.0,
+    parameter int  REF_PERIOD_MS = 64,
     // JEDEC permits refreshes to be postponed and issued as a burst. Holding
     // some back lets a streaming burst finish instead of being cut in half.
     parameter int  REF_MAX_PEND  = 8,
@@ -82,7 +97,9 @@ module avalon_mm_sdram_controller #(
     // ADDR_MAP 1: {row, bank, col}, bank bits contiguous.
     parameter int  ADDR_MAP    = 0,
     parameter int  FIFO_DEPTH  = 8,     // buffered commands, power of two
-    parameter bit  LOOKAHEAD   = 1,     // open/close the NEXT access's row early
+    // Open/close the NEXT access's row early. `int` rather than `bit` so
+    // Platform Designer can drive it from an ordinary integer parameter.
+    parameter int  LOOKAHEAD   = 1,
 
     // Extra read-capture delay beyond CAS latency, for a board whose DQ return
     // path is registered (an input register in the pin, a resynchroniser).
@@ -128,10 +145,16 @@ module avalon_mm_sdram_controller #(
     // whenever the quotient is an integer - tRC 60 ns at 100 MHz became 7
     // cycles instead of 6. Conservative, but it costs a cycle on every row
     // cycle, and it is not what the parameter says.
-    function automatic int unsigned cyc(input real ns);
+    function automatic int unsigned cyc_ns(input real ns);
         real c;
         c = $ceil((ns * real'(CLK_KHZ)) / 1_000_000.0 - 1.0e-9);
         return (c < 1.0) ? 1 : int'(c);
+    endfunction
+
+    // Picoseconds. Exact for every value either parameter can hold: at 1 GHz a
+    // 60 ns figure is 6e10, far inside a double's exact-integer range.
+    function automatic int unsigned cyc_ps(input int ps);
+        return cyc_ns(real'(ps) / 1000.0);
     endfunction
 
     // Counters are loaded with (cycles - 1) because the command outputs are
@@ -140,18 +163,18 @@ module avalon_mm_sdram_controller #(
         return (c <= 1) ? 0 : c - 1;
     endfunction
 
-    localparam int unsigned CYC_RC   = cyc(T_RC_NS);
-    localparam int unsigned CYC_RAS  = cyc(T_RAS_NS);
-    localparam int unsigned CYC_RP   = cyc(T_RP_NS);
-    localparam int unsigned CYC_RCD  = cyc(T_RCD_NS);
-    localparam int unsigned CYC_RRD  = cyc(T_RRD_NS);
-    localparam int unsigned CYC_WR   = cyc(T_WR_NS);
-    localparam int unsigned CYC_MRD  = cyc(T_MRD_NS);
-    localparam int unsigned CYC_RFC  = cyc(T_RFC_NS);
-    localparam int unsigned CYC_INIT = cyc(T_INIT_US * 1000.0);
+    localparam int unsigned CYC_RC   = cyc_ps(T_RC_PS);
+    localparam int unsigned CYC_RAS  = cyc_ps(T_RAS_PS);
+    localparam int unsigned CYC_RP   = cyc_ps(T_RP_PS);
+    localparam int unsigned CYC_RCD  = cyc_ps(T_RCD_PS);
+    localparam int unsigned CYC_RRD  = cyc_ps(T_RRD_PS);
+    localparam int unsigned CYC_WR   = cyc_ps(T_WR_PS);
+    localparam int unsigned CYC_MRD  = cyc_ps(T_MRD_PS);
+    localparam int unsigned CYC_RFC  = cyc_ps(T_RFC_PS);
+    localparam int unsigned CYC_INIT = cyc_ns(real'(T_INIT_US) * 1000.0);
     // Average interval between AUTO REFRESH commands.
     localparam int unsigned CYC_REFI =
-        cyc((REF_PERIOD_MS * 1_000_000.0) / real'(REF_ROWS));
+        cyc_ns((real'(REF_PERIOD_MS) * 1_000_000.0) / real'(REF_ROWS));
 
     // Bus turnaround. A READ issued at T has the device driving DQ at T+CAS.
     // A WRITE drives DQ in its own cycle, so the earliest safe write is
@@ -434,7 +457,7 @@ module avalon_mm_sdram_controller #(
                     cmd      = C_ACT;
                     cmd_ba   = h_bank;
                     cmd_addr = SA_BITS'(h_row);
-                end else if (LOOKAHEAD && f_two && (n_bank != h_bank)) begin
+                end else if ((LOOKAHEAD != 0) && f_two && (n_bank != h_bank)) begin
                     // Nothing to do for the head this cycle. Prepare the one
                     // behind it: this is what turns a bank-to-bank walk from a
                     // series of stalls into a pipeline.
