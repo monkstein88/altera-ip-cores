@@ -1,7 +1,7 @@
 # Avalon-MM SDRAM Controller
 
-**Status: working controller, packaged for Platform Designer, measured in
-simulation. Not yet on hardware.**
+**Status: working controller, packaged for Platform Designer, documented, and
+verified in simulation. Not yet on hardware.**
 
 A from-scratch SDR SDRAM controller for Avalon-MM, intended to replace
 [`altera_avalon_new_sdram_controller`](../altera_avalon_new_sdram_controller)
@@ -167,11 +167,43 @@ altera_avalon_mm_sdram_controller/
 ├── altera_avalon_mm_sdram_controller_hw.tcl    Platform Designer component
 ├── altera_avalon_mm_sdram_controller.qprs      device presets
 ├── rtl/                the controller
-└── benchmark/          the ruler - measures Intel's core and the custom core
+├── tb/                 testbench, assertions, device model, timing checker
+├── simulation/         Verilator regression, Questa flow
+├── benchmark/          the ruler - measures Intel's core and the custom core
+├── doc/                user guide and block diagrams, Markdown and PDF
+└── example/de10_lite_rtl   board demonstration
 ```
 
-`tb/`, `simulation/`, `doc/` and `example/` will follow the same shape as the
-two firewall cores in this repository.
+## Verification
+
+| Flow | Covers | Result |
+|---|---|---|
+| [`simulation/verilator/run_sim.sh`](simulation/verilator/run_sim.sh) | Lint, timing-checker self-test, testbench across 8 configurations, lint in 4 geometries | 14 checks, 1152 testbench assertions |
+| [`tb/`](tb) | 144 checks per configuration, on the command stream as well as the data | Passing |
+| [`benchmark/`](benchmark/README.md) | Throughput against the core being replaced | Passing |
+| [`example/de10_lite_rtl`](example/de10_lite_rtl/README.md) | Board demonstration, 9 phases | 58 checks passing |
+| [`doc/tools/check_facts.py`](doc/tools/check_facts.py) | Every number in the documents, re-derived from the RTL | 192 claims |
+| Questa, hardware | Coverage, non-vacuity, retention | **Not run — no licence** |
+
+The testbench asserts on the **command stream**, not only the data. A
+controller that closed and reopened a row before every access would return
+correct data and pass any integrity check; four banks with one row open each,
+accessed in rotation, is asserted to cost exactly four ACTIVATEs and zero
+PRECHARGEs.
+
+Proven by fault injection: six faults were introduced into the controller and
+each was caught by the layer meant to catch it — directed tests for byte
+enables and read latency, the assertions for turnaround, row bookkeeping and
+refresh bounding, and the timing checker for tRCD.
+
+## Documentation
+
+| Document | Markdown | PDF |
+|---|---|---|
+| User Guide | [`doc/avalon_mm_sdram_controller_user_guide.md`](doc/avalon_mm_sdram_controller_user_guide.md) | [PDF](doc/avalon_mm_sdram_controller_user_guide.pdf) |
+| Block Diagrams and Descriptions | [`doc/avalon_mm_sdram_controller_block_diagrams.md`](doc/avalon_mm_sdram_controller_block_diagrams.md) | [PDF](doc/avalon_mm_sdram_controller_block_diagrams.pdf) |
+
+The shape follows the two firewall cores in this repository.
 
 ## Licence
 

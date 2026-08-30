@@ -5,10 +5,10 @@ IP components for Intel/Altera **Quartus Prime** and **Platform Designer (Qsys)*
 Three of them are original work. The fourth is a vendor core preserved from a
 Quartus release that no longer ships it.
 
-The two firewalls carry full documentation, self-checking testbenches and
-demonstrations verified on physical hardware. The SDRAM controller is newer:
-measured in simulation against the vendor core it replaces, packaged for
-Platform Designer, but **not yet run on a board**.
+All three carry full documentation, self-checking testbenches, a Platform
+Designer component and a DE10-Lite demonstration. The difference is where the
+demonstration has been run: the two firewalls' have been **programmed onto a
+board**, and the SDRAM controller's has only been **simulated**.
 
 The three original cores are **MIT licensed**; the vendor core keeps Intel's
 own terms — see [Licence](#licence).
@@ -21,7 +21,7 @@ own terms — see [Licence](#licence).
 |---|---|---|---|
 | [`altera_avalon_mm_firewall`](altera_avalon_mm_firewall/README.md) | **Avalon-MM Firewall** · v1.0 · *Bridges and Adapters / Custom* | Burst-capable access-control and fault-isolation firewall for Avalon-MM. Default-deny address windows with per-window read/write/burst permission, whole-burst range checking, downstream timeout detection and an explicit software recovery sequence | **Verified on hardware.** 632 checks, 22 assertions, 11 cover points |
 | [`altera_axi4_lite_firewall`](altera_axi4_lite_firewall/README.md) | **AXI4-Lite Firewall** · v2.0 · *Bridges and Adapters / Custom* | The same idea on AXI4-Lite: single transactions, capture-and-redrive rather than pass-through | **Verified on hardware.** 103 checks, 14 assertions, 6 cover points |
-| [`altera_avalon_mm_sdram_controller`](altera_avalon_mm_sdram_controller/README.md) | **Avalon-MM SDRAM Controller (per-bank rows)** · v1.0 · *Memory Interfaces and Controllers / Custom* | SDR SDRAM controller that keeps one open row *per bank* and treats a read/write turnaround as the datasheet does, rather than as a full row cycle. Drop-in replacement for the vendor core below | **Simulation only — not yet on hardware.** 3.6–8.9× the vendor core on mixed and scattered traffic, 0 data errors, 0 timing violations |
+| [`altera_avalon_mm_sdram_controller`](altera_avalon_mm_sdram_controller/README.md) | **Avalon-MM SDRAM Controller (per-bank rows)** · v1.0 · *Memory Interfaces and Controllers / Custom* | SDR SDRAM controller that keeps one open row *per bank* and treats a read/write turnaround as the datasheet does, rather than as a full row cycle. Drop-in replacement for the vendor core below | **Simulation only — not yet on hardware.** 3.6–8.9× the vendor core on mixed and scattered traffic. 1152 testbench assertions across 8 configurations, 58-check board demonstration, 192 documentation claims checked |
 | [`altera_avalon_new_sdram_controller`](altera_avalon_new_sdram_controller/README.md) | **SDRAM Controller Intel FPGA IP** · v20.1 · *Memory Interfaces and Controllers / SDRAM* | Intel's own SDRAM controller, kept here because current Quartus releases no longer ship it | Vendor IP, unhidden so it is usable — see *Provenance*. **Demo verified on hardware:** all 64 MB written and read back at 194 MB/s |
 
 The two firewalls appear in the IP Catalog under **Bridges and Adapters /
@@ -40,10 +40,11 @@ rather than asking you to read LEDs:
 | Nios II/f demo — C, in a generated Qsys system | 41/41 checks at **100 MHz** | 33/33 checks at 100 MHz | — |
 
 **`altera_avalon_mm_sdram_controller` is deliberately absent from that table.**
-It has never been on a board. What it has is a measurement harness that
-reproduces the hardware-verified 194 MB/s of the core it replaces, and a
-Platform Designer component checked against a real Quartus installation. Both
-are simulation, and neither is a substitute for a board.
+It has never been on a board. It has a board demonstration that passes 58
+checks in simulation, a measurement harness that reproduces the
+hardware-verified 194 MB/s of the core it replaces, and a Platform Designer
+component checked against a real Quartus installation. All of that is
+simulation, and none of it is a substitute for a board.
 
 The Avalon core's demos are the source of its published resource and Fmax
 numbers: 60.77 MHz with the combinational rule lookup, 95.85 MHz with
@@ -204,8 +205,9 @@ altera-ip-cores/
 │   ├── example/de10_lite_rtl/
 │   └── example/de10_lite_nios/
 ├── altera_avalon_mm_sdram_controller/  SDRAM controller, per-bank open rows
-│   ├── rtl/                            the controller
-│   └── benchmark/                      the ruler it and Intel's are measured on
+│   ├── rtl/ tb/ simulation/ doc/       and the same shape as the firewalls
+│   ├── benchmark/                      the ruler it and Intel's are measured on
+│   └── example/de10_lite_rtl/          board demo, simulated but not yet run
 └── altera_avalon_new_sdram_controller/ Intel's SDRAM controller, unhidden
     └── example/de10_lite_rtl/          plus one hardware demo
 ```
