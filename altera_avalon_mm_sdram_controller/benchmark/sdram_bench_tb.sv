@@ -11,12 +11,13 @@
 //
 // THE MEMORY MODEL DOES NOT ENFORCE TIMING
 // ----------------------------------------
-// Intel's model decodes commands and returns data; it ignores tRCD, tRP, tRC,
-// tRAS, tWR and the refresh interval. Data integrity against it therefore
-// proves the controller addresses memory correctly and nothing about whether
-// it is driving the part legally. sdram_timing_check.sv is what covers that,
-// and its violation count is reported alongside the throughput so a "fast"
-// result that got there illegally cannot pass unnoticed.
+// sdram_device_model.sv decodes commands, tracks a row per bank and returns
+// data; it ignores tRCD, tRP, tRC, tRAS, tWR and the refresh interval. Data
+// integrity against it therefore proves the controller addresses memory
+// correctly and nothing about whether it is driving the part legally.
+// sdram_timing_check.sv is what covers that, and its violation count is
+// reported alongside the throughput so a "fast" result that got there
+// illegally cannot pass unnoticed.
 //
 // DUT SELECTION
 // -------------
@@ -82,7 +83,7 @@ module sdram_bench_tb;
         .zs_cs_n(zs_cs_n), .zs_dq(zs_dq), .zs_dqm(zs_dqm),
         .zs_ras_n(zs_ras_n), .zs_we_n(zs_we_n));
 
-    sdram_mem_model mem (
+    sdram_device_model mem (
         .clk(clk),
         .zs_addr(zs_addr), .zs_ba(zs_ba), .zs_cas_n(zs_cas_n), .zs_cke(zs_cke),
         .zs_cs_n(zs_cs_n), .zs_dq(zs_dq), .zs_dqm(zs_dqm),
@@ -148,7 +149,8 @@ module sdram_bench_tb;
         run(4'd1, "seq read");
         run(4'd2, "seq read/write");
         run(4'd3, "same-row rd/wr");
-        run(4'd4, "bank stride");
+        run(4'd4, "bank+row walk");
+        run(4'd6, "4-bank same row");
         run(4'd5, "random");
 
         $display("  -------------------------------------------------------------------");

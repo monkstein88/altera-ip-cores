@@ -59,11 +59,22 @@ module sdram_timing_check #(
 
     // ---- ns -> cycles, always rounding UP, never below 1 ------------------
     // A timing parameter rounded down is a silent data-corruption bug, so the
-    // conversion is deliberately pessimistic. `+ 999_999` is the ceiling.
+    // conversion is deliberately pessimistic.
+    //
+    // This used to be `int'((ns*khz + 999_999.0)/1_000_000.0)`, the familiar
+    // integer ceiling trick. It is WRONG in SystemVerilog: `int'(real)` rounds
+    // to NEAREST (IEEE 1800-2017 6.24.1), not toward zero, so the +999_999
+    // and the rounding both round up and a whole extra cycle appears whenever
+    // the exact quotient is an integer. tRC 60 ns at 100 MHz came out as 7
+    // cycles instead of 6, and tRAS 37 ns as 5 instead of 4 - a checker that
+    // rejects legal command streams.
+    //
+    // The epsilon absorbs floating-point overshoot, so a quotient that is 6.0
+    // in exact arithmetic and 6.0000000001 in doubles does not become 7.
     function automatic int unsigned cyc(input real ns);
-        int unsigned c;
-        c = int'((ns * real'(CLK_KHZ) + 999_999.0) / 1_000_000.0);
-        return (c < 1) ? 1 : c;
+        real c;
+        c = $ceil((ns * real'(CLK_KHZ)) / 1_000_000.0 - 1.0e-9);
+        return (c < 1.0) ? 1 : int'(c);
     endfunction
 
     localparam int C_RC  = 0;  // placeholders so the values appear in one place
@@ -101,6 +112,14 @@ module sdram_timing_check #(
     // ---- per-bank elapsed-time counters -----------------------------------
     // Saturating, so a long idle period cannot wrap and manufacture a
     // violation.
+    //
+    // A counter is set to ONE, not zero, on the event it measures. The checks
+    // below read the counter at a clock edge, before that edge's increment has
+    // taken effect, so a counter zeroed on the event would read 0 at the very
+    // next edge - reporting an elapsed time of 0 for two commands that are
+    // genuinely one cycle apart. Starting at 1 makes the number the checker
+    // prints the true command separation in cycles. Getting this wrong made
+    // the checker one cycle stricter than the device is.
     int unsigned since_act  [BANKS];
     int unsigned since_pre  [BANKS];
     int unsigned since_wdata[BANKS];
@@ -146,30 +165,30 @@ module sdram_timing_check #(
             if (cmd_act) begin
                 // tRC: ACT to ACT on the same bank
                 if (since_act[ba] < CYC_RC)
-                    viol("tRC  (ACT->ACT same bank)", since_act[ba], CYC_RC, ba);
+                    viol("tRC  (ACT->ACT same bank)", since_act[ba], CYC_RC, int'(ba));
                 // tRP: the bank must have been precharged long enough
                 if (row_open[ba])
-                    viol("ACT to an already-open bank", 0, 0, ba);
+                    viol("ACT to an already-open bank", 0, 0, int'(ba));
                 else if (since_pre[ba] < CYC_RP)
-                    viol("tRP  (PRE->ACT)", since_pre[ba], CYC_RP, ba);
+                    viol("tRP  (PRE->ACT)", since_pre[ba], CYC_RP, int'(ba));
                 // tRRD: ACT to ACT across banks
                 if (since_any_act < CYC_RRD)
-                    viol("tRRD (ACT->ACT diff bank)", since_any_act, CYC_RRD, ba);
+                    viol("tRRD (ACT->ACT diff bank)", since_any_act, CYC_RRD, int'(ba));
                 if (since_mrs < CYC_MRD)
-                    viol("tMRD (LMR->cmd)", since_mrs, CYC_MRD, ba);
+                    viol("tMRD (LMR->cmd)", since_mrs, CYC_MRD, int'(ba));
 
-                since_act[ba] <= 0;
-                since_any_act <= 0;
+                since_act[ba] <= 1;
+                since_any_act <= 1;
                 row_open[ba]  <= 1'b1;
             end
 
             // ---- READ / WRITE ----
             if (cmd_rd || cmd_wr) begin
                 if (!row_open[ba])
-                    viol("column command to a closed bank", 0, 0, ba);
+                    viol("column command to a closed bank", 0, 0, int'(ba));
                 else if (since_act[ba] < CYC_RCD)
-                    viol("tRCD (ACT->RD/WR)", since_act[ba], CYC_RCD, ba);
-                if (cmd_wr) since_wdata[ba] <= 0;
+                    viol("tRCD (ACT->RD/WR)", since_act[ba], CYC_RCD, int'(ba));
+                if (cmd_wr) since_wdata[ba] <= 1;
             end
 
             // ---- PRECHARGE ----
@@ -185,7 +204,7 @@ module sdram_timing_check #(
                                 viol("tWR  (write->PRE)", since_wdata[b], CYC_WR, b);
                         end
                         row_open[b] <= 1'b0;
-                        since_pre[b] <= 0;
+                        since_pre[b] <= 1;
                     end
                 end
             end
@@ -195,10 +214,10 @@ module sdram_timing_check #(
                 for (int b = 0; b < BANKS; b++)
                     if (row_open[b])
                         viol("REFRESH with a bank still open", 0, 0, b);
-                since_ref <= 0;
+                since_ref <= 1;
             end
 
-            if (cmd_mrs) since_mrs <= 0;
+            if (cmd_mrs) since_mrs <= 1;
 
             // ---- refresh interval ----
             // Checked only once the controller is past initialisation, which

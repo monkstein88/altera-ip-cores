@@ -3,7 +3,7 @@
 # by benchmark/gen_dut.sh and benchmark/gen_mem_model.sh, and are deliberately
 # not committed - the same rule altera_avalon_new_sdram_controller follows.
 benchmark/.gen/
-benchmark/.build/
+benchmark/.build*/
 
 # Verilator
 obj_dir/

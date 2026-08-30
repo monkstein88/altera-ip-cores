@@ -1,8 +1,26 @@
 #!/usr/bin/env bash
 # =============================================================================
-# gen_mem_model.sh - generate the functional SDRAM memory model.
+# gen_mem_model.sh - generate Intel's functional SDRAM memory model.
 #
 #   ./gen_mem_model.sh [output_dir]      (default: ./.gen)
+#
+# NOT USED BY THE BENCHMARK. Kept so the finding below can be reproduced.
+#
+# Intel's model keeps ONE row register for the whole device:
+#
+#     if (CODE == 24'h414354)                 // ACTIVATE
+#         addr_crb <= {ba[1], a, ba[0]};      // one register, not one per bank
+#     assign test_addr = {addr_crb, addr_col};
+#
+# so any ACTIVATE overwrites it regardless of bank, and a column command is
+# serviced using whichever row was activated last on whichever bank. A
+# controller that keeps a row open per bank - the entire point of this project
+# - gets silent data corruption reported against a legal command stream.
+#
+# The benchmark uses sdram_device_model.sv instead, which has a row register
+# per bank like a real device, and which reproduces the incumbent controller's
+# cycle counts against this model exactly. Run this script if you want to read
+# the line above in context.
 #
 # Intel's functional SDRAM model lives in a separate component from the SDRAM
 # controller - altera_sdram_partner_module, under

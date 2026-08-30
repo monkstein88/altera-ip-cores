@@ -1,74 +1,110 @@
 # Avalon-MM SDRAM Controller
 
-**Status: in progress — benchmark only, no controller yet.**
+**Status: working controller, measured in simulation. Not yet on hardware.**
 
 A from-scratch SDR SDRAM controller for Avalon-MM, intended to replace
 [`altera_avalon_new_sdram_controller`](../altera_avalon_new_sdram_controller)
 (Intel's, retired from the Quartus catalog and preserved in this repository).
 
-Nothing here replaces it yet. What exists today is the measurement harness,
-because the first honest step is to find out what the incumbent actually does.
+It is a drop-in: same legacy `az_`/`za_` slave port, same address map by
+default, so it can be substituted without touching the rest of a system.
 
-## What the measurement found
+## What it does
 
-Six access patterns against the incumbent, at 100 MHz on the DE10-Lite's
-IS42S16320D. Full detail in [`benchmark/README.md`](benchmark/README.md).
+Measured on [`benchmark/`](benchmark/README.md), identical stimulus, both
+controllers. ISSI IS42S16320D at 100 MHz, 16-bit bus, CAS 3. Peak 200 MB/s.
 
-| Pattern | MB/s | % of 200 MB/s peak |
-|---|---|---|
-| seq write / seq read | 194 | **97%** |
-| seq read/write | 21.9 | 11% |
-| same-row read/write | 21.9 | 11% |
-| bank stride | 21.9 | 11% |
-| random | 22.0 | 11% |
+| Pattern | Incumbent | This core | Speedup |
+|---|---|---|---|
+| seq write | 194.3 | **197.6** | 1.02× |
+| seq read | 194.0 | **196.0** | 1.01× |
+| seq read/write | 21.9 | **78.9** | 3.6× |
+| same-row rd/wr | 21.9 | **78.9** | 3.6× |
+| bank+row walk | 21.9 | **65.5** | 3.0× |
+| **4-bank same row** | 21.9 | **195.5** | **8.9×** |
+| random | 22.0 | **44.4** | 2.0× |
 
-Two conclusions, and they point in opposite directions:
+0 data errors, 0 timing violations.
 
-**Sequential streaming is finished.** 97% of the theoretical bus limit. The
-remaining 3% is refresh. No controller can meaningfully beat this, and any that
-claims to should be disbelieved.
+**Sequential streaming was already finished** and is unchanged — 97% of the bus
+before, 98–99% now. Anyone claiming a large win here should be disbelieved.
 
-**Everything else is 8.9× off the pace, and it is not row thrashing.** The
-`same-row read/write` pattern never leaves one open row — no ACTIVATE, no
-PRECHARGE between accesses, only the direction alternating — and it is exactly
-as slow as fully random access. The incumbent's fast path requires
-`rnw_match`, so every direction change is handled as a full row cycle. The
-device datasheet says a turnaround inside an open row costs 0 cycles
-(write→read) or 1 (read→write).
+**Everything else was 8.9× off the pace, and it was never row thrashing.** The
+incumbent's fast path requires the access direction to match:
 
-That is the gap this core is meant to close, and it is worth roughly 3–4× on
-mixed CPU traffic — which is what a Nios II running real code generates.
+```verilog
+assign pending = csn_match && rnw_match && bank_match && row_match && !f_empty;
+//                            ^^^^^^^^^
+```
 
-## Planned design
+so every read/write turnaround fell out of it into PRECHARGE → tRP →
+ACTIVATE → tRCD, even when nothing about the row had changed. `same-row rd/wr`
+proved it: one open row, direction alternating, and throughput identical to
+fully random access.
 
-| Feature | Incumbent | Planned |
+## How
+
+| | Incumbent | This core |
 |---|---|---|
 | Open rows tracked | 1 | one per bank (4) |
-| Read/write turnaround | full row cycle | 0–1 cycles, row stays open |
-| ACTIVATE for the next access | after the current one retires | overlapped with the current burst (tRRD permitting) |
-| Refresh | immediate, interrupts streaming | postponed to a burst boundary (JEDEC allows up to 8) |
-| Timing parameters | ns, derived with `ceil` | same — plus **tRAS** and **tRRD**, which a per-bank design needs and a single-row design does not |
-| Device support | parameterised | parameterised, with named device profiles and a validating `_hw.tcl` |
+| Read/write turnaround | full row cycle | 0 cycles write→read, CAS+1 read→write |
+| ACTIVATE for the next access | after the current retires | overlapped, tRRD permitting (`LOOKAHEAD`) |
+| Refresh | immediate | postponed up to 8, spent when idle or when forced |
+| Timings | ns, `ceil` | ns, `ceil`, **plus tRAS and tRRD** — which a per-bank design needs and a single-row design does not |
+| Command buffering | — | 8-deep, so look-ahead has something to look at |
+
+## What is left
+
+`same-row rd/wr` at 78.9 MB/s is now limited by the device, not the scheduler:
+a length-1 read→write turnaround costs CAS+1 = 4 cycles, so a write/read pair
+takes five cycles and two accesses per five cycles is 80 MB/s. Going further
+needs **bursts** to amortise the turnaround over more words, or a **reorder
+buffer** to group same-direction accesses. Both are real work, and both should
+be measured on this same ruler before being believed.
+
+Also outstanding:
+
+- **Hardware.** Everything here is simulation. No Quartus licence in the
+  development environment, so no f_MAX, no resource numbers, no board run.
+- **Device profiles and `_hw.tcl`**, so a part is selected by name and an
+  impossible configuration is rejected at generation time rather than at
+  temperature.
+- **A parameter sweep in the regression** — several device profiles × clock
+  rates, rather than testing one configuration and shipping N untested ones.
 
 ## Configurability
 
-Timings are parameterised in **nanoseconds** and converted to cycles
-internally with ceiling division, never below one cycle. Exposing cycle counts
-would push that arithmetic onto every user, and a timing parameter rounded down
-is silent data corruption rather than a clean failure.
+Timings are parameterised in **nanoseconds** and converted to cycles internally
+with ceiling division, never below one cycle. Exposing cycle counts would push
+that arithmetic onto every integrator, and a timing parameter rounded the wrong
+way is silent data corruption rather than a clean failure.
 
-The intent is that a device profile is a set of nanosecond constants, that
-`_hw.tcl` validates a requested configuration (a CAS latency the part cannot
-sustain at the requested clock, an address width too small for the geometry),
-and that the regression sweeps several device profiles × clock rates rather
-than testing one configuration and shipping N untested ones.
+That is not hypothetical: the `ns`→cycles helper was wrong in its first
+version, in both this controller and the timing checker, because
+`int'((ns*khz + 999_999.0)/1_000_000.0)` looks like a ceiling and is not —
+`int'(real)` rounds to nearest in SystemVerilog. It is now `$ceil`, and the
+checker has a self-test that pins the threshold. See
+[`benchmark/README.md`](benchmark/README.md).
+
+Geometry (`ROW_BITS`, `COL_BITS`, `BANK_BITS`, `DATA_BITS`), CAS latency,
+refresh period and row count, and the address map are all parameters.
+`ADDR_MAP 0` reproduces the incumbent's split-bank layout so a substitution is
+transparent; `ADDR_MAP 1` is the conventional `{row, bank, col}`.
 
 ## Layout
 
 ```
 altera_avalon_mm_sdram_controller/
-└── benchmark/          the ruler - measures the incumbent and, later, this core
+├── rtl/                the controller
+└── benchmark/          the ruler - measures the incumbent and this core
 ```
 
-`rtl/`, `tb/`, `simulation/`, `doc/` and `example/` will follow the same shape
-as the two firewall cores in this repository.
+`tb/`, `simulation/`, `doc/` and `example/` will follow the same shape as the
+two firewall cores in this repository.
+
+## A note on the name
+
+The directory carries the `altera_` prefix to sit alongside the cores it
+replaces, but the RTL module is `avalon_mm_sdram_controller` — no `altera_` —
+because this core is not Intel's and should not imply otherwise in a file that
+ends up in someone else's project. Say the word if you would rather they match.

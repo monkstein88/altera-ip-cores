@@ -21,9 +21,16 @@
 //                     of a read/write turnaround. Never previously measured.
 //   ROW_RW            alternating direction inside ONE open row. Removes row
 //                     changes entirely, so whatever remains IS the turnaround.
-//   BANK_STRIDE       walks banks, staying in the same row of each. A
-//                     controller tracking one open row thrashes; one tracking
-//                     a row per bank should not notice.
+//   BANK_STRIDE       steps 2^COL_BITS words at a time. Under the part's
+//                     address map that alternates bank AND advances the row
+//                     every second access, so it is a row thrash across two
+//                     banks - not the same-row bank walk this comment used to
+//                     claim. Kept because it is a fair hard case, named for
+//                     what it does.
+//   BANK_ROT          the walk BANK_STRIDE was supposed to be: rotate through
+//                     all four banks at ONE row, advancing the column every
+//                     fourth access. A controller tracking one open row
+//                     thrashes; one tracking a row per bank should not notice.
 //   RANDOM            LFSR addresses - the pathological case.
 //
 // MEASUREMENT
@@ -82,8 +89,9 @@ module sdram_traffic_gen #(
         P_SEQ_RD     = 4'd1,   // ascending reads
         P_SEQ_RW     = 4'd2,   // ascending, alternating direction
         P_ROW_RW     = 4'd3,   // one row, alternating direction
-        P_BANK_STRIDE= 4'd4,   // step one bank per access, same row
-        P_RANDOM     = 4'd5;   // LFSR addresses
+        P_BANK_STRIDE= 4'd4,   // step 2^COL_BITS words: bank and row both move
+        P_RANDOM     = 4'd5,   // LFSR addresses
+        P_BANK_ROT   = 4'd6;   // rotate all banks at one row
 
     // ------------------------------------------------------------------
     // ADDRESS MAPPING OF THE PART UNDER TEST
@@ -101,10 +109,13 @@ module sdram_traffic_gen #(
     // These constants describe the part, not the controller, so a different
     // geometry only changes them.
     // ------------------------------------------------------------------
-    localparam int COL_BITS  = 10;   // addr[9:0]
-    localparam int BANK0_BIT = 10;   // addr[10]  - the low bank bit
+    localparam int ROW_BITS   = 13;
+    localparam int COL_BITS   = 10;              // addr[9:0]
+    localparam int BANK0_BIT  = COL_BITS;        // addr[10]  - the low bank bit
+    localparam int BANK1_BIT  = COL_BITS + 1 + ROW_BITS;   // addr[24]
 
     localparam logic [ADDR_W-1:0] BANK_STEP = (1 << BANK0_BIT);
+    localparam logic [ADDR_W-1:0] COL_MASK  = ADDR_W'((1 << COL_BITS) - 1);
 
     // ------------------------------------------------------------------
     // Sequencing
@@ -121,12 +132,24 @@ module sdram_traffic_gen #(
     /* verilator lint_off UNUSEDSIGNAL */
     function automatic logic [ADDR_W-1:0] addr_of(input logic [31:0] i,
                                                   input logic [22:0] rnd);
+        logic [ADDR_W-1:0] a;
         case (pattern)
             P_ROW_RW:      // stay inside one row: only the column moves
-                return (base_addr & ~((1 << COL_BITS) - 1))
-                       | ADDR_W'(i[COL_BITS-1:0]);
-            P_BANK_STRIDE: // one bank per access, column advances slowly
+                return (base_addr & ~COL_MASK) | ADDR_W'(i[COL_BITS-1:0]);
+            P_BANK_STRIDE: // 2^COL_BITS words per step: bank and row both move
                 return base_addr + ADDR_W'(i) * BANK_STEP;
+            P_BANK_ROT: begin
+                // Hold the row, move only the two bank bits, and advance the
+                // column once all four banks have been visited. This is the
+                // access a per-bank controller should absorb at full rate and
+                // a one-open-row controller cannot.
+                a = base_addr & ~(COL_MASK | (ADDR_W'(1) << BANK0_BIT)
+                                           | (ADDR_W'(1) << BANK1_BIT));
+                a = a | (ADDR_W'(i[0]) << BANK0_BIT)
+                      | (ADDR_W'(i[1]) << BANK1_BIT)
+                      | (ADDR_W'(i >> 2) & COL_MASK);
+                return a;
+            end
             P_RANDOM:
                 return ADDR_W'(rnd);
             default:       // ascending
@@ -141,7 +164,8 @@ module sdram_traffic_gen #(
         case (pattern)
             P_SEQ_RD:                 return 1'b1;
             P_SEQ_RW, P_ROW_RW:       return i[0];
-            P_BANK_STRIDE, P_RANDOM:  return 1'b1;   // read-only walks
+            P_BANK_STRIDE, P_RANDOM,
+            P_BANK_ROT:               return 1'b1;   // read-only walks
             P_SEQ_WR:                 return 1'b0;
             default:                  return 1'b0;
         endcase

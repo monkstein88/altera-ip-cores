@@ -35,8 +35,22 @@ if command -v g++ >/dev/null 2>&1; then
     fi
 fi
 
-# ---- generate the Intel-owned pieces, which are never committed -------------
-[[ -f "$GEN/sdram_mem_model.v" ]] || bash "$HERE/gen_mem_model.sh" "$GEN"
+# ---- the ruler has to be checked before anything is measured with it --------
+# The timing checker had two off-by-one bugs that made it reject legal command
+# streams. Fault injection did not catch them; a threshold test does. It costs
+# under a second, so there is no reason to make it optional.
+echo "== timing checker self-test =="
+verilator --binary --timing --top-module timing_check_selftest \
+    -o selftest -Mdir "$BUILD.selftest" \
+    ${CXX_EXTRA:+-CFLAGS "$CXX_EXTRA"} \
+    -Wno-WIDTHEXPAND \
+    "$HERE/sdram_timing_check.sv" "$HERE/timing_check_selftest.sv" || exit $?
+"$BUILD.selftest/selftest" | grep -E "FAIL|passed" || exit $?
+
+# ---- generate the incumbent, which is Intel's and is never committed --------
+# Only the incumbent needs Quartus. The memory model is ours
+# (sdram_device_model.sv), so measuring this project's controller needs no
+# Quartus installation at all.
 if [[ "$DUT_FILE" == "$GEN/sdram_mem_ctrl.v" && ! -f "$DUT_FILE" ]]; then
     bash "$HERE/gen_dut.sh" "$GEN"
 fi
@@ -64,9 +78,9 @@ VFLAGS=(--binary --timing --assert "${WARN_OFF[@]}"
 [[ -n "$CXX_EXTRA" ]] && VFLAGS+=(-CFLAGS "$CXX_EXTRA")
 
 verilator "${VFLAGS[@]}" \
-    "$GEN/sdram_mem_model.v" "$DUT_FILE" \
-    "$HERE/sdram_traffic_gen.sv" "$HERE/sdram_timing_check.sv" \
-    "$HERE/sdram_bench_tb.sv" || exit $?
+    "$DUT_FILE" \
+    "$HERE/sdram_device_model.sv" "$HERE/sdram_traffic_gen.sv" \
+    "$HERE/sdram_timing_check.sv" "$HERE/sdram_bench_tb.sv" || exit $?
 
 echo "== running =="
 "$BUILD/bench"

@@ -8,121 +8,160 @@ It exists because this project intends to replace the incumbent SDRAM
 controller, and "faster" is not a claim you can make about a memory controller
 without measuring it first.
 
-## Results: the incumbent
+## Results
 
-`altera_avalon_new_sdram_controller` (Intel), 4096 operations per pattern,
-ISSI IS42S16320D at 100 MHz, 16-bit bus, CAS 3. Theoretical peak 200 MB/s.
+ISSI IS42S16320D at 100 MHz, 16-bit bus, CAS 3, 4096 operations per pattern.
+Theoretical peak 200 MB/s. Both controllers, identical stimulus.
 
-| Pattern | Cycles | MB/s | % of peak | Integrity |
-|---|---|---|---|---|
-| seq write | 4,217 | 194.3 | 97.1% | ok |
-| seq read | 4,222 | 194.0 | 97.0% | ok |
-| seq read/write | 37,329 | 21.9 | 11.0% | ok |
-| **same-row rd/wr** | 37,332 | 21.9 | 11.0% | ok |
-| bank stride | 37,351 | 21.9 | 11.0% | ok |
-| random | 37,209 | 22.0 | 11.0% | ok |
+| Pattern | Incumbent | This core | Speedup |
+|---|---|---|---|
+| seq write | 194.3 | **197.6** | 1.02× |
+| seq read | 194.0 | **196.0** | 1.01× |
+| seq read/write | 21.9 | **78.9** | 3.6× |
+| same-row rd/wr | 21.9 | **78.9** | 3.6× |
+| bank+row walk | 21.9 | **65.5** | 3.0× |
+| **4-bank same row** | 21.9 | **195.5** | **8.9×** |
+| random | 22.0 | **44.4** | 2.0× |
 
-0 data errors, 0 timing violations.
+0 data errors, 0 timing violations, both controllers.
 
 The first two rows reproduce the 194 MB/s the SDRAM example measures on
 hardware, which is the check that this harness is measuring the right thing.
 
-## What the fourth row says
+**`4-bank same row` is the headline.** Four banks, one row each, nothing but
+the column moving — a device needs no row commands at all for this. The
+incumbent runs it at 21.9 MB/s because it can only hold one row open. Per-bank
+tracking takes it to 195.5, which is 97.7% of the bus and within noise of pure
+sequential streaming.
 
-**`same-row rd/wr` is the finding.** Every access is inside a single open row,
-so no ACTIVATE or PRECHARGE is needed between them — the only thing changing is
-the direction. Throughput still collapses to 21.9 MB/s, identical to fully
-random access.
+**`same-row rd/wr` is now bounded by the bus, not the controller.** 78.9 MB/s
+is 2.53 cycles per access, and the read→write turnaround for a length-1 burst
+is CAS+1 = 4 cycles: a write at *t*, a free read at *t+1*, the next write no
+earlier than *t+5*. Two accesses per five cycles is 80 MB/s. The remaining gap
+is refresh. Closing this further needs bursts to amortise the turnaround, or a
+reorder buffer to group same-direction accesses — not a scheduler fix.
 
-So the 8.9× gap between best and worst case is **not** row thrashing. It is the
-read/write turnaround being handled as a full row cycle.
+### What look-ahead is worth
 
-That is visible in the incumbent's RTL, where the fast path requires the
-direction to match:
+`LOOKAHEAD` opens or closes the *next* access's row while the current one is
+still being served. It is an optimisation, not load-bearing: the controller is
+correct and passes every pattern with it disabled.
 
-```verilog
-assign pending = csn_match && rnw_match && bank_match && row_match && !f_empty;
-//                            ^^^^^^^^^
-```
+| Pattern | LOOKAHEAD=0 | LOOKAHEAD=1 |
+|---|---|---|
+| bank+row walk | 39.5 | **65.5** |
+| random | 36.0 | **44.4** |
 
-Any direction change falls out of the fast path into PRECHARGE → tRP →
-ACTIVATE → tRCD, roughly 6–8 dead cycles. The device datasheet says this is
-unnecessary within an open row:
-
-> *"data for a fixed-length WRITE burst may be **immediately followed** by a
-> subsequent READ command"* — write→read costs 0 cycles
->
-> *"at least a **single-cycle delay** should occur between the last read data
-> and the WRITE command"* — read→write costs 1 cycle
-
-`bank stride` says the same thing from the other side: walking banks while
-staying in one row per bank should be free with four tracked rows, and costs
-full row cycles with one.
-
-Sequential is at 97% of the bus and has nothing left to give. **The headroom is
-entirely in mixed and scattered traffic.**
+Every other pattern is bit-identical, which is what you want — it should only
+matter where a row actually has to change.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `sdram_traffic_gen.sv` | Avalon-MM master: six access patterns, cycle counting, address-derived data integrity check |
-| `sdram_bench_tb.sv` | Top level — generator → DUT → memory model; prints the table |
-| `sdram_timing_check.sv` | JEDEC timing checker bound to the SDRAM command bus |
+| `sdram_traffic_gen.sv` | Avalon-MM master: seven access patterns, cycle counting, address-derived integrity check |
+| `sdram_device_model.sv` | SDR SDRAM device model, **one open row per bank** |
+| `sdram_timing_check.sv` | JEDEC timing checker on the command bus |
+| `timing_check_selftest.sv` | Proves the checker fires at the right threshold |
+| `sdram_bench_tb.sv` | Top level — generator → DUT → model; prints the table |
 | `gen_dut.sh` | Generates the incumbent controller via `qsys-generate` |
-| `gen_mem_model.sh` | Generates Intel's functional memory model |
-| `run_bench.sh` | Generates what is missing, builds, runs |
-
-Intel's controller RTL and memory model are generated, never committed — the
-same rule the SDRAM example follows, and the reason `.gen/` is gitignored.
+| `gen_mem_model.sh` | Generates Intel's memory model. Not used — see below |
+| `run_bench.sh` | Self-tests the checker, generates what is missing, builds, runs |
 
 ## Running
 
 ```bash
-export QUARTUS_ROOT=/opt/intelFPGA/18.1     # needs Quartus for the generators
-./run_bench.sh                              # measure the incumbent
+./run_bench.sh                              # this project's controller needs no Quartus
+export QUARTUS_ROOT=/opt/intelFPGA/18.1     # only the incumbent does
 ./run_bench.sh my_ctrl path/to/my_ctrl.v    # measure a replacement
 ```
 
-Verilator only; no licence required for the simulation itself.
+Verilator only; no licence required.
+
+## Why the memory model is ours
+
+Intel's generated model keeps **one row register for the whole device**:
+
+```verilog
+if (CODE == 24'h414354)                 // ACTIVATE
+    addr_crb <= {ba[1], a, ba[0]};      // one register, not one per bank
+assign test_addr = {addr_crb, addr_col};
+```
+
+Every ACTIVATE overwrites it regardless of bank, so a column command is
+serviced using whichever row was activated last, on whichever bank. Against a
+controller that keeps a row open per bank, reads and writes silently land in
+the wrong place and the benchmark reports data corruption for a legal command
+stream.
+
+That is invisible with the incumbent, which never has more than one row open —
+and it is exactly the wrong bug to have in the reference model when the change
+being measured is per-bank row tracking.
+
+`sdram_device_model.sv` has a row register per bank, like a real device.
+`gen_mem_model.sh` is kept so anyone can regenerate Intel's model and read the
+line above for themselves, but the benchmark does not use it. A useful side
+effect: only the incumbent now needs Quartus.
+
+**Validated by substitution.** Against the new model the incumbent returns
+4217 / 4222 / 37329 / 37332 / 37351 / 37220 cycles — identical, cycle for
+cycle, to what it returned against Intel's. The two models agree exactly
+wherever Intel's is capable of being right.
 
 ## Why the timing checker is not optional
 
-Intel's memory model is *functional*. Its own generator script says it does not
-model tRCD, tRP, tRC, tRAS, tRRD or tWR, does not enforce the refresh interval,
-and does not model retention — PRECHARGE and AUTO REFRESH are decoded and then
-ignored.
-
-A controller can therefore violate every timing parameter on the part and still
-return perfectly correct data in this benchmark. On silicon that is
-intermittent corruption at temperature, months later.
+Neither memory model enforces timing. Intel's generator script says so; ours
+says so in its header. Both decode PRECHARGE and AUTO REFRESH and then ignore
+them. A controller can therefore violate every timing parameter on the part and
+still return perfectly correct data. On silicon that is intermittent corruption
+at temperature, months later.
 
 `sdram_timing_check.sv` closes that hole. It watches the command bus, tracks
 per-bank state, and checks tRC, tRAS, tRP, tRCD, tRRD, tWR and tMRD against the
 same nanosecond parameters the controller is configured with — deriving cycles
-itself with ceiling division, so it cannot inherit an arithmetic error from the
-thing it is checking. It also rejects structural mistakes: a column command to
-a closed bank, an ACTIVATE to an already-open one, a refresh with a bank open.
+itself, so it cannot inherit an arithmetic error from the thing it is checking.
+It also rejects structural mistakes: a column command to a closed bank, an
+ACTIVATE to an already-open one, a refresh with a bank open.
 
-**Verified by fault injection.** Telling the checker the part needs a 100 ns
-tRCD makes it report the incumbent's legal 2-cycle delay as a violation:
+### And why the checker has a self-test
 
-```
-TIMING VIOLATION  tRCD (ACT->RD/WR)  bank 0: 2 cycles elapsed, 11 required
-```
+The checker used to be validated only by fault injection — tell it the part
+needs a 100 ns tRCD, watch it complain about a 15 ns one. That proves it is
+alive. It does not prove it is *right*, and it was not. It carried two bugs,
+both making it one cycle too strict:
 
-which also confirms the incumbent issues its column command exactly tRCD
-(15 ns → 2 cycles at 100 MHz) after ACTIVATE.
+1. `ns` → cycles used `int'((ns*khz + 999_999.0)/1_000_000.0)`, the familiar
+   integer-ceiling trick. In SystemVerilog `int'(real)` rounds to **nearest**
+   (IEEE 1800-2017 6.24.1), so the bias and the rounding compounded: tRC 60 ns
+   at 100 MHz came out as 7 cycles instead of 6, tRAS 37 ns as 5 instead of 4.
+2. The elapsed counters were zeroed on the event they measure and read before
+   the next increment, so commands genuinely N cycles apart were reported as
+   N-1.
+
+Both were found because a *correct* controller failed the checker — which is a
+bad way to find them, since "the checker is wrong" is exactly what a broken
+controller would like to be true. So the threshold is now pinned from the other
+side. `timing_check_selftest.sv` drives hand-counted command separations and
+requires that exactly (N-1) cycles is rejected and exactly N is accepted, for
+every parameter. A checker one cycle strict fails the second half; one cycle
+lax fails the first. 17 checks, run by `run_bench.sh` before anything is
+measured.
+
+The same `cyc()` bug had been copied into the controller, where it was merely
+conservative rather than wrong. Sharing a function is how a bug becomes two
+bugs; the self-test, not the separation of the two files, is what makes the
+checker trustworthy.
 
 ## Measurement notes
 
 - The cycle counter starts on the **first accepted command**, so the
-  controller's 200 µs power-on sequence is not charged against it.
+  controller's power-on sequence is not charged against it.
 - Writes are posted. A short write run measures the controller's input FIFO
   rather than the memory; 4096 operations is enough that steady state
   dominates. Raise `N_OPS` if you change the controller's buffering.
 - Every read pattern is preceded by an unmeasured **priming pass** over the
-  identical address sequence, so reads find known contents. Without it the
-  integrity check compares against memory nobody wrote.
+  identical address sequence, so reads find known contents. Unwritten memory
+  reads as `0xDEAD`, which the address-derived check can never match — a
+  missing priming pass fails loudly rather than passing by accident.
 - Read data is checked against an address-derived value, so a controller that
   returns wrong data quickly cannot score well.
