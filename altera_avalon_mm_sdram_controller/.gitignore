@@ -1,0 +1,25 @@
+# Generated Intel sources and build output. The controller RTL and the SDRAM
+# memory model are Intel's, are regenerated from a local Quartus installation
+# by benchmark/gen_dut.sh and benchmark/gen_mem_model.sh, and are deliberately
+# not committed - the same rule altera_avalon_new_sdram_controller follows.
+benchmark/.gen/
+benchmark/.build/
+
+# Verilator
+obj_dir/
+
+# Questa / ModelSim
+work/
+transcript
+*.ucdb
+*.wlf
+modelsim.ini
+coverage_report.txt
+run.log
+
+# Traces
+*.vcd
+
+# Python
+__pycache__/
+*.pyc
