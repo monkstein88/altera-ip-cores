@@ -174,6 +174,19 @@ altera_avalon_mm_sdram_controller/
 `tb/`, `simulation/`, `doc/` and `example/` will follow the same shape as the
 two firewall cores in this repository.
 
+## Licence
+
+MIT, like the rest of this repository except Intel's preserved core — see
+[`LICENSE`](../LICENSE). That covers everything here: the controller RTL, the
+Platform Designer component and its presets, the benchmark harness, the device
+model, the timing checker and this documentation.
+
+Nothing in this directory is derived from Intel's controller. The benchmark can
+*generate* Intel's controller and memory model from your own Quartus
+installation in order to measure against them; that output is Intel's, under
+Intel's terms, and is gitignored rather than committed. See
+[`../altera_avalon_new_sdram_controller/NOTICE`](../altera_avalon_new_sdram_controller/NOTICE).
+
 ## A note on the module name
 
 The directory carries the `altera_` prefix to sit alongside the cores it

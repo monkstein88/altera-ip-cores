@@ -7,7 +7,19 @@ SDRAM chip — preserved here because Quartus stopped shipping it.
 terms, with two properties changed so it appears in the Platform Designer
 catalog. See [`NOTICE`](NOTICE) for the licence and the modification, and the
 repository [root README](../README.md#licence) for how it sits alongside the
-MIT-licensed firewalls.
+MIT-licensed cores.
+
+> **There is now a from-scratch replacement for this core** in
+> [`altera_avalon_mm_sdram_controller`](../altera_avalon_mm_sdram_controller/README.md).
+> It presents the same slave port, the same conduit and the same default
+> address map, so it can be substituted without disturbing a system, and it
+> keeps one open row *per bank* rather than one for the whole device — worth
+> 3.6x to 8.9x on mixed and scattered traffic, measured on the same stimulus.
+>
+> That core is MIT licensed and shares none of this one's RTL. This directory
+> stays because the replacement has not yet been run on hardware and this one
+> has, and because a system built against this component should be able to keep
+> building.
 
 | | |
 |---|---|
