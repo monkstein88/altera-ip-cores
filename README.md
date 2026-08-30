@@ -30,9 +30,9 @@ Custom**, the two SDRAM controllers under **Memory Interfaces and Controllers**
 
 ### Verified on hardware means verified on hardware
 
-Every demonstration here was built, programmed and run on a physical DE10-Lite
-(Intel MAX 10, `10M50DAF484C7G`), and each reports its own pass/fail over JTAG
-rather than asking you to read LEDs:
+Three of the four demonstrations here were built, programmed and run on a
+physical DE10-Lite (Intel MAX 10, `10M50DAF484C7G`), and each reports its own
+pass/fail over JTAG rather than asking you to read LEDs:
 
 | | Avalon-MM Firewall | AXI4-Lite Firewall | SDRAM Controller Intel FPGA IP |
 |---|---|---|---|
@@ -182,13 +182,20 @@ The cores' own RTL is plain synthesisable SystemVerilog with no device
 primitives, no vendor attributes and no inferred memory, so it is not tied to a
 family or a release. Only the examples are.
 
-For simulation, both firewalls' regressions run under **Questa/ModelSim**
-(coverage and assertions), **Verilator 5.050 or newer** (licence-free — older
-releases do not implement the SVA the assertions use), and **Icarus**
-(functional tests only — a `-DICARUS` define skips the SVA bind). The SDRAM
-example carries a Questa testbench that runs against Intel's functional memory
-model, generated on demand from your own Quartus installation. Each core's
-README documents its flows and what each one does and does not cover.
+For simulation, all three original cores have a **Verilator** regression that
+needs no licence — 5.050 or newer, because older releases do not implement the
+SVA the assertions use. What differs is what else each one has been run under:
+
+| Core | Verilator | Questa/ModelSim | Icarus |
+|---|---|---|---|
+| `altera_avalon_mm_firewall` | yes | yes — coverage, assertions | yes — functional only, `-DICARUS` skips the SVA bind |
+| `altera_axi4_lite_firewall` | yes | yes — coverage, assertions | yes — same |
+| `altera_avalon_mm_sdram_controller` | yes — 8 configurations | flow written, **never run: no licence here** | — |
+
+The Intel SDRAM core's example carries a Questa testbench that runs against
+Intel's functional memory model, generated on demand from your own Quartus
+installation. Each core's README documents its flows and what each one does and
+does not cover.
 
 ---
 
@@ -213,9 +220,11 @@ altera-ip-cores/
 ```
 
 Each core's own `README.md` is the real documentation: design rationale,
-register map, parameters, verification status and known limitations. The
-firewalls additionally carry a full user guide and an architecture document, in
-Markdown and PDF, under `doc/`.
+register map, parameters, verification status and known limitations. All three
+original cores additionally carry a full user guide and an architecture or
+block-diagram document, in Markdown and PDF, under `doc/` — each with a
+`check_facts.py` that re-derives every number in them from the RTL and fails if
+any has drifted.
 
 ---
 
