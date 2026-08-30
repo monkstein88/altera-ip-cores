@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<system name="$${FILENAME}">
+ <component
+   name="$${FILENAME}"
+   displayName="$${FILENAME}"
+   version="1.0"
+   description=""
+   tags="INTERNAL_COMPONENT=false"
+   categories="" />
+ <parameter name="bonusData"><![CDATA[bonusData 
+{
+   element clk
+   {
+      datum _sortIndex
+      {
+         value = "0";
+         type = "int";
+      }
+   }
+   element sdram
+   {
+      datum _sortIndex
+      {
+         value = "1";
+         type = "int";
+      }
+   }
+}
+]]></parameter>
+ <parameter name="clockCrossingAdapter" value="HANDSHAKE" />
+ <parameter name="device" value="10M50DAF484C7G" />
+ <parameter name="deviceFamily" value="MAX 10" />
+ <parameter name="deviceSpeedGrade" value="7" />
+ <parameter name="fabricMode" value="QSYS" />
+ <parameter name="generateLegacySim" value="false" />
+ <parameter name="generationId" value="0" />
+ <parameter name="globalResetBus" value="false" />
+ <parameter name="hdlLanguage" value="VERILOG" />
+ <parameter name="hideFromIPCatalog" value="false" />
+ <parameter name="lockedInterfaceDefinition" value="" />
+ <parameter name="maxAdditionalLatency" value="1" />
+ <parameter name="projectName" value="" />
+ <parameter name="sopcBorderPoints" value="false" />
+ <parameter name="systemHash" value="0" />
+ <parameter name="testBenchDutName" value="" />
+ <parameter name="timeStamp" value="0" />
+ <parameter name="useTestBenchNamingPattern" value="false" />
+ <instanceScript></instanceScript>
+ <interface name="clk_in" internal="clk.clk_in" type="clock" dir="end" />
+ <interface name="reset_in" internal="clk.clk_in_reset" type="reset" dir="end" />
+ <interface name="sdram_s1" internal="sdram.s1" type="avalon" dir="end" />
+ <interface name="sdram_wire" internal="sdram.wire" type="conduit" dir="end" />
+ <module name="clk" kind="clock_source" version="18.1" enabled="1">
+  <parameter name="clockFrequency" value="100000000" />
+  <parameter name="clockFrequencyKnown" value="true" />
+  <parameter name="inputClockFrequency" value="0" />
+  <parameter name="resetSynchronousEdges" value="DEASSERT" />
+ </module>
+ <module
+   name="sdram"
+   kind="altera_avalon_mm_sdram_controller"
+   version="1.0"
+   enabled="1">
+  <parameter name="ADDR_MAP" value="0" />
+  <parameter name="BANK_BITS" value="2" />
+  <parameter name="CAS_LAT" value="3" />
+  <parameter name="COL_BITS" value="10" />
+  <parameter name="DATA_BITS" value="16" />
+  <parameter name="FIFO_DEPTH" value="8" />
+  <parameter name="INIT_REFS" value="8" />
+  <parameter name="LOOKAHEAD" value="1" />
+  <parameter name="RD_EXTRA_LAT" value="0" />
+  <parameter name="REF_MAX_PEND" value="8" />
+  <parameter name="REF_PERIOD_MS" value="64" />
+  <parameter name="REF_ROWS" value="8192" />
+  <parameter name="ROW_BITS" value="13" />
+  <parameter name="SA_BITS" value="13" />
+  <parameter name="T_INIT_US" value="100" />
+  <parameter name="T_MRD_NS" value="14.0" />
+  <parameter name="T_RAS_NS" value="37.0" />
+  <parameter name="T_RCD_NS" value="15.0" />
+  <parameter name="T_RC_NS" value="60.0" />
+  <parameter name="T_RFC_NS" value="60.0" />
+  <parameter name="T_RP_NS" value="15.0" />
+  <parameter name="T_RRD_NS" value="14.0" />
+  <parameter name="T_WR_NS" value="14.0" />
+ </module>
+ <connection kind="clock" version="18.1" start="clk.clk" end="sdram.clk" />
+ <connection kind="reset" version="18.1" start="clk.clk_reset" end="sdram.reset" />
+ <interconnectRequirement for="$system" name="qsys_mm.clockCrossingAdapter" value="HANDSHAKE" />
+ <interconnectRequirement for="$system" name="qsys_mm.enableEccProtection" value="FALSE" />
+ <interconnectRequirement for="$system" name="qsys_mm.insertDefaultSlave" value="FALSE" />
+ <interconnectRequirement for="$system" name="qsys_mm.maxAdditionalLatency" value="1" />
+</system>

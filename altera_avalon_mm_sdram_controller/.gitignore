@@ -28,3 +28,11 @@ __pycache__/
 simulation/verilator/.build/
 simulation/verilator/.build*
 .tbbuild/
+
+# Generated Platform Designer output for the example: reproducible from the
+# committed component by example/de10_lite_rtl/build.sh
+example/de10_lite_rtl/qsys/sdram_perbank_sys/
+example/de10_lite_rtl/qsys/sdram_perbank_sys.sopcinfo
+example/de10_lite_rtl/qsys/.qsys_edit/
+example/de10_lite_rtl/simulation/verilator/.build/
+example/de10_lite_rtl/simulation/verilator/.*.log

@@ -104,6 +104,31 @@ module sdram_device_model #(
 
     int unsigned bad_access;             // column commands to a closed bank
 
+    // ---- test access -------------------------------------------------------
+    // A real device has no such port. These exist so a testbench can place or
+    // inspect a value without going through the controller, which is what
+    // makes "the controller put it where it said it would" checkable.
+    //
+    // Addressed by bank, row and column rather than by a flat address, because
+    // that is how a device is addressed. A testbench that wants to work in
+    // Avalon addresses has to apply the controller's address map itself - and
+    // having to write that mapping down is the point: it turns an assumption
+    // about the decode into something stated and therefore checkable.
+    function automatic logic [DATA_BITS-1:0] peek(input logic [BANK_BITS-1:0] b,
+                                                  input logic [ROW_BITS-1:0]  r,
+                                                  input logic [COL_BITS-1:0]  c);
+        logic [KEY_W-1:0] kk;
+        kk = key(b, r, c);
+        return mem.exists(kk) ? mem[kk] : UNWRITTEN;
+    endfunction
+
+    function automatic void poke(input logic [BANK_BITS-1:0] b,
+                                 input logic [ROW_BITS-1:0]  r,
+                                 input logic [COL_BITS-1:0]  c,
+                                 input logic [DATA_BITS-1:0] d);
+        mem[key(b, r, c)] = d;
+    endfunction
+
     // ---- read pipeline -----------------------------------------------------
     logic [DATA_BITS-1:0] rd_data [CAS_MAX];
     logic [DQM_W-1:0]     rd_mask [CAS_MAX];
