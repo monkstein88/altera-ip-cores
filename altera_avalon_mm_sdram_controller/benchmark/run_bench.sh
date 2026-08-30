@@ -18,6 +18,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GEN="$HERE/.gen"
 BUILD="$HERE/.build"
+TB="$(cd "$HERE/../tb" && pwd)"
 QUARTUS_ROOT="${QUARTUS_ROOT:-/opt/intelFPGA/18.1}"
 export QUARTUS_ROOT
 
@@ -48,7 +49,7 @@ verilator --binary --timing --top-module timing_check_selftest \
     -o selftest -Mdir "$BUILD.selftest" \
     ${CXX_EXTRA:+-CFLAGS "$CXX_EXTRA"} \
     -Wno-WIDTHEXPAND \
-    "$HERE/sdram_timing_check.sv" "$HERE/timing_check_selftest.sv" || exit $?
+    "$TB/sdram_timing_check.sv" "$TB/timing_check_selftest.sv" || exit $?
 "$BUILD.selftest/selftest" | grep -E "FAIL|passed" || exit $?
 
 # ---- generate Intel's core, which is not ours and is never committed --------
@@ -83,8 +84,8 @@ VFLAGS=(--binary --timing --assert "${WARN_OFF[@]}"
 
 verilator "${VFLAGS[@]}" \
     "$DUT_FILE" \
-    "$HERE/sdram_device_model.sv" "$HERE/sdram_traffic_gen.sv" \
-    "$HERE/sdram_timing_check.sv" "$HERE/sdram_bench_tb.sv" || exit $?
+    "$TB/sdram_device_model.sv" "$HERE/sdram_traffic_gen.sv" \
+    "$TB/sdram_timing_check.sv" "$HERE/sdram_bench_tb.sv" || exit $?
 
 echo "== running =="
 "$BUILD/bench"

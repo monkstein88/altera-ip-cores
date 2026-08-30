@@ -23,3 +23,8 @@ run.log
 # Python
 __pycache__/
 *.pyc
+
+# Simulation build output
+simulation/verilator/.build/
+simulation/verilator/.build*
+.tbbuild/
