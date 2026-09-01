@@ -2,15 +2,17 @@
 
 IP components for Intel/Altera **Quartus Prime** and **Platform Designer (Qsys)**.
 
-Three of them are original work. The fourth is a vendor core preserved from a
+Four of them are original work. The fifth is a vendor core preserved from a
 Quartus release that no longer ships it.
 
-All three carry full documentation, self-checking testbenches, a Platform
-Designer component and a DE10-Lite demonstration. The difference is where the
-demonstration has been run: the two firewalls' have been **programmed onto a
-board**, and the SDRAM controller's has only been **simulated**.
+All four originals carry documentation, self-checking testbenches and a
+Platform Designer component. What differs is how far each has been taken
+towards hardware: the two firewalls have been **programmed onto a board**, the
+SDRAM controller has a board demonstration that has only been **simulated**,
+and the SD card controller has **no board demonstration at all** — the DE10-Lite
+these examples target has no microSD socket.
 
-The three original cores are **MIT licensed**; the vendor core keeps Intel's
+The four original cores are **MIT licensed**; the vendor core keeps Intel's
 own terms — see [Licence](#licence).
 
 ---
@@ -22,15 +24,17 @@ own terms — see [Licence](#licence).
 | [`altera_avalon_mm_firewall`](altera_avalon_mm_firewall/README.md) | **Avalon-MM Firewall** · v1.0 · *Bridges and Adapters / Custom* | Burst-capable access-control and fault-isolation firewall for Avalon-MM. Default-deny address windows with per-window read/write/burst permission, whole-burst range checking, downstream timeout detection and an explicit software recovery sequence | **Verified on hardware.** 632 checks, 22 assertions, 11 cover points |
 | [`altera_axi4_lite_firewall`](altera_axi4_lite_firewall/README.md) | **AXI4-Lite Firewall** · v2.0 · *Bridges and Adapters / Custom* | The same idea on AXI4-Lite: single transactions, capture-and-redrive rather than pass-through | **Verified on hardware.** 103 checks, 14 assertions, 6 cover points |
 | [`altera_avalon_mm_sdram_controller`](altera_avalon_mm_sdram_controller/README.md) | **Avalon-MM SDRAM Controller (per-bank rows)** · v1.0 · *Memory Interfaces and Controllers / Custom* | SDR SDRAM controller that keeps one open row *per bank* and treats a read/write turnaround as the datasheet does, rather than as a full row cycle. Drop-in replacement for the vendor core below | **Simulation only — not yet on hardware.** 3.6–8.9× the vendor core on mixed and scattered traffic. 1152 testbench assertions across 8 configurations, 58-check board demonstration, 192 documentation claims checked |
+| [`altera_avalon_mm_sdcard_controller`](altera_avalon_mm_sdcard_controller/README.md) | **Avalon-MM SD Card Controller (SPI)** · v1.0 · *Memory Interfaces and Controllers / Custom* | SD card controller in SPI mode. Hardware does the link layer — framing, CRC7/CRC16, tokens, multi-block streaming, pre-emptive busy polling, optional DMA — and a Nios II HAL driver does the card protocol | **Simulation only — never on a board.** 48 testbench checks against a specification-derived card model, 22 on the Platform Designer component. **98.1% of SPI line rate**, measured |
 | [`altera_avalon_new_sdram_controller`](altera_avalon_new_sdram_controller/README.md) | **SDRAM Controller Intel FPGA IP** · v20.1 · *Memory Interfaces and Controllers / SDRAM* | Intel's own SDRAM controller, kept here because current Quartus releases no longer ship it | Vendor IP, unhidden so it is usable — see *Provenance*. **Demo verified on hardware:** all 64 MB written and read back at 194 MB/s |
 
 The two firewalls appear in the IP Catalog under **Bridges and Adapters /
-Custom**, the two SDRAM controllers under **Memory Interfaces and Controllers**
-— the new one in *Custom*, Intel's in *SDRAM*.
+Custom**; the two SDRAM controllers and the SD card controller under **Memory
+Interfaces and Controllers** — the SDRAM and SD cores in *Custom*, Intel's in
+*SDRAM*.
 
 ### Verified on hardware means verified on hardware
 
-Three of the four demonstrations here were built, programmed and run on a
+Three of the demonstrations here were built, programmed and run on a
 physical DE10-Lite (Intel MAX 10, `10M50DAF484C7G`), and each reports its own
 pass/fail over JTAG rather than asking you to read LEDs:
 
@@ -39,9 +43,18 @@ pass/fail over JTAG rather than asking you to read LEDs:
 | RTL demo — no CPU, no software | 16/16 scenarios at 50 MHz | 16/16 scenarios at 50 MHz | 8/8 scenarios at **100 MHz** |
 | Nios II/f demo — C, in a generated Qsys system | 41/41 checks at **100 MHz** | 33/33 checks at 100 MHz | — |
 
-**`altera_avalon_mm_sdram_controller` is deliberately absent from that table.**
-It has never been on a board. It has a board demonstration that passes 58
-checks in simulation, a measurement harness that reproduces the
+**Two cores are deliberately absent from that table.**
+
+`altera_avalon_mm_sdcard_controller` has no board demonstration at all. The
+DE10-Lite has no microSD socket, so one would need a breakout on the 2x20 GPIO
+or Arduino header and its own pinout. What it does have is 48 self-checking
+assertions against a card model written to the SD specification (including every
+failure a card can report), 22 checks on its Platform Designer component, and a
+measured 98.1% of SPI line rate. All of it in simulation.
+
+`altera_avalon_mm_sdram_controller` is absent for a different reason.
+It has never been on a board either, but it does have a board demonstration -
+one that passes 58 checks in simulation, a measurement harness that reproduces the
 hardware-verified 194 MB/s of the core it replaces, and a Platform Designer
 component checked against a real Quartus installation. All of that is
 simulation, and none of it is a substitute for a board.
@@ -64,10 +77,11 @@ is forced to miss its row.
 3. Go to **Tools ▸ Options ▸ IP Search Path**.
 4. Click **Add…** and select the **top level of your clone** — the
    `altera-ip-cores` directory itself.
-5. **File ▸ Refresh System.** All four cores appear in the IP Catalog — the
+5. **File ▸ Refresh System.** All five cores appear in the IP Catalog — the
    two firewalls under *Bridges and Adapters / Custom*, the new SDRAM
-   controller under *Memory Interfaces and Controllers / Custom*, and Intel's
-   under *Memory Interfaces and Controllers / SDRAM*.
+   controller and the SD card controller under *Memory Interfaces and
+   Controllers / Custom*, and Intel's under *Memory Interfaces and Controllers
+   / SDRAM*.
 
 > Intel shipped the SDRAM controller with `HIDE_FROM_QUARTUS` and
 > `HIDE_FROM_SOPC` set, which kept it out of the catalog. Both are `false`
@@ -126,7 +140,7 @@ opening a Nios II system fails to resolve `demo_avl_mm_target_slave` or
 
 ### Nios II software
 
-**Both firewalls** ship a Nios II HAL driver and a `*_sw.tcl`, so
+**Both firewalls and the SD card controller** ship a Nios II HAL driver and a `*_sw.tcl`, so
 `nios2-bsp-generate-files` finds the driver on the same IP search path and
 compiles it into your BSP automatically. Adding the component to the system is
 the whole integration step — there is nothing to copy by hand.
@@ -135,6 +149,7 @@ the whole integration step — there is nothing to copy by hand.
 |---|---|---|
 | `altera_avalon_mm_firewall` | `HAL/src/altera_avalon_mm_firewall.c` | `avl_mm_firewall_sw.tcl` |
 | `altera_axi4_lite_firewall` | `HAL/src/altera_axi4_lite_firewall.c` | `axi4_lite_firewall_sw.tcl` |
+| `altera_avalon_mm_sdcard_controller` | `HAL/src/altera_avalon_mm_sdcard_controller.c` | `altera_avalon_mm_sdcard_controller_sw.tcl` |
 
 Both set `auto_initialize`, so the BSP constructs every instance in
 `alt_sys_init.c` and runs it before `main()`: base address and interrupt from
@@ -191,6 +206,15 @@ SVA the assertions use. What differs is what else each one has been run under:
 | `altera_avalon_mm_firewall` | yes | yes — coverage, assertions | yes — functional only, `-DICARUS` skips the SVA bind |
 | `altera_axi4_lite_firewall` | yes | yes — coverage, assertions | yes — same |
 | `altera_avalon_mm_sdram_controller` | yes — 8 configurations | flow written, **never run: no licence here** | — |
+| `altera_avalon_mm_sdcard_controller` | yes — 3 testbenches | — | — |
+
+The SD card controller additionally carries two checks that need no simulator at
+all: `verification/check_hw_tcl.tcl` executes its Platform Designer component
+against stubbed Qsys commands, and `verification/check_driver_builds.sh`
+compiles the HAL driver against stubbed Nios II headers under `-Wall -Wextra`.
+Both catch the dull mechanical faults — a renamed parameter, a port added to an
+interface that does not exist, a typo in the driver — that otherwise survive
+until someone with the full toolchain tries to build a project.
 
 The Intel SDRAM core's example carries a Questa testbench that runs against
 Intel's functional memory model, generated on demand from your own Quartus
@@ -215,6 +239,10 @@ altera-ip-cores/
 │   ├── rtl/ tb/ simulation/ doc/       and the same shape as the firewalls
 │   ├── benchmark/                      the ruler it and Intel's are measured on
 │   └── example/de10_lite_rtl/          board demo, simulated but not yet run
+├── altera_avalon_mm_sdcard_controller/ SD card controller, SPI mode
+│   ├── rtl/ tb/ simulation/ doc/       card model, three testbenches
+│   ├── HAL/ inc/ *_sw.tcl              HAL driver the BSP picks up itself
+│   └── verification/                   hw.tcl and driver checks, no simulator needed
 └── altera_avalon_new_sdram_controller/ Intel's SDRAM controller, unhidden
     └── example/de10_lite_rtl/          plus one hardware demo
 ```
@@ -230,8 +258,9 @@ any has drifted.
 
 ## Provenance
 
-**`altera_avalon_mm_firewall`, `altera_axi4_lite_firewall` and
-`altera_avalon_mm_sdram_controller` are original work.** There is no stock
+**`altera_avalon_mm_firewall`, `altera_axi4_lite_firewall`,
+`altera_avalon_mm_sdram_controller` and `altera_avalon_mm_sdcard_controller`
+are original work.** There is no stock
 Avalon-MM or AXI firewall in the Intel FPGA IP catalog; both firewalls were
 written from scratch, and each core's README explains the reasoning behind its
 design decisions.
@@ -266,7 +295,7 @@ set.
 
 ### Licence
 
-Three of the four directories are **MIT licensed** — free to use, modify and
+Four of the five directories are **MIT licensed** — free to use, modify and
 redistribute, including commercially, provided the copyright notice travels
 with them. See [`LICENSE`](LICENSE).
 
@@ -275,6 +304,7 @@ with them. See [`LICENSE`](LICENSE).
 | `altera_avalon_mm_firewall/` | MIT — RTL, testbenches, documentation, HAL driver, DE10-Lite examples |
 | `altera_axi4_lite_firewall/` | MIT — same |
 | `altera_avalon_mm_sdram_controller/` | MIT — RTL, Platform Designer component, benchmark harness, documentation |
+| `altera_avalon_mm_sdcard_controller/` | MIT — RTL, testbenches and card model, Platform Designer component, HAL driver, documentation |
 | `altera_avalon_new_sdram_controller/` | **Intel's own terms, not MIT** — see below |
 
 `altera_avalon_new_sdram_controller/` is the only exception. It is **excluded
