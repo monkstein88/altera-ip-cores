@@ -42,3 +42,30 @@ doc/tools/.render_*.html
 
 # Questa assertion report
 simulation/questa/assert_report.txt
+
+# Generated Platform Designer output and build artifacts for the other three
+# examples: reproducible from the committed components by their build.sh
+example/de0_nano_rtl/qsys/sdram_nano_sys/
+example/de0_nano_rtl/qsys/sdram_nano_sys.sopcinfo
+example/de0_nano_rtl/qsys/.qsys_edit/
+example/de0_nano_rtl/simulation/verilator/.build/
+example/de0_nano_rtl/simulation/verilator/.*.log
+example/de10_lite_nios/qsys/sdram_nios_sys/
+example/de10_lite_nios/qsys/sdram_nios_sys.sopcinfo
+example/de10_lite_nios/qsys/.qsys_edit/
+example/de0_nano_nios/qsys/sdram_nios_nano_sys/
+example/de0_nano_nios/qsys/sdram_nios_nano_sys.sopcinfo
+example/de0_nano_nios/qsys/.qsys_edit/
+
+# Nios II BSP and application build output
+example/*/software/bsp/
+example/*/software/obj/
+example/*/software/Makefile
+example/*/software/*.elf
+example/*/software/*.map
+example/*/software/*.objdump
+
+# Quartus build output for every example
+example/*/quartus/db/
+example/*/quartus/incremental_db/
+example/*/quartus/output_files/

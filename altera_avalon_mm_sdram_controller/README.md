@@ -212,7 +212,12 @@ altera_avalon_mm_sdram_controller/
 ├── simulation/         Verilator regression, Questa flow
 ├── benchmark/          the ruler - measures Intel's core and the custom core
 ├── doc/                user guide and block diagrams, Markdown and PDF
-└── example/de10_lite_rtl   board demonstration
+└── example/            four board demonstrations
+    ├── common/             the scenarios and master, shared by all four
+    ├── de10_lite_rtl/      DE10-Lite, no CPU
+    ├── de10_lite_nios/     DE10-Lite, Nios II memory test
+    ├── de0_nano_rtl/       DE0-Nano, no CPU
+    └── de0_nano_nios/      DE0-Nano, Nios II memory test
 ```
 
 ## Verification
@@ -223,7 +228,10 @@ altera_avalon_mm_sdram_controller/
 | [`tb/`](tb) | 166 checks per configuration, on the command stream as well as the data | Passing |
 | [`simulation/questa/run_sim.tcl`](simulation/questa/run_sim.tcl) | The same 13 configurations, plus code coverage and assertion non-vacuity | 22 assertion instances, **none vacuous** |
 | [`benchmark/`](benchmark/README.md) | Throughput against the core being replaced | Passing |
-| [`example/de10_lite_rtl`](example/de10_lite_rtl/README.md) | Board demonstration, 9 phases | 58 checks passing |
+| [`example/de10_lite_rtl`](example/de10_lite_rtl/README.md) | DE10-Lite board demonstration, 9 phases | 58 checks passing |
+| [`example/de0_nano_rtl`](example/de0_nano_rtl/README.md) | DE0-Nano board demonstration, same nine phases at the other part's geometry | 58 checks passing |
+| [`example/de10_lite_nios`](example/de10_lite_nios/README.md) | Nios II memory test through cache, interconnect and a width adapter | Builds; byte enables and 32-bit access are only reachable here |
+| [`example/de0_nano_nios`](example/de0_nano_nios/README.md) | The same, on the DE0-Nano | Builds |
 | Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met, +0.430 ns |
 | [`doc/tools/check_facts.py`](doc/tools/check_facts.py) | Every number in the documents, re-derived from the RTL — and the throughput table re-measured by running the benchmark | 192 claims |
 | Hardware | Retention, refresh on silicon | **Not run — no board** |

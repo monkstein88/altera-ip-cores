@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 
 // =============================================================================
-// de10_lite_sdram_demo_tb.sv
+// de0_nano_sdram_demo_tb.sv
 //
 // Board-level simulation of the SDRAM demonstration, against this project's
 // own SDRAM device model - the one with a row open per bank.
@@ -31,9 +31,16 @@
 // Run with: simulation/verilator/run_sim.sh   (no licence, no Quartus)
 // =============================================================================
 
-module de10_lite_sdram_demo_tb;
+module de0_nano_sdram_demo_tb;
 
-    localparam int AW = 25, DW = 16;
+    // The DE0-Nano's IS42S16160B: a NINE-bit column, so a 24-bit word address.
+    // Every geometry-dependent expectation below is derived from COL_BITS
+    // rather than written out, so the same checks mean the same thing on a
+    // part with a different column width.
+    localparam int AW = 24, DW = 16;
+    localparam int COL_BITS = 9;
+    localparam int unsigned COL_WORDS   = 32'd1 << COL_BITS;        // 512
+    localparam int unsigned BANK_STRIDE = 32'd1 << (COL_BITS + 1);  // 1024
 
     // Shrunk for simulation. The RTL defaults are the real ones.
     localparam int unsigned TB_MARCH_WORDS  = 32'd4096;
@@ -46,7 +53,7 @@ module de10_lite_sdram_demo_tb;
     localparam int unsigned TB_WATCHDOG     = 32'd200_000;
 
     // Must match the sequencer's own fixed addresses.
-    localparam logic [AW-1:0] BE_ADDR = 25'h0005678;
+    localparam logic [AW-1:0] BE_ADDR = AW'('h0005678);
 
     logic clk = 1'b0, resetn = 1'b0;
     always #5 clk = ~clk;                       // 100 MHz, as on the board
@@ -92,6 +99,9 @@ module de10_lite_sdram_demo_tb;
     wire [15:0] DRAM_DQ;
 
     demo_sdram_seq #(
+        .ADDR_WIDTH          (AW),
+        .DATA_WIDTH          (DW),
+        .COL_BITS            (COL_BITS),
         .INIT_WAIT_CYCLES    (TB_INIT_WAIT),
         .REFRESH_IDLE_CYCLES (TB_REFRESH_IDLE),
         .WATCHDOG_CYCLES     (TB_WATCHDOG),
@@ -121,7 +131,7 @@ module de10_lite_sdram_demo_tb;
         .avm_readdata(avm_readdata), .avm_readdatavalid(avm_readdatavalid),
         .avm_waitrequest(avm_waitrequest));
 
-    sdram_perbank_sys u_sys (
+    sdram_nano_sys u_sys (
         .clk_in_clk(clk), .reset_in_reset_n(resetn),
         .sdram_s1_address(avm_address), .sdram_s1_byteenable_n(avm_byteenable_n),
         .sdram_s1_chipselect(avm_chipselect), .sdram_s1_writedata(avm_writedata),
@@ -146,7 +156,7 @@ module de10_lite_sdram_demo_tb;
     // This one has a row register per bank, like the part on the board. It also
     // means the example simulates with no Quartus installation at all.
     sdram_device_model #(
-        .DATA_BITS(16), .ROW_BITS(13), .COL_BITS(10), .BANK_BITS(2), .SA_BITS(13)
+        .DATA_BITS(16), .ROW_BITS(13), .COL_BITS(COL_BITS), .BANK_BITS(2), .SA_BITS(13)
     ) u_mem (
         .clk(clk), .zs_addr(DRAM_ADDR), .zs_ba(DRAM_BA), .zs_cas_n(DRAM_CAS_N),
         .zs_cke(DRAM_CKE), .zs_cs_n(DRAM_CS_N), .zs_dq(DRAM_DQ),
@@ -156,7 +166,11 @@ module de10_lite_sdram_demo_tb;
     // separately, against the same nanosecond figures the preset carries. The
     // demonstration this replaces had no equivalent: it could have driven the
     // part illegally and still passed every scenario.
-    sdram_timing_check #(.CLK_KHZ(100_000), .CAS_LAT(3)) u_tchk (
+    sdram_timing_check #(
+        .CLK_KHZ(100_000), .CAS_LAT(3),
+        .T_RC_NS(67.5), .T_RAS_NS(45.0), .T_RP_NS(20.0), .T_RCD_NS(20.0),
+        .T_RRD_NS(14.0), .T_WR_NS(14.0), .T_MRD_NS(15.0), .T_RFC_NS(67.5)
+    ) u_tchk (
         .clk(clk), .reset_n(resetn), .cke(DRAM_CKE), .cs_n(DRAM_CS_N),
         .ras_n(DRAM_RAS_N), .cas_n(DRAM_CAS_N), .we_n(DRAM_WE_N),
         .ba(DRAM_BA), .addr(DRAM_ADDR));
@@ -167,23 +181,42 @@ module de10_lite_sdram_demo_tb;
     // The model is addressed the way a device is - bank, row, column - so
     // getting at an Avalon address means applying the controller's address map
     // here, in the testbench, where it is visible. That is deliberate: Phase 5
-    // below claims the decode is bank = {a[24], a[10]}, row = a[23:11],
-    // col = a[9:0], and these two functions are the same claim written as code.
+    // below claims the decode is bank = {a[23], a[9]}, row = a[22:10],
+    // col = a[8:0], and these two functions are the same claim written as code.
     // If the controller's map and this one ever disagree, Phase 3 fails.
     // ----------------------------------------------------------------------
-    function automatic logic [15:0] mem_peek(input logic [24:0] a);
-        return u_mem.peek({a[24], a[10]}, a[23:11], a[9:0]);
+    // ADDR_MAP 0, written in terms of COL_BITS rather than fixed bit numbers:
+    //   col     = a[COL_BITS-1:0]
+    //   bank[0] = a[COL_BITS]
+    //   row     = a[COL_BITS+ROW_BITS : COL_BITS+1]
+    //   bank[1] = a[COL_BITS+1+ROW_BITS]
+    // On this part that is bank = {a[23], a[9]}, row = a[22:10], col = a[8:0].
+    localparam int ROW_BITS  = 13;
+    localparam int BANK1_BIT = COL_BITS + 1 + ROW_BITS;
+
+    function automatic logic [1:0] a_bank(input logic [AW-1:0] a);
+        return {a[BANK1_BIT], a[COL_BITS]};
+    endfunction
+    function automatic logic [ROW_BITS-1:0] a_row(input logic [AW-1:0] a);
+        return a[COL_BITS+1 +: ROW_BITS];
+    endfunction
+    function automatic logic [COL_BITS-1:0] a_col(input logic [AW-1:0] a);
+        return a[COL_BITS-1:0];
     endfunction
 
-    task automatic mem_poke(input logic [24:0] a, input logic [15:0] d);
-        u_mem.poke({a[24], a[10]}, a[23:11], a[9:0], d);
+    function automatic logic [15:0] mem_peek(input logic [AW-1:0] a);
+        return u_mem.peek(a_bank(a), a_row(a), a_col(a));
+    endfunction
+
+    task automatic mem_poke(input logic [AW-1:0] a, input logic [15:0] d);
+        u_mem.poke(a_bank(a), a_row(a), a_col(a), d);
     endtask
 
     // ----------------------------------------------------------------------
     // ACTIVATE monitor.
     //
     // This exists to prove the address decode documented in demo_sdram_seq.sv
-    // and the README: bank = {addr[24], addr[10]}, row = addr[23:11]. Watching
+    // and the README: bank = {addr[23], addr[9]}, row = addr[22:10]. Watching
     // which bank and row the controller ACTIVATEs during a known address walk
     // is direct evidence, rather than taking the generated RTL's word for it.
     // ----------------------------------------------------------------------
@@ -264,21 +297,22 @@ module de10_lite_sdram_demo_tb;
         // --- Phase 2: the word counts the block scenarios report ---------
         $display("\n--- Phase 2: reported word counts ---");
         run_scenario(4'd3, fin);
-        check("scenario 3 reports 1024 words", perf_words === 32'd1024);
+        check("scenario 3 reports one row of columns", perf_words === COL_WORDS);
         check("scenario 3 spent a sane number of write cycles",
-              perf_wr_cycles > 32'd1024 && perf_wr_cycles < 32'd4000);
-        // Keep scenario 3's cost so scenario 5 can be compared against what was
-        // actually measured. This used to compare against (1046 / 1024) * 4,
-        // a constant taken from one run of this board: integer division made
-        // it 4, which happened to be right here and silently became the wrong
-        // threshold on a part with a different column width.
-        s3_cyc_per_word_x256 = (perf_wr_cycles * 32'd256) / 32'd1024;
+              perf_wr_cycles > COL_WORDS && perf_wr_cycles < 32'd4000);
+        // Keep scenario 3's cost so scenario 5 can be compared against what
+        // was actually measured, rather than against a constant from some
+        // other board. Cycles per word, scaled by 256 to keep the ratio in
+        // integers - scenario 3 costs a shade over one cycle per word, so a
+        // plain division would floor to 1 and throw the comparison away.
+        s3_cyc_per_word_x256 = (perf_wr_cycles * 32'd256) / COL_WORDS;
 
         run_scenario(4'd5, fin);
         check("scenario 5 reports 256 words", perf_words === 32'd256);
         // Every access in scenario 5 is a row miss: PRECHARGE, ACTIVATE, then
         // one word. Scenario 3 is a row hit every time. Four times the cost
-        // per word is a conservative floor for that difference.
+        // per word is a conservative floor for that difference - on this part
+        // it is closer to fifteen.
         s5_cyc_per_word_x256 = (perf_wr_cycles * 32'd256) / 32'd256;
         check("scenario 5 is much slower per word than scenario 3 (row misses)",
               s5_cyc_per_word_x256 > s3_cyc_per_word_x256 * 32'd4);
@@ -293,15 +327,18 @@ module de10_lite_sdram_demo_tb;
         // model's reconstruction of it agree end to end.
         $display("\n--- Phase 3: contents of the memory model ---");
         run_scenario(4'd3, fin);
-        got = mem_peek(25'd0);
-        check("word 0 in the model matches the pattern", got === patt(25'd0));
-        got = mem_peek(25'd1023);
-        check("word 1023 in the model matches the pattern", got === patt(25'd1023));
+        got = mem_peek(AW'(0));
+        check("word 0 in the model matches the pattern", got === patt(AW'(0)));
+        got = mem_peek(AW'(COL_WORDS - 1));
+        check("the last word of the row matches the pattern",
+              got === patt(AW'(COL_WORDS - 1)));
         run_scenario(4'd4, fin);
-        got = mem_peek(25'd1024);
-        check("word 1024 (other bank) matches the pattern", got === patt(25'd1024));
-        got = mem_peek(25'd2047);
-        check("word 2047 matches the pattern", got === patt(25'd2047));
+        got = mem_peek(AW'(COL_WORDS));
+        check("the first word of the other bank matches the pattern",
+              got === patt(AW'(COL_WORDS)));
+        got = mem_peek(AW'(BANK_STRIDE - 1));
+        check("the last word before the row changes matches the pattern",
+              got === patt(AW'(BANK_STRIDE - 1)));
 
         // --- Phase 4: byte enables reached the chip ----------------------
         $display("\n--- Phase 4: byte enables ---");
@@ -310,17 +347,17 @@ module de10_lite_sdram_demo_tb;
         check("byte-enable scenario left 0x1234 in the memory", got === 16'h1234);
 
         // --- Phase 5: the documented address decode ----------------------
-        // Scenario 4 walks 0..2047. If bank really is {addr[24], addr[10]}
-        // and row really is addr[23:11], then crossing word 1024 changes the
-        // BANK and not the row: ACTIVATE should be seen for banks 0 and 1
-        // only, and always with row 0.
-        $display("\n--- Phase 5: bank = {addr[24], addr[10]}, row = addr[23:11] ---");
+        // Scenario 4 walks one BANK_STRIDE of words. If bank really is
+        // {addr[23], addr[9]} and row really is addr[22:10], then crossing
+        // word COL_WORDS changes the BANK and not the row: ACTIVATE should be
+        // seen for banks 0 and 1 only, and always with row 0.
+        $display("\n--- Phase 5: bank = {addr[23], addr[9]}, row = addr[22:10] ---");
         act_clear();
         run_scenario(4'd4, fin);
         check("ACTIVATE was issued during the walk", act_any === 1'b1);
         check("ACTIVATE used banks 0 and 1 only, as the decode predicts",
               act_banks_seen === 4'b0011);
-        check("every ACTIVATE used row 0 - crossing 1024 changed bank, not row",
+        check("every ACTIVATE used row 0 - crossing a row of columns changed bank, not row",
               act_rows_seen_or === 13'd0);
 
         // --- Phase 6: the checker actually detects a fault ---------------
@@ -338,13 +375,13 @@ module de10_lite_sdram_demo_tb;
             run_scenario(4'd3, fin);
             begin
                 wait (u_seq.p_kind === 3'd2);           // PH_RBLK
-                mem_poke(25'd700, ~patt(25'd700));
+                mem_poke(AW'(COL_WORDS - 12), ~patt(AW'(COL_WORDS - 12)));
             end
         join
         check("a corrupted word makes scenario 3 fail", result_pass === 1'b0);
-        check("the failure reports the corrupted address", fail_addr === 25'd700);
-        check("the failure reports the expected word", fail_expected === patt(25'd700));
-        check("the failure reports the word actually read", fail_actual === ~patt(25'd700));
+        check("the failure reports the corrupted address", fail_addr === AW'(COL_WORDS - 12));
+        check("the failure reports the expected word", fail_expected === patt(AW'(COL_WORDS - 12)));
+        check("the failure reports the word actually read", fail_actual === ~patt(AW'(COL_WORDS - 12)));
         check("the failure is reported as a data mismatch", err_code === 3'd1);
         // Re-writing repairs it, so later phases start clean.
         run_scenario(4'd3, fin);

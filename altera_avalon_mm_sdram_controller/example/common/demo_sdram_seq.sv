@@ -59,6 +59,13 @@
 module demo_sdram_seq #(
     parameter int ADDR_WIDTH   = 25,
     parameter int DATA_WIDTH   = 16,
+    // Column bits of the part underneath. The scenarios below are defined in
+    // terms of the address decode - one row, one bank, a row miss on every
+    // access - so they have to know where the column ends and the bank begins.
+    // The DE10-Lite's IS42S16320D has a 10-bit column, the DE0-Nano's
+    // IS42S16160B a 9-bit one, and the scenarios mean the same thing on both
+    // only if these follow the part.
+    parameter int COL_BITS     = 10,
     // 250 ms at 100 MHz. Scenario 6 sits idle for this long, which is ~32000
     // refresh intervals - if auto-refresh were not happening the data would
     // be long gone.
@@ -133,9 +140,9 @@ module demo_sdram_seq #(
     localparam logic AM_POW2   = 1'b1;           // 0, 1, 2, 4, 8, ... 2^24
 
     // ---- fixed addresses for the small scenarios --------------------------
-    localparam logic [ADDR_WIDTH-1:0] DQ_ADDR   = 25'h0001234;
-    localparam logic [ADDR_WIDTH-1:0] BE_ADDR   = 25'h0005678;
-    localparam logic [ADDR_WIDTH-1:0] REFR_BASE = 25'h0100000;
+    localparam logic [ADDR_WIDTH-1:0] DQ_ADDR   = ADDR_WIDTH'('h0001234);
+    localparam logic [ADDR_WIDTH-1:0] BE_ADDR   = ADDR_WIDTH'('h0005678);
+    localparam logic [ADDR_WIDTH-1:0] REFR_BASE = ADDR_WIDTH'('h0100000);
 
     // Every word in the chip: 4 banks x 8192 rows x 1024 columns. Scenario 7
     // marches over MARCH_WORDS of them, which defaults to all of it.
@@ -151,8 +158,16 @@ module demo_sdram_seq #(
     // high term only, and 9<=k<=15 changes both - but at bit positions k and
     // k-9, which are never the same bit. So the pattern differs in every case.
     // -----------------------------------------------------------------------
+    // The slice is taken from a zero-extended copy rather than from `a`
+    // directly. a[24:9] is only a legal slice when ADDR_WIDTH is at least 25,
+    // and on the DE0-Nano's 24-bit address it is not - Quartus rejects the
+    // out-of-range index outright, while Verilator quietly returns zero for
+    // the missing bit and simulates on. Zero-extending first means the two
+    // agree, and the value is unchanged wherever the wider slice was legal.
     function automatic logic [15:0] patt(input logic [ADDR_WIDTH-1:0] a);
-        patt = a[15:0] ^ a[24:9] ^ 16'hA5A5;
+        logic [31:0] ax;
+        ax   = 32'(a);
+        patt = ax[15:0] ^ ax[24:9] ^ 16'hA5A5;
     endfunction
 
     // -----------------------------------------------------------------------
@@ -207,6 +222,18 @@ module demo_sdram_seq #(
     // -----------------------------------------------------------------------
     logic [2:0]            t_kind;
     logic                  t_mode;
+    // Derived from COL_BITS: one full row of columns, and the stride that
+    // moves to the next bank (ADDR_MAP 0 puts bank[0] directly above the
+    // column). At COL_BITS 10 these are the 1024 and 2048 the scenarios were
+    // originally written with.
+    // Address 0 plus one address per address BIT. Following ADDR_WIDTH matters:
+    // on a 24-bit part, walking up to 2^24 would step off the end of memory
+    // and the read-back would compare against a word that was never written.
+    localparam int unsigned POW2_COUNT  = 32'(ADDR_WIDTH) + 32'd1;
+
+    localparam int unsigned COL_WORDS   = 32'd1 << COL_BITS;
+    localparam int unsigned BANK_STRIDE = 32'd1 << (COL_BITS + 1);
+
     logic [ADDR_WIDTH-1:0] t_base;
     logic [31:0]           t_count;
     logic [ADDR_WIDTH-1:0] t_stride;
@@ -217,7 +244,7 @@ module demo_sdram_seq #(
         t_mode   = AM_LINEAR;
         t_base   = '0;
         t_count  = 32'd0;
-        t_stride = 25'd1;
+        t_stride = ADDR_WIDTH'(1);
         t_wait   = 32'd0;
 
         unique case (scen)
@@ -229,11 +256,11 @@ module demo_sdram_seq #(
 
         // 1 - address bus integrity. A distinct word at address 0 and at
         //     every power of two up to 2^24, written then read back. If two
-        //     address lines are swapped or one is stuck, two of these 26
+        //     address lines are swapped or one is stuck, two of these
         //     addresses collide and the check fails.
         4'd1: case (phase)
-                3'd0: begin t_kind = PH_WBLK; t_mode = AM_POW2; t_count = 32'd26; end
-                3'd1: begin t_kind = PH_RBLK; t_mode = AM_POW2; t_count = 32'd26; end
+                3'd0: begin t_kind = PH_WBLK; t_mode = AM_POW2; t_count = POW2_COUNT; end
+                3'd1: begin t_kind = PH_RBLK; t_mode = AM_POW2; t_count = POW2_COUNT; end
                 default: t_kind = PH_END;
               endcase
 
@@ -246,8 +273,8 @@ module demo_sdram_seq #(
         //     start to finish - every access after the first is a row hit.
         //     The fastest case the controller has.
         4'd3: case (phase)
-                3'd0: begin t_kind = PH_WBLK; t_base = 25'd0; t_count = 32'd1024; end
-                3'd1: begin t_kind = PH_RBLK; t_base = 25'd0; t_count = 32'd1024; end
+                3'd0: begin t_kind = PH_WBLK; t_base = '0; t_count = COL_WORDS; end
+                3'd1: begin t_kind = PH_RBLK; t_base = '0; t_count = COL_WORDS; end
                 default: t_kind = PH_END;
               endcase
 
@@ -255,8 +282,8 @@ module demo_sdram_seq #(
         //     word 1024 and moves to the other bank at the same row index.
         //     Same row, different bank - one extra ACTIVATE in the middle.
         4'd4: case (phase)
-                3'd0: begin t_kind = PH_WBLK; t_base = 25'd0; t_count = 32'd2048; end
-                3'd1: begin t_kind = PH_RBLK; t_base = 25'd0; t_count = 32'd2048; end
+                3'd0: begin t_kind = PH_WBLK; t_base = '0; t_count = BANK_STRIDE; end
+                3'd1: begin t_kind = PH_RBLK; t_base = '0; t_count = BANK_STRIDE; end
                 default: t_kind = PH_END;
               endcase
 
@@ -266,8 +293,8 @@ module demo_sdram_seq #(
         //     ACTIVATE, then one word. The worst case the controller has, and
         //     the interesting one to compare against scenario 3.
         4'd5: case (phase)
-                3'd0: begin t_kind = PH_WBLK; t_base = 25'd0; t_count = 32'd256; t_stride = 25'd2048; end
-                3'd1: begin t_kind = PH_RBLK; t_base = 25'd0; t_count = 32'd256; t_stride = 25'd2048; end
+                3'd0: begin t_kind = PH_WBLK; t_base = '0; t_count = 32'd256; t_stride = ADDR_WIDTH'(BANK_STRIDE); end
+                3'd1: begin t_kind = PH_RBLK; t_base = '0; t_count = 32'd256; t_stride = ADDR_WIDTH'(BANK_STRIDE); end
                 default: t_kind = PH_END;
               endcase
 
@@ -288,8 +315,8 @@ module demo_sdram_seq #(
         //     board: get rowWidth or columnWidth wrong and the address space
         //     folds back on itself, which shows up here and nowhere else.
         4'd7: case (phase)
-                3'd0: begin t_kind = PH_WBLK; t_base = 25'd0; t_count = TOTAL_WORDS; end
-                3'd1: begin t_kind = PH_RBLK; t_base = 25'd0; t_count = TOTAL_WORDS; end
+                3'd0: begin t_kind = PH_WBLK; t_base = '0; t_count = TOTAL_WORDS; end
+                3'd1: begin t_kind = PH_RBLK; t_base = '0; t_count = TOTAL_WORDS; end
                 default: t_kind = PH_END;
               endcase
 
@@ -400,7 +427,7 @@ module demo_sdram_seq #(
             ser_expect     <= '0;
             p_kind         <= PH_END;
             p_mode         <= AM_LINEAR;
-            p_stride       <= 25'd1;
+            p_stride       <= ADDR_WIDTH'(1);
             init_cnt       <= '0;
         end else begin
 

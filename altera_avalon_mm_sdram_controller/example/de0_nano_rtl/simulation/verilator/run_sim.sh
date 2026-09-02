@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run_sim.sh - board-level simulation of the DE10-Lite demonstration.
+# run_sim.sh - board-level simulation of the DE0-Nano demonstration.
 #
 #   ./run_sim.sh
 #
@@ -30,7 +30,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EX="$(cd "$HERE/../.." && pwd)"
 CORE="$(cd "$EX/../.." && pwd)"
 BUILD="$HERE/.build"
-SYS="$EX/qsys/sdram_perbank_sys"
+SYS="$EX/qsys/sdram_nano_sys"
 
 QUARTUS_ROOT="${QUARTUS_ROOT:-/opt/intelFPGA/18.1}"
 
@@ -38,7 +38,7 @@ command -v verilator >/dev/null 2>&1 || {
     echo "error: verilator not found in PATH" >&2; exit 1; }
 
 # ---- generate the Platform Designer system if it is not there ---------------
-if [[ ! -f "$SYS/synthesis/sdram_perbank_sys.v" ]]; then
+if [[ ! -f "$SYS/synthesis/sdram_nano_sys.v" ]]; then
     QSYS="$QUARTUS_ROOT/quartus/sopc_builder/bin"
     [[ -x "$QSYS/qsys-generate" ]] || {
         echo "error: the Platform Designer system has not been generated and" >&2
@@ -46,8 +46,8 @@ if [[ ! -f "$SYS/synthesis/sdram_perbank_sys.v" ]]; then
     echo "== generating the Platform Designer system =="
     ( cd "$EX/qsys" \
       && "$QSYS/qsys-script" --script=build_system.tcl --search-path="$CORE,\$" \
-      && "$QSYS/qsys-generate" sdram_perbank_sys.qsys --synthesis=VERILOG \
-             --search-path="$CORE,\$" --output-directory=sdram_perbank_sys ) \
+      && "$QSYS/qsys-generate" sdram_nano_sys.qsys --synthesis=VERILOG \
+             --search-path="$CORE,\$" --output-directory=sdram_nano_sys ) \
       > "$HERE/.qsys.log" 2>&1 || {
         echo "error: system generation failed - see $HERE/.qsys.log" >&2; exit 1; }
 fi
@@ -68,14 +68,14 @@ rm -rf "$BUILD"
 # regression with nothing waived.
 verilator --binary --timing --assert -Wno-fatal \
     -MAKEFLAGS "$MK_OVERRIDE" \
-    --top-module de10_lite_sdram_demo_tb -o demo -Mdir "$BUILD" \
+    --top-module de0_nano_sdram_demo_tb -o demo -Mdir "$BUILD" \
     ${CXX_EXTRA:+-CFLAGS "$CXX_EXTRA"} \
     -I"$SYS/synthesis" -I"$SYS/synthesis/submodules" \
-    "$SYS/synthesis/sdram_perbank_sys.v" \
+    "$SYS/synthesis/sdram_nano_sys.v" \
     "$SYS/synthesis/submodules/avalon_mm_sdram_controller.sv" \
     "$EX/../common/demo_sdram_seq.sv" "$EX/../common/demo_avl_mm_master.sv" \
     "$CORE/tb/sdram_device_model.sv" "$CORE/tb/sdram_timing_check.sv" \
-    "$EX/tb/de10_lite_sdram_demo_tb.sv" > "$HERE/.build.log" 2>&1
+    "$EX/tb/de0_nano_sdram_demo_tb.sv" > "$HERE/.build.log" 2>&1
 
 if [[ ! -x "$BUILD/demo" ]]; then
     echo "error: build failed" >&2

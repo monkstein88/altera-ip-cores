@@ -45,10 +45,10 @@ set_global_assignment -name STRATIX_DEVICE_IO_STANDARD "3.3-V LVTTL"
 # always compiles whatever is actually in the component directory.
 # ---------------------------------------------------------------------------
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/sdram_pll.sv
-set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/demo_avl_mm_master.sv
-set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/demo_sdram_seq.sv
-set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/hex7seg.sv
-set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/key_debounce.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../common/demo_avl_mm_master.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../common/demo_sdram_seq.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../common/hex7seg.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../common/key_debounce.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/de10_lite_sdram_demo.sv
 set_global_assignment -name QIP_FILE ../qsys/sdram_perbank_sys/synthesis/sdram_perbank_sys.qip
 set_global_assignment -name SDC_FILE de10_lite_sdram_demo.sdc

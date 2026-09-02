@@ -122,8 +122,8 @@ unproven - no functional model forgets.
 |---|---|
 | `qsys/build_system.tcl` | The system: clock source, controller, preset. The one file that differs from the original in substance |
 | `rtl/de10_lite_sdram_demo.sv` | Top level: PLL, sequencer, master, displays, JTAG probes |
-| `rtl/demo_sdram_seq.sv` | The scenarios and their checker |
-| `rtl/demo_avl_mm_master.sv` | Avalon-MM master |
+| `../common/demo_sdram_seq.sv` | The scenarios and their checker, shared with the other three examples |
+| `../common/demo_avl_mm_master.sv` | Avalon-MM master, shared |
 | `rtl/sdram_pll.sv` | 50 MHz in, 100 MHz plus a phase-shifted clock for the SDRAM pins |
 | `tb/de10_lite_sdram_demo_tb.sv` | Board-level testbench, nine phases |
 | `simulation/verilator/run_sim.sh` | Generates the system if needed, builds, runs |
