@@ -142,8 +142,23 @@ module demo_sdram_seq #(
     localparam logic [2:0] PH_BE     = 3'd5;     // byte-enable sequence
 
     // ---- address modes ----------------------------------------------------
-    localparam logic AM_LINEAR = 1'b0;           // addr += stride
-    localparam logic AM_POW2   = 1'b1;           // 0, 1, 2, 4, 8, ... 2^24
+    localparam logic [1:0] AM_LINEAR  = 2'd0;    // addr += stride
+    localparam logic [1:0] AM_POW2    = 2'd1;    // 0, 1, 2, 4, 8, ... 2^24
+    // Alternates bank AND staggers the row, so the two banks are never on the
+    // same row:  (b0,r0) (b1,r1) (b0,r1) (b1,r2) (b0,r2) ...
+    //
+    // A linear walk across the bank bit does NOT test per-bank row tracking,
+    // which is what this scenario is for. Every address in such a walk is in
+    // the same row, so a controller with ONE shared open-row register - the
+    // exact bug this core exists to avoid, and the one in Intel's simulation
+    // model - holds the right row by coincidence and passes. Injected into
+    // the real design on a DE0-Nano, that fault was caught by scenarios 6 and
+    // 7 and missed by this one.
+    //
+    // Here the third step asks for bank 0 at the row bank 1 has just
+    // activated. A shared register reports a hit and reads bank 0 while its
+    // OLD row is still open; per-bank state reports a miss and re-activates.
+    localparam logic [1:0] AM_BANKROW = 2'd2;
 
     // ---- fixed addresses for the small scenarios --------------------------
     localparam logic [ADDR_WIDTH-1:0] DQ_ADDR   = ADDR_WIDTH'('h0001234);
@@ -201,7 +216,7 @@ module demo_sdram_seq #(
 
     // phase parameters, latched in ST_SETUP
     logic [2:0]  p_kind;
-    logic        p_mode;
+    logic [1:0]  p_mode;
     logic [ADDR_WIDTH-1:0] p_stride;
 
     // issue side
@@ -227,7 +242,7 @@ module demo_sdram_seq #(
     // The phase table: what scenario `scen` does at step `phase`.
     // -----------------------------------------------------------------------
     logic [2:0]            t_kind;
-    logic                  t_mode;
+    logic [1:0]            t_mode;
     // Derived from COL_BITS: one full row of columns, and the stride that
     // moves to the next bank (ADDR_MAP 0 puts bank[0] directly above the
     // column). At COL_BITS 10 these are the 1024 and 2048 the scenarios were
@@ -284,12 +299,17 @@ module demo_sdram_seq #(
                 default: t_kind = PH_END;
               endcase
 
-        // 4 - bank toggle: 2048 words from 0, so the walk crosses addr[10] at
-        //     word 1024 and moves to the other bank at the same row index.
-        //     Same row, different bank - one extra ACTIVATE in the middle.
+        // 4 - bank toggle: alternates bank on every access while staggering
+        //     the row, so the two banks are never on the same row and each is
+        //     revisited at the row the other one activated last. This is the
+        //     access the controller exists for, and - unlike the linear walk
+        //     that used to be here - a single shared open-row register fails
+        //     it. See AM_BANKROW above.
         4'd4: case (phase)
-                3'd0: begin t_kind = PH_WBLK; t_base = '0; t_count = BANK_STRIDE; end
-                3'd1: begin t_kind = PH_RBLK; t_base = '0; t_count = BANK_STRIDE; end
+                3'd0: begin t_kind = PH_WBLK; t_mode = AM_BANKROW;
+                            t_base = '0; t_count = BANK_STRIDE; end
+                3'd1: begin t_kind = PH_RBLK; t_mode = AM_BANKROW;
+                            t_base = '0; t_count = BANK_STRIDE; end
                 default: t_kind = PH_END;
               endcase
 
@@ -386,12 +406,24 @@ module demo_sdram_seq #(
 
     // Next address in the walk.
     logic [ADDR_WIDTH-1:0] iss_next, chk_next;
-    assign iss_next = (p_mode == AM_POW2)
-                    ? ((iss_addr == '0) ? {{(ADDR_WIDTH-1){1'b0}}, 1'b1} : (iss_addr << 1))
-                    : (iss_addr + p_stride);
-    assign chk_next = (p_mode == AM_POW2)
-                    ? ((chk_addr == '0) ? {{(ADDR_WIDTH-1){1'b0}}, 1'b1} : (chk_addr << 1))
-                    : (chk_addr + p_stride);
+    // AM_BANKROW steps by inspecting the bank bit: on bank 1 drop back to
+    // bank 0 keeping the row, otherwise advance the row and move to bank 1.
+    localparam logic [ADDR_WIDTH-1:0] BANK_BIT = ADDR_WIDTH'(32'd1 << COL_BITS);
+    localparam logic [ADDR_WIDTH-1:0] ROW_BIT  = ADDR_WIDTH'(32'd1 << (COL_BITS + 1));
+
+    function automatic logic [ADDR_WIDTH-1:0] step(input logic [ADDR_WIDTH-1:0] a,
+                                                   input logic [1:0] mode,
+                                                   input logic [ADDR_WIDTH-1:0] stride);
+        case (mode)
+            AM_POW2:    step = (a == '0) ? {{(ADDR_WIDTH-1){1'b0}}, 1'b1} : (a << 1);
+            AM_BANKROW: step = a[COL_BITS] ? (a - BANK_BIT)
+                                           : (a + ROW_BIT + BANK_BIT);
+            default:    step = a + stride;
+        endcase
+    endfunction
+
+    assign iss_next = step(iss_addr, p_mode, p_stride);
+    assign chk_next = step(chk_addr, p_mode, p_stride);
 
     assign running = (state != ST_IDLE);
 

@@ -88,7 +88,7 @@ export QUARTUS_ROOT=/opt/intelFPGA/18.1     # first run only, to generate the sy
 ./simulation/verilator/run_sim.sh
 ```
 
-Current result: **58 checks passed, 0 failed, 0 timing violations, 0 illegal
+Current result: **59 checks passed, 0 failed, 0 timing violations, 0 illegal
 device accesses** — the same nine phases as the DE10-Lite, against this part's
 geometry and timings.
 

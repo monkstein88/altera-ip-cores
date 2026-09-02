@@ -51,8 +51,7 @@ not where the headroom was. See section 7.
 **Verified in simulation, synthesised, and closing timing — but never run on a
 board.** The core compiles through Quartus 18.1.1 Standard for the DE10-Lite's
 MAX 10, fits, meets a 100 MHz constraint with 0.208 ns of setup slack, and
-produces a bitstream. It has not been programmed into a part, so refresh and
-retention on silicon remain unproven: no functional model forgets. Resource and
+produces a bitstream. It has not been programmed into a part. Resource and
 f_MAX figures are in section 7.4 and are reproducible.
 
 ---
@@ -359,7 +358,7 @@ priority chain shared one cycle, and f_MAX was 83 MHz.
 | `tb/avalon_mm_sdram_controller_sva.sv` | Avalon protocol, command legality, DQ contention, row bookkeeping | Passing |
 | `tb/sdram_timing_check.sv` | tRC, tRAS, tRP, tRCD, tRRD, tWR, tMRD, tRFC, read-to-write turnaround, refresh interval | Passing, with a 23-check threshold self-test |
 | `benchmark/` | Throughput against the core being replaced | Passing |
-| `example/de10_lite_rtl` | Board-level demonstration, 9 phases | 58 checks passing in simulation |
+| `example/de10_lite_rtl` | Board-level demonstration, 9 phases | 59 checks passing in simulation |
 | `simulation/questa/run_sim.tcl` | Coverage and assertion non-vacuity, same 13 configurations | 22 assertion instances, **none vacuous**, 100% FSM state and transition |
 | Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met with 1.011 ns slack (DE0-Nano), 0.208 ns (DE10-Lite) |
 | Hardware | Retention and refresh on silicon | **Not run — no board** |

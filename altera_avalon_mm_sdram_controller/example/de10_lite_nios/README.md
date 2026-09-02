@@ -40,14 +40,15 @@ plus three that only a CPU can do:
 | **32-bit access** | the width adapter putting the two half-words in the wrong order |
 | One row | the fastest case — column moves, row and bank do not |
 | Row thrash | the worst case — a row miss on every access, compared against the row-hit cost |
-| Four banks, one row each | the access this controller exists for |
+| Four banks, staggered rows | the access this controller exists for - and, since it revisits a bank at the row another bank just opened, one a shared open-row register fails |
 | **Refresh retention** | data surviving a second of idle, over 120 full refresh periods |
 | Full march | every word in the 64 MB device written and verified |
 
 The three in bold are not in the RTL example. Byte enables and 32-bit access
 need a CPU to generate them; refresh retention needs *real time* and real
-silicon — no functional model forgets, which is why the simulation cannot
-settle it and this is the test worth running on a board.
+silicon. That was the intent; measurement on the DE0-Nano says the idle is far
+too short to detect even a completely disabled refresh - see the
+[DE0-Nano notes](../de0_nano_nios/README.md#what-the-board-does-not-prove-the-retention-test-is-too-short).
 
 ## Two things the system does on purpose
 

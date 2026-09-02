@@ -223,22 +223,41 @@ module de0_nano_sdram_demo_tb;
     logic [3:0]  act_banks_seen;
     logic [12:0] act_rows_seen_or;
     logic        act_any;
+    // Per-bank last row, and whether two banks were ever activated at
+    // DIFFERENT rows. That is the property a shared open-row register cannot
+    // have, so it is the one worth asserting - "every ACTIVATE used row 0",
+    // which this used to check, is exactly the weakness that let a shared
+    // register pass scenario 4 on real hardware.
+    logic [12:0] act_row_of [4];
+    logic [3:0]  act_bank_hit;
+    logic        act_rows_differed;
     always_ff @(posedge clk) begin
         if (!resetn) begin
-            act_banks_seen   <= '0;
-            act_rows_seen_or <= '0;
-            act_any          <= 1'b0;
+            act_banks_seen    <= '0;
+            act_rows_seen_or  <= '0;
+            act_any           <= 1'b0;
+            act_bank_hit      <= '0;
+            act_rows_differed <= 1'b0;
+            for (int b = 0; b < 4; b++) act_row_of[b] <= '0;
         end else if (!DRAM_CS_N && !DRAM_RAS_N && DRAM_CAS_N && DRAM_WE_N) begin
             act_banks_seen   <= act_banks_seen | (4'd1 << DRAM_BA);
             act_rows_seen_or <= act_rows_seen_or | DRAM_ADDR;
             act_any          <= 1'b1;
+            act_row_of[DRAM_BA] <= DRAM_ADDR[12:0];
+            act_bank_hit        <= act_bank_hit | (4'd1 << DRAM_BA);
+            for (int b = 0; b < 4; b++)
+                if (act_bank_hit[b] && (2'(b) !== DRAM_BA)
+                    && (act_row_of[b] !== DRAM_ADDR[12:0]))
+                    act_rows_differed <= 1'b1;
         end
     end
     task automatic act_clear();
         @(posedge clk);
         force act_banks_seen = '0; force act_rows_seen_or = '0; force act_any = 1'b0;
+        force act_bank_hit = '0;   force act_rows_differed = 1'b0;
         @(posedge clk);
         release act_banks_seen; release act_rows_seen_or; release act_any;
+        release act_bank_hit;   release act_rows_differed;
     endtask
 
     // ----------------------------------------------------------------------
@@ -292,7 +311,11 @@ module de0_nano_sdram_demo_tb;
                   done_count === ((d0 + 4'd1) & 4'hF));
         end
         $display("  (scenario 6 passes for free here: the model does not model");
-        $display("   refresh at all. Only hardware proves retention.)");
+        $display("   refresh at all. Nor, measured, does the board: with refresh");
+        $display("   disabled outright the DE0-Nano still passed this scenario -");
+        $display("   a room-temperature cell holds for tens of seconds. What");
+        $display("   enforces the interval is the tREFI check in the core");
+        $display("   testbench, not this scenario.)");
 
         // --- Phase 2: the word counts the block scenarios report ---------
         $display("\n--- Phase 2: reported word counts ---");
@@ -357,8 +380,12 @@ module de0_nano_sdram_demo_tb;
         check("ACTIVATE was issued during the walk", act_any === 1'b1);
         check("ACTIVATE used banks 0 and 1 only, as the decode predicts",
               act_banks_seen === 4'b0011);
-        check("every ACTIVATE used row 0 - crossing a row of columns changed bank, not row",
-              act_rows_seen_or === 13'd0);
+        check("the walk used more than one row",
+              act_rows_seen_or !== 13'd0);
+        // The point of the whole scenario. A controller with one shared
+        // open-row register keeps both banks on the same row and fails here.
+        check("the two banks were activated at different rows",
+              act_rows_differed === 1'b1);
 
         // --- Phase 6: the checker actually detects a fault ---------------
         // Without this, "all scenarios passed" could mean the comparison is

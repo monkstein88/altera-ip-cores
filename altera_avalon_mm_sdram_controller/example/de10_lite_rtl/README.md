@@ -45,7 +45,7 @@ export QUARTUS_ROOT=/opt/intelFPGA/18.1     # first run only, to generate the sy
 Generating the Platform Designer system needs `qsys-generate`, which is part of
 a Quartus installation but needs no licence. After that it is Verilator alone.
 
-Current result: **58 checks passed, 0 failed, 0 timing violations, 0 illegal
+Current result: **59 checks passed, 0 failed, 0 timing violations, 0 illegal
 device accesses.**
 
 The nine phases are the ones the original demonstration had, with the last four
@@ -112,9 +112,18 @@ export QUARTUS_ROOT=/opt/intelFPGA/18.1
 | Setup slack, SDRAM interface | +1.763 ns |
 | f_MAX | 102.1 MHz |
 
+**+0.208 ns is inside the fitter's own run-to-run spread, so treat this as
+"closes, barely" rather than as margin.** Two clean builds of the unchanged
+DE0-Nano Nios system differed by 0.24 ns, and this design has less than that in
+hand. The MAX 10 -7 is the slower of the two parts here and the controller is
+its critical path: the DE0-Nano closes the same 100 MHz with 1.011 ns. If a
+rebuild lands the wrong side of zero, the fix that bought the last 4 MHz is
+described in the core [README](../../README.md#what-is-left) - the tRC counter
+feeding `act_ok_v` is the current critical path, and its reaches-zero test
+could be registered the way the row match already is.
+
 `run_on_board.sh` is the step that has never been run. Until someone programs a
-board there is no hardware result for this core, and refresh and retention stay
-unproven - no functional model forgets.
+board there is no hardware result for this core.
 
 ## Files
 

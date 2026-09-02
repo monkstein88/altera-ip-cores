@@ -344,10 +344,25 @@ static void test_four_banks(void)
     uint64_t t0;
     int ok = 1;
 
-    /* addr = (col << 0) | (bank0 << COL_BITS) | (bank1 << (COL_BITS+1+13)) */
+    /* addr = col | (bank0 << COL_BITS) | (row << (COL_BITS+1))
+     *            | (bank1 << (COL_BITS+1+13))
+     *
+     * The row is STAGGERED so the four banks are never all on the same row.
+     * A rotation that leaves every bank on row 0 - which this used to do -
+     * does not test per-bank row tracking at all: a controller with one
+     * shared open-row register holds the right row by coincidence and passes.
+     * That was measured, not guessed; the fault was injected into the real
+     * design on a DE0-Nano and this test missed it.
+     *
+     * With the stagger, access 4 asks for bank 0 at the row banks 1-3 have
+     * just activated, while bank 0 still has its own older row open. A shared
+     * register calls that a hit and reads the wrong row; per-bank state calls
+     * it a miss and re-activates. */
+    #define BANK_ROT_ROW(i)  (((i) >> 2) + (((i) & 3u) ? 1u : 0u))
     #define BANK_ROT_ADDR(i) \
-        ((((i) >> 2) & (COL_WORDS - 1)) \
+        (((i) >> 2) \
          | ((((i) >> 0) & 1u) << COL_BITS) \
+         | (BANK_ROT_ROW(i) << (COL_BITS + 1)) \
          | ((((i) >> 1) & 1u) << (COL_BITS + 1 + 13)))
 
     t0 = now_us();
@@ -363,9 +378,10 @@ static void test_four_banks(void)
             break;
         }
     }
-    check("four banks, one row each: data correct", ok);
+    check("four banks at staggered rows: per-bank row tracking", ok);
     printf("        %lu words in %lu us\n", (unsigned long)n, (unsigned long)us);
     #undef BANK_ROT_ADDR
+    #undef BANK_ROT_ROW
 }
 
 /* ===========================================================================

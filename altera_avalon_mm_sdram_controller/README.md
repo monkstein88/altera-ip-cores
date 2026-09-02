@@ -3,8 +3,7 @@
 **Status: working controller, packaged for Platform Designer, documented,
 verified in simulation, synthesised, closing timing at 100 MHz — and RUN ON
 HARDWARE.** All eight demonstration scenarios pass on a real Terasic DE0-Nano
-driving an ISSI IS42S16160B, including refresh retention, which no simulation
-can settle. On silicon it reaches **199.6 MB/s** where every access is a row
+driving an ISSI IS42S16160B. On silicon it reaches **199.6 MB/s** where every access is a row
 hit — 99.8% of a 16-bit bus at 100 MHz — and 29.5 MB/s where every access is a
 row miss.
 
@@ -115,8 +114,18 @@ be measured on this same ruler before being believed.
 
 Also outstanding:
 
+- **A retention test with teeth.** The scenario-6 and Nios idle periods are
+  far too short to detect a refresh failure at room temperature - measured on
+  a DE0-Nano with refresh disabled outright, first loss came at 8 s, and both
+  tests idle for 1 s or less. The numbers are in the
+  [DE0-Nano Nios notes](example/de0_nano_nios/README.md). The refresh interval
+  itself is enforced by the timing checker in simulation, which fails all
+  thirteen configurations on `tREFI`.
+- **Asserting that work happened.** `pass_acc` starts true and is only cleared
+  on a mismatch, and the board script prints the transaction counters rather
+  than checking them, so a scenario that issued nothing would report a pass.
 - **A second board.** The DE0-Nano runs: eight of eight RTL scenarios and ten
-  of ten Nios II checks, retention included. The DE10-Lite builds, fits and
+  of ten Nios II checks. The DE10-Lite builds, fits and
   closes timing, and has never been programmed into a part - so its preset,
   its 10-bit column geometry and its 64 MByte part are still unproven on
   silicon.
@@ -243,14 +252,14 @@ altera_avalon_mm_sdram_controller/
 | [`tb/`](tb) | 166 checks per configuration, on the command stream as well as the data | Passing |
 | [`simulation/questa/run_sim.tcl`](simulation/questa/run_sim.tcl) | The same 13 configurations, plus code coverage and assertion non-vacuity | 22 assertion instances, **none vacuous** |
 | [`benchmark/`](benchmark/README.md) | Throughput against the core being replaced | Passing |
-| [`example/de10_lite_rtl`](example/de10_lite_rtl/README.md) | DE10-Lite board demonstration, 9 phases | 58 checks in simulation; no DE10-Lite here to run it on |
-| [`example/de0_nano_rtl`](example/de0_nano_rtl/README.md) | DE0-Nano board demonstration, same nine phases at the other part's geometry | 58 checks in simulation, **8/8 scenarios on the board** |
+| [`example/de10_lite_rtl`](example/de10_lite_rtl/README.md) | DE10-Lite board demonstration, 9 phases | 59 checks in simulation; no DE10-Lite here to run it on |
+| [`example/de0_nano_rtl`](example/de0_nano_rtl/README.md) | DE0-Nano board demonstration, same nine phases at the other part's geometry | 59 checks in simulation, **8/8 scenarios on the board** |
 | [`example/de10_lite_nios`](example/de10_lite_nios/README.md) | Nios II memory test through cache, interconnect and a width adapter | Builds; byte enables and 32-bit access are only reachable here |
 | [`example/de0_nano_nios`](example/de0_nano_nios/README.md) | The same, on the DE0-Nano | **10/10 checks on the board** |
 | Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met, +1.011 ns DE0-Nano, +0.208 ns DE10-Lite |
 | [`doc/tools/check_facts.py`](doc/tools/check_facts.py) | Every number in the documents, re-derived from the RTL — and the throughput table re-measured by running the benchmark | 261 claims |
-| Hardware, DE0-Nano | Every scenario on a real board, including retention | **8/8 passing on silicon** |
-| Hardware, DE0-Nano, Nios II | Byte enables, 32-bit width adaptation and retention, from a CPU | **10/10 passing on silicon** |
+| Hardware, DE0-Nano | Every scenario on a real board | **8/8 passing on silicon** |
+| Hardware, DE0-Nano, Nios II | Byte enables, 32-bit width adaptation, from a CPU | **10/10 passing on silicon** |
 | Hardware, DE10-Lite | — | **Not run — no board here** |
 
 Questa reports every one of the 22 assertion instances passing **non-vacuously**,

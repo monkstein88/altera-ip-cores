@@ -30,7 +30,7 @@ below.
   PASS  row thrash: every access a row miss, data still correct
         row hit ~130 ns/word, row miss ~488 ns/word
   PASS  a row miss costs more per word than a row hit
-  PASS  four banks, one row each: data correct
+  PASS  four banks at staggered rows: per-bank row tracking
         1024 words in 500 us
         idling ~1 s (over 120 full refresh periods)...
   PASS  refresh retention: data survives a second of idle
@@ -87,14 +87,48 @@ plus three that only a CPU can do:
 | **32-bit access** | the width adapter putting the two half-words in the wrong order |
 | One row | the fastest case — column moves, row and bank do not |
 | Row thrash | the worst case — a row miss on every access, compared against the row-hit cost |
-| Four banks, one row each | the access this controller exists for |
-| **Refresh retention** | data surviving a second of idle, over 120 full refresh periods |
+| Four banks, staggered rows | the access this controller exists for - and, since it revisits a bank at the row another bank just opened, one a shared open-row register fails |
+| **Refresh retention** | *see the caveat below - this one does not currently bite* |
 | Full march | every word in the 32 MB device written and verified |
 
 The three in bold are not in the RTL example. Byte enables and 32-bit access
 need a CPU to generate them; refresh retention needs *real time* and real
-silicon — no functional model forgets, which is why the simulation cannot
-settle it and this is the test worth running on a board.
+silicon. That was the intent, at least - measurement says the idle is far too
+short to detect anything, and the section below says so with numbers.
+
+## What the board does not prove: the retention test is too short
+
+Measured, not assumed. The controller was rebuilt with **refresh disabled
+outright** - the refresh timer never fires, so no AUTO REFRESH command is ever
+issued - and programmed into the DE0-Nano:
+
+| Idle | 4096 words (8 KB) | 4 M words (8 MB) |
+|---|---|---|
+| 1 s | 0 wrong | 0 wrong |
+| 2 s | 0 wrong | 0 wrong |
+| 4 s | - | 0 wrong |
+| 5 s | 0 wrong | - |
+| 8 s | - | **29 wrong** |
+| 10 s | 0 wrong | - |
+| 20 s | **2 wrong** | - |
+
+Every other scenario still passed, and so did this one. A DRAM cell at room
+temperature holds its charge for tens of seconds; the 64 ms refresh period in
+the datasheet is a worst-case guarantee over the full temperature and process
+range, not a description of a part sitting on a desk. So the 250 ms idle in
+the RTL demo and the 1 s idle here are 20-80x too short to notice that refresh
+has stopped entirely, and neither would ever notice an interval that is merely
+*wrong*.
+
+**What actually enforces the refresh interval is the command-stream timing
+checker in simulation**, which fails all thirteen configurations immediately
+with `tREFI (refresh overdue)` and has a self-test pinning its threshold. The
+board test is an end-to-end smoke check, and at its present length it is a
+weak one.
+
+To make it bite, the idle has to be around 15-20 s over a large region - which
+is a real cost in test time, and is why the numbers above are recorded here
+rather than silently applied.
 
 ## Two things the system does on purpose
 
@@ -130,12 +164,16 @@ Results:
 
 | | |
 |---|---|
-| Logic elements | 5,060 / 22,320 (23%) |
+| Logic elements | 5,057 / 22,320 (23%) |
 | Registers | 2,987 |
 | Memory bits | 300,672 / 608,256 (49%) |
 | Program | 16 KB, in 32 KB of on-chip RAM |
-| Setup slack, 100 MHz system clock | **+1.201 ns** |
-| Setup slack, SDRAM interface | +3.287 ns |
+| Setup slack, 100 MHz system clock | **+0.957 ns** |
+| Setup slack, SDRAM interface | +3.477 ns |
+
+From a clean `./build.sh`. Two clean builds of these same sources gave +0.957
+and +1.201 ns, so read the slack as "about a nanosecond", not as a constant -
+regenerating the Platform Designer system reshuffles the fit.
 
 ## This board is much tighter on memory, and it took two goes to fit
 
