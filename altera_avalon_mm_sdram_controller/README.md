@@ -1,8 +1,15 @@
 # Avalon-MM SDRAM Controller
 
 **Status: working controller, packaged for Platform Designer, documented,
-verified in simulation, synthesised, and closing timing at 100 MHz on the
-DE10-Lite's MAX 10. Not yet run on a board.**
+verified in simulation, synthesised, closing timing at 100 MHz — and RUN ON
+HARDWARE.** All eight demonstration scenarios pass on a real Terasic DE0-Nano
+driving an ISSI IS42S16160B, including refresh retention, which no simulation
+can settle. On silicon it reaches **199.6 MB/s** where every access is a row
+hit — 99.8% of a 16-bit bus at 100 MHz — and 29.5 MB/s where every access is a
+row miss.
+
+The DE10-Lite build is complete and closes timing but has not been run: no such
+board was available here.
 
 A from-scratch SDR SDRAM controller for Avalon-MM, intended to replace
 [`altera_avalon_new_sdram_controller`](../altera_avalon_new_sdram_controller)
@@ -82,16 +89,17 @@ constraints, so the comparison is like for like.
 
 | | Intel's core | Custom core |
 |---|---|---|
-| Logic elements | 353 | 1,193 |
-| Registers | 225 | 779 |
-| f_MAX | 115.2 MHz | **101.0 MHz** |
+| Logic elements | 353 | 1,345 |
+| Registers | 225 | 787 |
+| f_MAX | 115.2 MHz | **104.8 MHz** |
 
 The whole DE10-Lite demonstration — controller, sequencer, master, PLL,
-displays and JTAG — fits in **2,805 LEs and 1,602 registers**, 6% of the
-device, and closes 100 MHz with **0.430 ns** of setup slack.
+displays and JTAG — fits in **3,099 LEs and 1,778 registers**, 6% of the
+device, and closes 100 MHz with **0.208 ns** of setup slack. The DE0-Nano
+demonstration closes it with **1.011 ns** on a Cyclone IV E.
 
-The core costs about 3.4× the logic of the controller it replaces and runs at
-0.88× its f_MAX. That is what per-bank row tracking, look-ahead and an 8-deep
+The core costs about 3.8× the logic of the controller it replaces and runs at
+0.91× its f_MAX. That is what per-bank row tracking, look-ahead and an 8-deep
 command buffer cost. It is worth it at and below 100 MHz, where the throughput
 table above applies; it is not a free substitution, and a design already at
 115 MHz with Intel's core cannot simply swap this one in.
@@ -107,14 +115,21 @@ be measured on this same ruler before being believed.
 
 Also outstanding:
 
-- **A board.** The design synthesises, fits, meets timing and produces a
-  bitstream, but has never been programmed into a part. Refresh and retention
-  are the things only silicon can settle: no functional model forgets.
-- **f_MAX headroom.** 101 MHz against a 100 MHz target is 1% of margin. The
-  critical path is the loop from the registered FIFO head, through the S_RUN
-  priority chain, through `f_pop` and back into that register. Shortening it
-  further means splitting the priority chain across two cycles, which costs a
-  cycle on every row change and should be measured before being believed.
+- **A second board.** The DE0-Nano runs: eight of eight RTL scenarios and ten
+  of ten Nios II checks, retention included. The DE10-Lite builds, fits and
+  closes timing, and has never been programmed into a part - so its preset,
+  its 10-bit column geometry and its 64 MByte part are still unproven on
+  silicon.
+- **f_MAX headroom.** 104.8 MHz against a 100 MHz target is 5% of margin,
+  up from 1% now that the row-match comparison is resolved a cycle ahead
+  rather than inside the scheduler loop. The critical path has moved with it:
+  it now starts at the tRC counter, runs through `act_ok_v` and the S_RUN
+  priority chain, and ends in the row bookkeeping. The same trick applies -
+  a counter's "reaches zero next cycle" is a function of registers and need
+  not be evaluated inside the loop that uses it - and it has not been done.
+  Beyond that, shortening the chain means splitting it across two cycles,
+  which costs a cycle on every row change and should be measured before being
+  believed.
 - **More device presets.** Two are supplied - the DE10-Lite's IS42S16320D-7 and
   the DE0-Nano's IS42S16160B-7 - because those are the parts whose timing has
   been checked against a datasheet and exercised through the benchmark and the
@@ -228,13 +243,15 @@ altera_avalon_mm_sdram_controller/
 | [`tb/`](tb) | 166 checks per configuration, on the command stream as well as the data | Passing |
 | [`simulation/questa/run_sim.tcl`](simulation/questa/run_sim.tcl) | The same 13 configurations, plus code coverage and assertion non-vacuity | 22 assertion instances, **none vacuous** |
 | [`benchmark/`](benchmark/README.md) | Throughput against the core being replaced | Passing |
-| [`example/de10_lite_rtl`](example/de10_lite_rtl/README.md) | DE10-Lite board demonstration, 9 phases | 58 checks passing |
-| [`example/de0_nano_rtl`](example/de0_nano_rtl/README.md) | DE0-Nano board demonstration, same nine phases at the other part's geometry | 58 checks passing |
+| [`example/de10_lite_rtl`](example/de10_lite_rtl/README.md) | DE10-Lite board demonstration, 9 phases | 58 checks in simulation; no DE10-Lite here to run it on |
+| [`example/de0_nano_rtl`](example/de0_nano_rtl/README.md) | DE0-Nano board demonstration, same nine phases at the other part's geometry | 58 checks in simulation, **8/8 scenarios on the board** |
 | [`example/de10_lite_nios`](example/de10_lite_nios/README.md) | Nios II memory test through cache, interconnect and a width adapter | Builds; byte enables and 32-bit access are only reachable here |
-| [`example/de0_nano_nios`](example/de0_nano_nios/README.md) | The same, on the DE0-Nano | Builds |
-| Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met, +0.430 ns |
-| [`doc/tools/check_facts.py`](doc/tools/check_facts.py) | Every number in the documents, re-derived from the RTL — and the throughput table re-measured by running the benchmark | 192 claims |
-| Hardware | Retention, refresh on silicon | **Not run — no board** |
+| [`example/de0_nano_nios`](example/de0_nano_nios/README.md) | The same, on the DE0-Nano | **10/10 checks on the board** |
+| Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met, +1.011 ns DE0-Nano, +0.208 ns DE10-Lite |
+| [`doc/tools/check_facts.py`](doc/tools/check_facts.py) | Every number in the documents, re-derived from the RTL — and the throughput table re-measured by running the benchmark | 261 claims |
+| Hardware, DE0-Nano | Every scenario on a real board, including retention | **8/8 passing on silicon** |
+| Hardware, DE0-Nano, Nios II | Byte enables, 32-bit width adaptation and retention, from a CPU | **10/10 passing on silicon** |
+| Hardware, DE10-Lite | — | **Not run — no board here** |
 
 Questa reports every one of the 22 assertion instances passing **non-vacuously**,
 which is the number that matters: an assertion that only ever passes because

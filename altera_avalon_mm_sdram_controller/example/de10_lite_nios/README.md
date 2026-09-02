@@ -83,17 +83,19 @@ Results:
 
 | | |
 |---|---|
-| Logic elements | 4,977 / 49,760 (10%) |
-| Registers | 2,995 |
+| Logic elements | 5,091 / 49,760 (10%) |
+| Registers | 3,003 |
 | Memory bits | 1,113,152 / 1,677,312 (66%) |
 | Program | 75 KB, in 128 KB of on-chip RAM |
-| Setup slack, 100 MHz system clock | **+0.135 ns** |
-| Setup slack, SDRAM interface | +2.074 ns |
+| Setup slack, 100 MHz system clock | **+0.742 ns** |
+| Setup slack, SDRAM interface | +2.423 ns |
 
-0.135 ns is thin. The CPU and its caches are on the same clock as the
-controller, and the controller was already the critical path at 101 MHz on its
-own — see the core [README](../../README.md#cost-and-speed). If you add to this
-system, expect to be the one who has to close it.
+This used to close with 0.135 ns, which was thin enough to warn about: the CPU
+and its caches share a clock with the controller, and the controller was the
+critical path at 101 MHz on its own. Registering the controller's row match
+moved it to 104.8 MHz and this system to 0.742 ns — see the core
+[README](../../README.md#cost-and-speed). There is real margin now, but the
+controller is still what will run out of it first if you add to this system.
 
 ## The throughput figures are not the controller's
 
@@ -106,6 +108,22 @@ traffic generator that can.
 What the march figure is good for is the *ratio* between the row-hit and
 row-miss tests, which is a property of the controller and shows up clearly even
 CPU-bound.
+
+## A note on which Quartus drives the JTAG
+
+Three tools touch the board, and they do not all come from the same install:
+
+| Step | Which Quartus | Why |
+|---|---|---|
+| Programming, `jtagconfig`, `quartus_stp` | **25.1** (`JTAG_ROOT`) | The 18.1 JTAG server reads this board's chain only intermittently. `JTAG chain broken` appears from an unchanged, working setup, and a replug does not reliably fix it. The 25.1 stack reads it every time |
+| `nios2-download` | **18.1** (`QUARTUS_ROOT`) | It shells out to `nios2-elf-objcopy`, and only 18.1 ships the Nios II GNU toolchain. The 25.1 one fails with `command not found` and still exits 0 |
+| `nios2-terminal` | **25.1** (`JTAG_ROOT`) | The 18.1 terminal connects to the JTAG UART and then reads nothing at all - the program is running and printing, and the output never arrives |
+
+The scripts here do this split for you. If you have only one installation, set
+`JTAG_ROOT=$QUARTUS_ROOT` and expect the flakiness above.
+
+This is the same split the firewall cores in this repository document, and it
+was rediscovered the hard way here before their READMEs were consulted.
 
 ## Files
 

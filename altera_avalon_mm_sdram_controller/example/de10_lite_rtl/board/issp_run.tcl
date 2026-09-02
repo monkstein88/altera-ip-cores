@@ -10,14 +10,14 @@
 # cable used to program the board, so the whole thing is regression-testable
 # from a script and the throughput comes out in MB/s.
 #
-#   probe[184:0] = { src_stable[7:0],      184:177
+#   probe[185:0] = { src_stable[8:0],      185:177
 #                    perf_words[31:0],      176:145
 #                    perf_rd_cycles[31:0],  144:113
 #                    perf_wr_cycles[31:0],  112:81
 #                    fail_actual[15:0],      80:65
 #                    fail_expected[15:0],    64:49
 #                    fail_addr[24:0],        48:24
-#                    reserved,                  23
+#                    auto_eff,                  23
 #                    err_code[2:0],          22:20
 #                    done_count[3:0],        19:16
 #                    pll_locked,                15
@@ -27,7 +27,12 @@
 #                    cur_scenario[3:0],       11:8
 #                    pass_bitmap[7:0] }        7:0
 #
-#   source[7:0]  = { seq_reset, start, freeze, auto, select[3:0] }
+#   source[8:0]  = { jtag_override, seq_reset, start, freeze, auto,
+#                    select[3:0] }
+#
+#   jtag_override makes the design ignore the board's switches. This script
+#   always asserts it: without it a switch left in the wrong position changes
+#   what gets measured, and says nothing about having done so.
 #
 # NOTE: write_source_data treats its value as BINARY unless -value_in_hex is
 # given. Writing 0x10 without it lands 0x02 in the source register, which
@@ -51,7 +56,19 @@ if {[catch {start_insystem_source_probe -hardware_name $hw -device_name $dev} e]
 }
 
 proc probe {}    { return [read_probe_data -instance_index 0 -value_in_hex] }
-proc src   {hex} { write_source_data -instance_index 0 -value $hex -value_in_hex }
+# Every write asserts bit 8, JTAG OVERRIDE, so the physical switches are
+# ignored for the duration of this script. Without it a board with its auto
+# switch left up runs a full sweep for every scenario asked for and reports
+# the last one's counters under every name - which is exactly what this board
+# did, silently, before the override existed.
+proc src   {hex} {
+    # The substitution happens OUTSIDE the braces for the same reason `field`
+    # does it that way: inside {} Tcl does not substitute $hex before parsing,
+    # so 0x$hex is a bareword and expr rejects it.
+    set v [expr 0x$hex]
+    write_source_data -instance_index 0 \
+        -value [format "%03X" [expr {$v | 0x100}]] -value_in_hex
+}
 
 # The probe is 177 bits wide, so the hex string does not fit a machine word.
 # Tcl's expr promotes a hex literal of any length to a bignum, which `scan %x`
@@ -61,6 +78,7 @@ proc field {hex hi lo} {
     return [expr {($v >> $lo) & ((1 << ($hi - $lo + 1)) - 1)}]
 }
 
+proc f_auto   {d} { return [field $d 23 23] }
 proc f_bitmap {d} { return [field $d 7 0] }
 proc f_scen   {d} { return [field $d 11 8] }
 proc f_pass   {d} { return [field $d 12 12] }
@@ -78,7 +96,7 @@ proc f_words  {d} { return [field $d 176 145] }
 # What the design is actually acting on, after its stability filter. Reading
 # this back is how you tell "the board ignored me" from "the board did what I
 # asked and the answer is genuinely wrong".
-proc f_src    {d} { return [field $d 184 177] }
+proc f_src    {d} { return [field $d 185 177] }
 
 set ERRNAME(0) "none"
 set ERRNAME(1) "data mismatch"
@@ -108,11 +126,11 @@ proc run_scenario {sel {tries 200}} {
     # it costs nothing at human speed.
     src [format "%02X" $sel]
     after 50
-    if {[f_src [probe]] != $sel} {
+    if {([f_src [probe]] & 0xFF) != $sel} {
         # The design is not acting on what was written. Say so plainly rather
         # than reporting whatever the wrong scenario produced.
         puts [format "    WARNING: wrote select=%X, design has source=%02X" \
-              $sel [f_src [probe]]]
+              $sel [expr {[f_src [probe]] & 0xFF}]]
     }
     # Hold start asserted until the design acts on it, then release. Holding is
     # safe: the design triggers on the RISING edge only, so a held level
@@ -129,7 +147,19 @@ proc run_scenario {sel {tries 200}} {
     if {!$started} { return 0 }
     for {set i 0} {$i < $tries} {incr i} {
         after 100
-        if {[f_done [probe]] != $before} { return 1 }
+        if {[f_done [probe]] != $before} {
+            # Ran SOMETHING. Check it ran the right thing: an auto sweep, or a
+            # select that did not take, produces a full set of plausible
+            # numbers belonging to a different scenario.
+            set d [probe]
+            if {[f_scen $d] != $sel} {
+                puts [format "    WARNING: asked for scenario %d, design ran %d%s" \
+                      $sel [f_scen $d] \
+                      [expr {[f_auto $d] ? " (auto mode is on)" : ""}]]
+                return 0
+            }
+            return 1
+        }
     }
     return 0
 }

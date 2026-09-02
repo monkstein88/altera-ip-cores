@@ -7,7 +7,7 @@ and reports over JTAG and on the seven-segment displays.
 
 **Status: simulated, compiled, and closing timing — not yet run on hardware.**
 The design builds through Quartus 18.1.1 Standard for the DE10-Lite's MAX 10,
-fits in 6% of the device, meets its 100 MHz constraint with 0.430 ns of setup
+fits in 6% of the device, meets its 100 MHz constraint with 0.208 ns of setup
 slack, and produces a `.sof`. It has never been programmed into a part, so
 everything below that describes a *running board* is describing what the design
 is for, not what has been observed. The simulation and compilation results are
@@ -105,12 +105,12 @@ export QUARTUS_ROOT=/opt/intelFPGA/18.1
 
 | | |
 |---|---|
-| Logic elements | 2,805 / 49,760 (6%) |
-| Registers | 1,602 |
+| Logic elements | 3,099 / 49,760 (6%) |
+| Registers | 1,778 |
 | Pins | 110 / 360 |
-| Setup slack, 100 MHz system clock | **+0.430 ns** |
-| Setup slack, SDRAM interface | +1.996 ns |
-| f_MAX | 104.5 MHz |
+| Setup slack, 100 MHz system clock | **+0.208 ns** |
+| Setup slack, SDRAM interface | +1.763 ns |
+| f_MAX | 102.1 MHz |
 
 `run_on_board.sh` is the step that has never been run. Until someone programs a
 board there is no hardware result for this core, and refresh and retention stay

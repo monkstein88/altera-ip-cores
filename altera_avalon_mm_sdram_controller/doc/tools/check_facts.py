@@ -252,29 +252,58 @@ chk(len(nums) == len(built),
 # single most misleading thing the documentation could get wrong.
 #
 # f_MAX and resource figures used to be forbidden here, because there was no
-# Quartus result to quote. There is now, so what is checked is the boundary
-# that still exists: synthesis results are legitimate, a running board is not.
+# Quartus result to quote, and hardware results were forbidden because there
+# was no board. Both now exist - for ONE board. So the boundary that is
+# checked is the one that is still real: the DE0-Nano has run, the DE10-Lite
+# has not, and no document may blur the two.
+# A claimed hardware RESULT - something passing, running or measured on a
+# board - must name the board it happened on, and it must be the DE0-Nano,
+# because that is the only one that has run. Warnings, negations and the
+# other core's measurements are not results and are not matched here: the
+# check is deliberately narrow, because a rule with false positives is a rule
+# someone deletes.
+RESULT_ON_HW = re.compile(
+    r"[^.\n]*\b(pass(?:ed|es)?|ran|run|measured|verified)\b[^.\n]{0,60}"
+    r"\b(on hardware|on a board|on silicon|on the board)\b[^.\n]*", re.I)
 for doc_name, doc in (("user guide", UG), ("core README", RM)):
-    chk(re.search(r"not yet (been )?(run )?on hardware|never (been )?run on hardware|"
-                  r"never been programmed|not been programmed|Not yet on hardware|"
-                  r"not yet run on a board|never run on a board",
-                  doc, re.I) is not None,
-        f"the {doc_name} does not state that the core has not been run on a board")
-    # And no positive claim of a hardware result FOR THIS CORE. Scoped to this
-    # core deliberately: the documents legitimately cite the 194 MB/s that the
-    # other core's example did measure on a board, and a check that flags a
-    # true, correctly attributed sentence is a check someone deletes.
-    for m in re.finditer(r"[^.\n]*\bon hardware\b[^.\n]*", doc, re.I):
+    for m in RESULT_ON_HW.finditer(doc):
         sent = m.group(0)
-        about_this = re.search(r"this core|avalon_mm_sdram_controller|"
-                               r"this controller", sent, re.I)
-        negated = re.search(r"\bnot\b|\bnever\b|\byet\b|\bno\b", sent, re.I)
-        chk(not about_this or negated,
-            f"the {doc_name} claims a hardware result for this core: "
-            f"\"{sent.strip()[:70]}\"")
-    for m in re.finditer(r"[^.\n]*\d+\s*MHz on hardware[^.\n]*", doc, re.I):
-        chk(False, f"the {doc_name} quotes a hardware clock rate: "
-                   f"\"{m.group(0).strip()[:70]}\"")
+        if re.search(r"\bnot\b|\bnever\b|\byet\b|\bno\b|\bcannot\b|"
+                     r"\bunproven\b|\bwould\b|\bonly\b", sent, re.I):
+            continue                      # a caveat, not a claim
+        # The documents legitimately cite the 194 MB/s that INTEL's example
+        # measured on a board. That is a true, correctly attributed statement
+        # about the other core, and a check that flags it is a check someone
+        # deletes.
+        if re.search(r"SDRAM example|Intel", sent, re.I):
+            continue
+        chk("DE0-Nano" in sent or "DE0-Nano" in doc[max(0, m.start()-400):m.start()],
+            f"the {doc_name} claims a hardware result without naming the "
+            f"DE0-Nano: \"{sent.strip()[:70]}\"")
+    # ...and the mirror image, which is how this rule first went stale: the
+    # DE0-Nano HAS run, so a blanket "never been programmed into a part" is
+    # now false. It survived the check above because that one skips any
+    # sentence carrying a negation - it is built to catch overclaiming, and an
+    # understated claim is just as wrong. A sentence may only say the design
+    # has never been on a board if it is scoped to the DE10-Lite.
+    for m in re.finditer(r"[^.\n]*\b(never been programmed|has never run|"
+                         r"never been on a board)\b[^.\n]*", doc, re.I):
+        sent = m.group(0)
+        # The lookbehind is the same allowance the rule above makes: these
+        # documents are hard-wrapped, and a sentence that names its subject on
+        # the previous line is scoped perfectly well.
+        chk("DE10-Lite" in sent or "DE10-Lite" in doc[max(0, m.start()-300):m.start()],
+            f"the {doc_name} says the design has never been on a board, which "
+            f"stopped being true when the DE0-Nano ran; scope it to the "
+            f"DE10-Lite: \"{sent.strip()[:70]}\"")
+
+    # The DE10-Lite has not been on a board. Nothing may say it passed on one.
+    for m in re.finditer(r"[^.\n]*DE10-Lite[^.\n]*", doc):
+        sent = m.group(0)
+        chk(not re.search(r"pass(ed|es)?\s+on\s+(hardware|a board|silicon)",
+                          sent, re.I),
+            f"the {doc_name} says the DE10-Lite passed on hardware, which it "
+            f"has not: \"{sent.strip()[:70]}\"")
 
 # ------------------------------- 9b. the presets and the testbenches agree
 # Every preset must name a part the benchmark and the testbench can actually

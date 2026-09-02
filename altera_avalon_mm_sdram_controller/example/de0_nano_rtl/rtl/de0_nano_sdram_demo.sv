@@ -139,7 +139,8 @@ module de0_nano_sdram_demo (
     //                    running, result_valid, result_pass,
     //                    cur_scenario[3:0], pass_bitmap[7:0] }
     //
-    //   source[7:0]  = { seq_reset, start, freeze, auto, select[3:0] }
+    //   source[8:0]  = { jtag_override, seq_reset, start, freeze, auto,
+    //                    select[3:0] }
     //
     // done_count is the important one. It increments once per completed
     // scenario, so a host can start a scenario and wait for the counter to
@@ -150,13 +151,13 @@ module de0_nano_sdram_demo (
     // counter has no such window. That failure mode cost real time in this
     // repository's firewall demo; it is designed out here.
     // ----------------------------------------------------------------------
-    // Width follows the address, rather than being hand-counted: 160 fixed
-    // bits plus one failing address. On this board that is 184, where the
-    // DE10-Lite's 25-bit address makes it 185.
-    localparam int PROBE_W = 160 + ADDR_WIDTH;
+    // Width follows the address, rather than being hand-counted: 161 fixed
+    // bits plus one failing address. On this board that is 185, where the
+    // DE10-Lite's 25-bit address makes it 186.
+    localparam int PROBE_W = 161 + ADDR_WIDTH;
     logic [PROBE_W-1:0] issp_probe;
-    logic [7:0]   issp_source;      // raw, straight off the JTAG shift register
-    logic [7:0]   src_stable;       // what the design actually acts on
+    logic [8:0]   issp_source;      // raw, straight off the JTAG shift register
+    logic [8:0]   src_stable;       // what the design actually acts on
 
     // ----------------------------------------------------------------------
     // Sequencer <-> master
@@ -211,14 +212,14 @@ module de0_nano_sdram_demo (
     // (This is a general hazard of altsource_probe, not a quirk of this
     // design. Any multi-bit source where one bit qualifies the others has it.)
     // ----------------------------------------------------------------------
-    logic [7:0] src_q;
+    logic [8:0] src_q;
     logic [7:0] src_cnt;
 
     always_ff @(posedge clk) begin
         if (!resetn) begin
-            src_q      <= 8'h00;
+            src_q      <= 9'h000;
             src_cnt    <= 8'h00;
-            src_stable <= 8'h00;
+            src_stable <= 9'h000;
         end else begin
             src_q <= issp_source;
             if (issp_source != src_q)   src_cnt    <= 8'h00;      // still moving
@@ -229,14 +230,50 @@ module de0_nano_sdram_demo (
 
     // The JTAG source is OR-ed with the physical controls rather than muxed,
     // so the switches keep working with nothing plugged in.
-    logic [3:0] sel_eff;
-    logic       auto_eff, freeze_eff;
+    logic [3:0] sel_nxt;
+    logic       auto_nxt, freeze_nxt;
     // Only three select bits on this board, so scenarios 8-15 - which do not
     // exist - are unreachable from the switches, and freeze is JTAG-only.
-    assign sel_eff    = {1'b0, sw_s1[2:0]} | src_stable[3:0];
-    assign auto_eff   = sw_s1[3]           | src_stable[4];
-    assign freeze_eff =                      src_stable[5];
+    //
+    // src_stable[8] is JTAG OVERRIDE. With it clear the JTAG source is OR-ed
+    // with the physical controls, so the switches keep working with nothing
+    // plugged in. With it set the switches are IGNORED.
+    //
+    // The override exists because the OR on its own is a trap for a SCRIPTED
+    // run. This board with SW[3] left up ran a full auto sweep for every
+    // scenario the host asked for, and then reported scenario 7's cycle
+    // counters under every scenario's name - plausible numbers, silently
+    // measuring the wrong thing. run_on_board.sh now asserts this bit, so what
+    // it measures cannot depend on where someone left a switch.
+    assign sel_nxt    = src_stable[8] ? src_stable[3:0]
+                                      : ({1'b0, sw_s1[2:0]} | src_stable[3:0]);
+    assign auto_nxt   = src_stable[8] ? src_stable[4]
+                                      : (sw_s1[3] | src_stable[4]);
+    assign freeze_nxt =                  src_stable[5];
 
+
+    // REGISTERED, not straight through.
+    //
+    // These three are the slowest thing in the design's control path and the
+    // fastest-changing thing in nobody's: the source is already filtered over
+    // 256 clocks and the switches are fingers. Feeding the multiplexer output
+    // directly into the sequencer cost 0.7 ns on the DE10-Lite, which had only
+    // 0.430 ns of slack, and turned a passing design into one that missed its
+    // clock by 0.274 ns. A cycle of latency on a control that settles over
+    // microseconds is free.
+    logic [3:0] sel_eff;
+    logic       auto_eff, freeze_eff;
+    always_ff @(posedge clk) begin
+        if (!resetn) begin
+            sel_eff    <= 4'd0;
+            auto_eff   <= 1'b0;
+            freeze_eff <= 1'b0;
+        end else begin
+            sel_eff    <= sel_nxt;
+            auto_eff   <= auto_nxt;
+            freeze_eff <= freeze_nxt;
+        end
+    end
     logic issp_start_q, issp_start_pulse, start_pulse;
     always_ff @(posedge clk) begin
         if (!resetn) issp_start_q <= 1'b0;
@@ -343,7 +380,7 @@ module de0_nano_sdram_demo (
                          fail_actual,           //  80:65
                          fail_expected,         //  64:49
                          fail_addr,             //  48:24
-                         1'b0,                  //     23
+                         auto_eff,              //     23
                          err_code,              //  22:20
                          done_count,            //  19:16
                          pll_locked,            //     15
@@ -356,21 +393,37 @@ module de0_nano_sdram_demo (
     // value it wrote is the value the design is acting on, which is what
     // turned the bug above from a mystery into a two-line fix.
 
+    // Registered before it reaches the primitive.
+    //
+    // The probe taps 185 flops spread across the demo and the controller, and
+    // every one of them has to reach the sld_hub. Left combinational, the
+    // fitter satisfies that by dragging the source registers toward the hub -
+    // including the controller's row-tracking logic, whose critical path then
+    // bounces across six LABs at up to 1.07 ns an interconnect hop. A local
+    // flop stage lets the hub have its copy without the sources moving: it is
+    // worth about 5 MHz on the MAX 10 part, which has no margin to spare at
+    // 100 MHz.
+    //
+    // It costs one cycle of observation latency, on values a host reads out
+    // between runs. Nothing here is sampled while it is changing.
+    logic [PROBE_W-1:0] issp_probe_q;
+    always_ff @(posedge clk) issp_probe_q <= issp_probe;
+
 `ifdef ENABLE_ISSP
     altsource_probe #(
         .sld_auto_instance_index ("YES"),
         .sld_instance_index      (0),
         .instance_id             ("SDRM"),
         .probe_width             (PROBE_W),
-        .source_width            (8),
+        .source_width            (9),
         .source_initial_value    ("0"),
         .enable_metastability    ("NO")
     ) u_issp (
-        .probe  (issp_probe),
+        .probe  (issp_probe_q),
         .source (issp_source)
     );
 `else
-    assign issp_source = 8'h00;
+    assign issp_source = 9'h000;
 `endif
 
     // ----------------------------------------------------------------------

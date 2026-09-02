@@ -78,11 +78,17 @@ module demo_sdram_seq #(
     // plus its precharge / refresh / mode-register init before the first
     // access is offered.
     parameter int unsigned INIT_WAIT_CYCLES    = 32'd32_768,
-    // How many words scenario 7 marches over. The default is the whole chip,
-    // which is the point of it on hardware. A testbench overrides this: at
-    // ~1 clock per word a full march is 67 million simulated cycles, so a
-    // simulation that used the default would not finish in any useful time.
-    parameter int unsigned MARCH_WORDS        = 32'd33_554_432
+    // How many words scenario 7 marches over. The default is the whole chip -
+    // which is the point of it on hardware - so it FOLLOWS ADDR_WIDTH rather
+    // than being a constant. It used to be 33,554,432, the DE10-Lite's word
+    // count, which on the DE0-Nano's 24-bit address is twice the device: the
+    // march wrapped and tested every location twice, passing while reporting
+    // a word count for a chip that is not there.
+    //
+    // A testbench overrides this: at ~1 clock per word a full march is tens of
+    // millions of simulated cycles, so a simulation using the default would
+    // not finish in any useful time.
+    parameter int unsigned MARCH_WORDS        = 32'd1 << ADDR_WIDTH
 ) (
     input  logic                     clk,
     input  logic                     resetn,
@@ -144,8 +150,8 @@ module demo_sdram_seq #(
     localparam logic [ADDR_WIDTH-1:0] BE_ADDR   = ADDR_WIDTH'('h0005678);
     localparam logic [ADDR_WIDTH-1:0] REFR_BASE = ADDR_WIDTH'('h0100000);
 
-    // Every word in the chip: 4 banks x 8192 rows x 1024 columns. Scenario 7
-    // marches over MARCH_WORDS of them, which defaults to all of it.
+    // Every word in the chip. Scenario 7 marches over MARCH_WORDS of them,
+    // which defaults to all of it - 2^ADDR_WIDTH.
     localparam logic [31:0] TOTAL_WORDS = MARCH_WORDS;
 
     // -----------------------------------------------------------------------

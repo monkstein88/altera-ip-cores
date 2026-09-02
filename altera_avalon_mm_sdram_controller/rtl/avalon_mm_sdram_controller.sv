@@ -546,37 +546,138 @@ module avalon_mm_sdram_controller #(
     assign n_bank = nxt_bank;
     assign n_row  = nxt_row;
 
-    // Row-match against EVERY bank in parallel, then select - not select the
-    // bank and then compare. Both operands are registers, so all BANKS
-    // comparisons resolve straight out of the clock edge and the bank index
-    // only has to pick a bit. Comparing after the multiplexer instead puts a
-    // ROW_BITS-wide equality in series with it, and that sits on the loop from
-    // `head`, through the scheduler, through `f_pop`, and back into `head`,
-    // which is what limits f_MAX once the FIFO output is registered.
-    logic h_match_v [BANKS];
-    logic n_match_v [BANKS];
+    // =========================================================================
+    // Registered row match
+    //
+    // "Is the row this access wants the row this bank has open?" is a
+    // ROW_BITS-wide equality followed by a BANKS-way multiplexer, and both
+    // used to sit inside the scheduler loop: open_row -> compare -> select by
+    // bank -> h_hit -> the S_RUN priority chain -> row_open and back. On a
+    // MAX 10 -7 that measured nine levels of logic and 7.6 ns of the 10 ns
+    // budget in interconnect alone, and the 100 MHz constraint missed by
+    // 0.030 ns.
+    //
+    // Every operand of that comparison is a register, so none of it has to
+    // happen in the cycle that uses it. The answer is computed one cycle
+    // ahead, from the values the registers are ABOUT to take, and the
+    // scheduler reads a bit.
+    //
+    // The trick is the same one the FIFO output uses above: the comparisons
+    // are made against candidates that depend on nothing but registers, and
+    // the late-arriving scheduler signals - f_pop, issue_act, cmd_ba - only
+    // ever SELECT between answers that have already settled. Comparing
+    // against the selected value instead would put the equality back
+    // downstream of the scheduler and buy nothing.
+    //
+    // The cases, for the value each register takes next:
+    //
+    //   open_row[b] changes only when an ACT issues to bank b, and then it
+    //   becomes the row that ACT carried - h_row from the head branch, n_row
+    //   from the look-ahead branch. Otherwise it holds.
+    //
+    //   head.row becomes ent0.row or ent1.row, chosen by f_pop; nxt_row
+    //   becomes ent1.row or ent2_row. An ACT never pops (f_pop is set only in
+    //   the column-command branch), so on an ACT cycle those are ent0.row and
+    //   ent1.row.
+    //
+    // Hence: after an ACT to bank b, the bank holds exactly the row that ACT
+    // carried, so the match is that row against the next head - and that is a
+    // comparison between two registers, available now.
+    // =========================================================================
+    logic h_match_q [BANKS];      // open_row[b] == head.row, this cycle
+    logic n_match_q [BANKS];      // open_row[b] == nxt_row,  this cycle
+
+    logic act_from_n;             // the ACT being issued came from look-ahead
+
+    // Candidates. Comparisons between registers, and nothing else.
+    //
+    // TWO families of late signal have to be kept out of them, not one.
+    // `f_pop` is the scheduler's own output and is obviously late. `byp0`,
+    // `byp1` and `byp2` are barely better: the write-to-read bypass fires on
+    // f_push, which is gated by za_waitrequest, which is gated by f_pop. So
+    // ent0/ent1/ent2_row are NOT register values, and comparing against them
+    // puts a ROW_BITS equality downstream of the entire priority chain.
+    //
+    // That is not a hypothetical. Doing exactly that measured 95.2 MHz
+    // standalone against the 100.9 MHz it was meant to improve on, with the
+    // critical path running c_rcd -> rcd_ok -> the S_RUN chain -> f_pop ->
+    // za_waitrequest -> f_push -> byp2 -> ent2_row -> a 13-bit compare.
+    // Splitting the bypass out, so byp* only ever picks between two settled
+    // answers, is what makes the idea pay.
+    logic mp  [BANKS];            // bank's row == the row being pushed now
+    logic m0f [BANKS];            // bank's row == fifo[r0]
+    logic m1f [BANKS];            // bank's row == fifo[r1]
+    logic p2f [BANKS];            // bank's row == fifo[r2]
+    logic m0  [BANKS], m1 [BANKS], p2 [BANKS];
+    logic hp, np, h0f, h1f, n0f, n1f;
+    logic mh0, mn0, qh1, qn1;     // bank takes the row the ACT carries
+
     always_comb begin
         for (int b = 0; b < BANKS; b++) begin
-            h_match_v[b] = (open_row[b] == h_row);
-            n_match_v[b] = (open_row[b] == n_row);
+            mp [b] = (open_row[b] == push_ent.row);
+            m0f[b] = (open_row[b] == fifo[r0].row);
+            m1f[b] = (open_row[b] == fifo[r1].row);
+            p2f[b] = (open_row[b] == fifo[r2].row);
+            m0 [b] = byp0 ? mp[b] : m0f[b];     // byp* only selects
+            m1 [b] = byp1 ? mp[b] : m1f[b];
+            p2 [b] = byp2 ? mp[b] : p2f[b];
+        end
+        hp  = (h_row == push_ent.row);
+        np  = (n_row == push_ent.row);
+        h0f = (h_row == fifo[r0].row);
+        h1f = (h_row == fifo[r1].row);
+        n0f = (n_row == fifo[r0].row);
+        n1f = (n_row == fifo[r1].row);
+
+        mh0 = byp0 ? hp : h0f;    // ACT carried h_row, head takes ent0
+        mn0 = byp0 ? np : n0f;    // ACT carried n_row, head takes ent0
+        qh1 = byp1 ? hp : h1f;    // ACT carried h_row, nxt takes ent1
+        qn1 = byp1 ? np : n1f;    // ACT carried n_row, nxt takes ent1
+    end
+
+    always_ff @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            for (int b = 0; b < BANKS; b++) begin
+                h_match_q[b] <= 1'b0;
+                n_match_q[b] <= 1'b0;
+            end
+        end else begin
+            // `cmd == C_ACT` rather than `issue_act`: that alias is declared
+            // with the rest of the command decode, below. Verilator accepts
+            // the forward reference and Questa does not (vlog-2730).
+            for (int b = 0; b < BANKS; b++) begin
+                if ((cmd == C_ACT) && (cmd_ba == BANK_BITS'(b))) begin
+                    h_match_q[b] <= act_from_n ? mn0 : mh0;
+                    n_match_q[b] <= act_from_n ? qn1 : qh1;
+                end else begin
+                    h_match_q[b] <= f_pop ? m1[b] : m0[b];
+                    n_match_q[b] <= f_pop ? p2[b] : m1[b];
+                end
+            end
         end
     end
 
-    assign h_hit  = row_open[h_bank] && h_match_v[h_bank];
-    assign n_hit  = row_open[n_bank] && n_match_v[n_bank];
+    // A stale match is unreachable rather than merely harmless: every use is
+    // gated by row_open[b], which is false out of reset and can only become
+    // true through the ACT branch above, which sets the match in the same
+    // cycle. PRECHARGE clears row_open and leaves open_row alone, so it
+    // cannot leave a match asserted against a bank that has no row.
+    assign h_hit  = row_open[h_bank] && h_match_q[h_bank];
+    assign n_hit  = row_open[n_bank] && n_match_q[n_bank];
     // The next access wants a different row in a bank that is already open.
-    assign n_conflict = row_open[n_bank] && !n_match_v[n_bank];
+    assign n_conflict = row_open[n_bank] && !n_match_q[n_bank];
 
     // Reads never wait on turnaround; writes wait for the read bus to clear.
     assign h_ready = h_hit && rcd_ok_v[h_bank]
                      && (head.is_rd || (c_wtr == '0));
 
     always_comb begin
-        cmd      = C_NOP;
-        cmd_ba   = h_bank;
-        cmd_addr = '0;
-        f_pop    = 1'b0;
-        do_wdata = 1'b0;
+        cmd        = C_NOP;
+        cmd_ba     = h_bank;
+        cmd_addr   = '0;
+        f_pop      = 1'b0;
+        do_wdata   = 1'b0;
+        act_from_n = 1'b0;
 
         case (state)
             // ---------------- initialisation ----------------
@@ -623,9 +724,10 @@ module avalon_mm_sdram_controller #(
                         cmd_ba   = n_bank;
                         cmd_addr = '0;
                     end else if (!n_hit && act_ok_v[n_bank]) begin
-                        cmd      = C_ACT;
-                        cmd_ba   = n_bank;
-                        cmd_addr = SA_BITS'(n_row);
+                        cmd        = C_ACT;
+                        cmd_ba     = n_bank;
+                        cmd_addr   = SA_BITS'(n_row);
+                        act_from_n = 1'b1;   // this ACT carries n_row
                     end
                 end
             end

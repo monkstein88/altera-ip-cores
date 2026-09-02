@@ -7,9 +7,52 @@ This is the [DE10-Lite Nios example](../de10_lite_nios/README.md) on a
 different board and a different part — same software, same tests, resized to a
 device with a third of the on-chip memory.
 
-**Status: built — not yet run on hardware.** The Platform Designer system
-generates, the software compiles, and Quartus 18.1.1 produces a bitstream that
-closes 100 MHz. It has never been programmed into a part.
+**Status: verified on hardware.** Programmed into a Terasic DE0-Nano and run
+over USB: **10 checks, 10 passed**, including the two paths the RTL example
+cannot reach — byte enables and 32-bit access through the width adapter — and
+refresh retention, which needs real silicon and real time. The transcript is
+below.
+
+## What it printed on the board
+
+```
+ Avalon-MM SDRAM Controller - Nios II memory test
+ 32 MByte at 0x08000000, 16777216 16-bit words
+=============================================================
+
+  PASS  data bus: walking ones and zeros
+        25 power-of-two addresses checked
+  PASS  address bus: no aliasing across the whole device
+  PASS  byte enables reach DQM: a byte write spares its neighbour
+  PASS  32-bit access through the width adapter is coherent
+  PASS  one row: write and read back a full row of columns
+        512 words written in 67 us
+  PASS  row thrash: every access a row miss, data still correct
+        row hit ~130 ns/word, row miss ~488 ns/word
+  PASS  a row miss costs more per word than a row hit
+  PASS  four banks, one row each: data correct
+        1024 words in 500 us
+        idling ~1 s (over 120 full refresh periods)...
+  PASS  refresh retention: data survives a second of idle
+        marching 16777216 words (32 MByte)...
+  PASS  full march: every word in the device written and verified
+        write 18 MB/s, read 13 MB/s
+        (CPU-bound, not the controller's limit - see README)
+
+-------------------------------------------------------------
+  checks passed : 10
+  checks failed : 0
+  *** ALL TESTS PASSED ***
+=============================================================
+```
+
+Ten checks against nine rows in the table below: row thrash contributes two,
+the data comparison and the separate assertion that a miss costs more than a
+hit.
+
+The full march reads and writes all 16,777,216 words of the part — every row of
+every bank — so a refresh that never reached one of them, or an address line
+that aliased, has nowhere to hide.
 
 ## Why this exists alongside the RTL example
 
@@ -87,12 +130,12 @@ Results:
 
 | | |
 |---|---|
-| Logic elements | 4,868 / 22,320 (22%) |
-| Registers | 2,979 |
+| Logic elements | 5,060 / 22,320 (23%) |
+| Registers | 2,987 |
 | Memory bits | 300,672 / 608,256 (49%) |
 | Program | 16 KB, in 32 KB of on-chip RAM |
-| Setup slack, 100 MHz system clock | **+0.945 ns** |
-| Setup slack, SDRAM interface | +3.477 ns |
+| Setup slack, 100 MHz system clock | **+1.201 ns** |
+| Setup slack, SDRAM interface | +3.287 ns |
 
 ## This board is much tighter on memory, and it took two goes to fit
 
@@ -126,6 +169,22 @@ traffic generator that can.
 What the march figure is good for is the *ratio* between the row-hit and
 row-miss tests, which is a property of the controller and shows up clearly even
 CPU-bound.
+
+## A note on which Quartus drives the JTAG
+
+Three tools touch the board, and they do not all come from the same install:
+
+| Step | Which Quartus | Why |
+|---|---|---|
+| Programming, `jtagconfig`, `quartus_stp` | **25.1** (`JTAG_ROOT`) | The 18.1 JTAG server reads this board's chain only intermittently. `JTAG chain broken` appears from an unchanged, working setup, and a replug does not reliably fix it. The 25.1 stack reads it every time |
+| `nios2-download` | **18.1** (`QUARTUS_ROOT`) | It shells out to `nios2-elf-objcopy`, and only 18.1 ships the Nios II GNU toolchain. The 25.1 one fails with `command not found` and still exits 0 |
+| `nios2-terminal` | **25.1** (`JTAG_ROOT`) | The 18.1 terminal connects to the JTAG UART and then reads nothing at all - the program is running and printing, and the output never arrives |
+
+The scripts here do this split for you. If you have only one installation, set
+`JTAG_ROOT=$QUARTUS_ROOT` and expect the flakiness above.
+
+This is the same split the firewall cores in this repository document, and it
+was rediscovered the hard way here before their READMEs were consulted.
 
 ## Files
 

@@ -50,7 +50,7 @@ not where the headroom was. See section 7.
 
 **Verified in simulation, synthesised, and closing timing — but never run on a
 board.** The core compiles through Quartus 18.1.1 Standard for the DE10-Lite's
-MAX 10, fits, meets a 100 MHz constraint with 0.430 ns of setup slack, and
+MAX 10, fits, meets a 100 MHz constraint with 0.208 ns of setup slack, and
 produces a bitstream. It has not been programmed into a part, so refresh and
 retention on silicon remain unproven: no functional model forgets. Resource and
 f_MAX figures are in section 7.4 and are reproducible.
@@ -324,20 +324,22 @@ Both controllers synthesised standalone under the same constraints.
 
 | | Intel's core | This core |
 |---|---|---|
-| Logic elements | 353 | 1,193 |
-| Registers | 225 | 779 |
-| f_MAX | 115.2 MHz | 101.0 MHz |
+| Logic elements | 353 | 1,345 |
+| Registers | 225 | 787 |
+| f_MAX | 115.2 MHz | 104.8 MHz |
 
 The complete DE10-Lite demonstration — this controller plus sequencer, master,
-PLL, seven-segment displays and JTAG probes — occupies 2,805 logic elements and
-1,602 registers, 6% of the device, and closes its 100 MHz constraint with
-0.430 ns of setup slack. The SDRAM interface paths close with 1.996 ns.
+PLL, seven-segment displays and JTAG probes — occupies 3,099 logic elements and
+1,778 registers, 6% of the device, and closes its 100 MHz constraint with
+0.208 ns of setup slack. The SDRAM interface paths close with 1.763 ns. The
+DE0-Nano demonstration, on a Cyclone IV E, occupies 3,123 logic elements and
+closes with 1.011 ns.
 
 > **Caution:** the throughput table in 7.3 assumes 100 MHz for both
 > controllers. Cycle counts are a property of the scheduler; megabytes per
-> second are not. This core reaches 101 MHz and the core it replaces reaches
+> second are not. This core reaches 104.8 MHz and the core it replaces reaches
 > 115, so the ratios hold at 100 MHz and below and stop holding above it. A
-> system already running Intel's controller above 101 MHz cannot substitute
+> system already running Intel's controller above 104.8 MHz cannot substitute
 > this one without lowering its clock.
 
 The critical path is the loop from the registered command-buffer head, through
@@ -359,7 +361,7 @@ priority chain shared one cycle, and f_MAX was 83 MHz.
 | `benchmark/` | Throughput against the core being replaced | Passing |
 | `example/de10_lite_rtl` | Board-level demonstration, 9 phases | 58 checks passing in simulation |
 | `simulation/questa/run_sim.tcl` | Coverage and assertion non-vacuity, same 13 configurations | 22 assertion instances, **none vacuous**, 100% FSM state and transition |
-| Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met with 0.430 ns slack |
+| Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met with 1.011 ns slack (DE0-Nano), 0.208 ns (DE10-Lite) |
 | Hardware | Retention and refresh on silicon | **Not run — no board** |
 
 ## 8.1 The testbench checks the mechanism, not only the data
@@ -395,7 +397,7 @@ meant to catch it:
 | **One chip select** | Multi-device configurations are not supported |
 | **Single clock domain** | No clock-crossing on the slave port |
 | **Two device presets** | The DE10-Lite's IS42S16320D-7 and the DE0-Nano's IS42S16160B-7. Others need datasheet figures |
-| **f_MAX headroom is thin** | 101 MHz standalone against a 100 MHz target. The critical path is the loop from the registered FIFO head through the priority chain and back; shortening it further means splitting that chain across two cycles |
+| **f_MAX headroom is thin** | 104.8 MHz standalone against a 100 MHz target. The critical path now starts at the tRC counter and runs through `act_ok_v` and the priority chain into the row bookkeeping; the counters could be given registered reaches-zero flags the way the row match already has one, and beyond that shortening the chain means splitting it across two cycles |
 
 ---
 

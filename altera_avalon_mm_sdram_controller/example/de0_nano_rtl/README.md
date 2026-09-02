@@ -5,10 +5,31 @@ project's SDRAM controller, driven by plain RTL. No CPU, no software: a
 sequencer walks a set of memory-test scenarios, checks every word it reads
 back, and reports over JTAG and on the LEDs.
 
-**Status: simulated, compiled, and closing timing — not yet run on hardware.**
-The design builds through Quartus 18.1.1 Standard for the DE0-Nano's Cyclone IV
-E, fits in 13% of the device, meets its 100 MHz constraint with 0.924 ns of
-setup slack, and produces a `.sof`. It has never been programmed into a part.
+**Status: RUN ON HARDWARE. All eight scenarios pass on a real DE0-Nano.**
+
+```
+0 data bus walk      PASS     4 bank toggle        PASS
+1 address bus walk   PASS     5 row thrash         PASS
+2 byte enables       PASS     6 refresh retention  PASS
+3 column sweep       PASS     7 full 32 MB march   PASS
+```
+
+Measured on the board, at 100 MHz on a 16-bit bus whose ceiling is 200 MB/s:
+
+| Scenario | Words | Write cycles | Write MB/s | Read MB/s |
+|---|---|---|---|---|
+| 3 column sweep — every access a row hit | 512 | 513 | **199.6** | 197.3 |
+| 4 bank toggle | 1,024 | 1,025 | 199.8 | 198.3 |
+| 5 row thrash — every access a row miss | 256 | 1,734 | **29.5** | 27.6 |
+| 7 full 32 MB march | 16,777,216 | 17,149,074 | 195.7 | 195.7 |
+
+**99.8% of the bus on row hits, and 6.8× that cost when every access misses.**
+The simulation predicted scenario 5 at exactly 1,734 cycles for 256 words; the
+silicon returned exactly 1,734. Verilator and the part agree cycle for cycle.
+
+Scenario 6 is the one no simulation can settle — 4,096 words survived 250 ms
+with no access at all, which is about 32,000 refresh intervals. Auto-refresh
+is happening and the part is holding its data.
 
 ## What it is, and what it is a copy of
 
@@ -87,11 +108,12 @@ export QUARTUS_ROOT=/opt/intelFPGA/18.1
 
 | | |
 |---|---|
-| Logic elements | 2,804 / 22,320 (13%) |
-| Registers | 1,606 |
+| Logic elements | 3,123 / 22,320 (14%) |
+| Registers | 1,780 |
 | Pins | 54 / 154 |
-| Setup slack, 100 MHz system clock | **+0.924 ns** |
-| Setup slack, SDRAM interface | +3.477 ns |
+| Setup slack, 100 MHz system clock | **+1.011 ns** |
+| Setup slack, SDRAM interface | +3.398 ns |
+| f_MAX | 111.5 MHz |
 
 ## Pin assignments and constraints
 
@@ -106,6 +128,22 @@ pin. So the device half of the constraints is derived from the IS42S16160B
 datasheet on the board's own System CD, and the 0.4 ns trace delay is carried
 over from the DE10-Lite because no DE0-Nano equivalent exists to take it from.
 Confirm it against the board layout before trusting timing closure on hardware.
+
+## A note on which Quartus drives the JTAG
+
+Three tools touch the board, and they do not all come from the same install:
+
+| Step | Which Quartus | Why |
+|---|---|---|
+| Programming, `jtagconfig`, `quartus_stp` | **25.1** (`JTAG_ROOT`) | The 18.1 JTAG server reads this board's chain only intermittently. `JTAG chain broken` appears from an unchanged, working setup, and a replug does not reliably fix it. The 25.1 stack reads it every time |
+| `nios2-download` | **18.1** (`QUARTUS_ROOT`) | It shells out to `nios2-elf-objcopy`, and only 18.1 ships the Nios II GNU toolchain. The 25.1 one fails with `command not found` and still exits 0 |
+| `nios2-terminal` | **25.1** (`JTAG_ROOT`) | The 18.1 terminal connects to the JTAG UART and then reads nothing at all - the program is running and printing, and the output never arrives |
+
+The scripts here do this split for you. If you have only one installation, set
+`JTAG_ROOT=$QUARTUS_ROOT` and expect the flakiness above.
+
+This is the same split the firewall cores in this repository document, and it
+was rediscovered the hard way here before their READMEs were consulted.
 
 ## Files
 

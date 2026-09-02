@@ -107,6 +107,21 @@ scheduler with a register — selecting between the pre-read candidate entries
 *after* they resolve, rather than computing an index first and indexing with it
 — reached 101 MHz for no change in cycle counts.
 
+The **row match** is registered for the same reason and by the same rule. "Is
+the row this access wants the row this bank has open?" is a `ROW_BITS`
+equality followed by a bank-way multiplexer, and with both inside the
+scheduler loop the MAX 10 build missed 100 MHz by 0.030 ns. Every operand is a
+register, so the answer is computed one cycle ahead from the values the
+registers are about to take, and the scheduler reads a bit: 104.8 MHz, again
+for no change in cycle counts.
+
+The rule both changes follow is the same, and it is easy to get wrong: the
+late-arriving signals — `f_pop`, and the bypass selects that depend on it
+through `za_waitrequest` — may only **select between answers that have already
+settled**. A first attempt at the row match compared against the selected
+entry instead, which put the equality downstream of the whole priority chain
+and cost 6 MHz rather than gaining any.
+
 **Scheduler.** One decision per cycle, in priority order:
 
 | Condition | Command issued |

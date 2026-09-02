@@ -35,6 +35,7 @@
 #include "sys/alt_cache.h"
 #include "altera_avalon_pio_regs.h"
 #include "altera_avalon_timer_regs.h"
+#include "sys/alt_alarm.h"
 
 /* ---------------------------------------------------------------------------
  * The memory under test.
@@ -77,8 +78,23 @@ static inline uint16_t patt(uint32_t word_index)
 }
 
 /* --------------------------------------------------------------------------
- * Timing. The timer counts down from its period; two reads and a subtraction
- * give elapsed counts, which at TIMER_FREQ convert to microseconds.
+ * A microsecond clock.
+ *
+ * The timer is the HAL's SYSTEM CLOCK, programmed with a 1 ms period, so its
+ * countdown wraps every millisecond. Reading that countdown alone cannot
+ * measure anything longer - and the refresh test below waits a whole second,
+ * so with a snapshot-only clock it waited forever: the elapsed count could
+ * never reach a second's worth, and the loop never exited. On the board that
+ * looked exactly like a hung CPU.
+ *
+ * alt_nticks() counts the whole periods; the countdown fills in below one.
+ * Together they measure microseconds over intervals of any length this
+ * program cares about.
+ *
+ * The timer is NOT started or reprogrammed here. The HAL owns it, and writing
+ * its control register to "start" it also clears the interrupt-enable that
+ * alt_nticks() depends on - which stops the tick counter and breaks the very
+ * thing this clock is built on.
  * ------------------------------------------------------------------------ */
 static uint32_t timer_snapshot(void)
 {
@@ -87,23 +103,20 @@ static uint32_t timer_snapshot(void)
          |  (uint32_t)IORD_ALTERA_AVALON_TIMER_SNAPL(TIMER_BASE);
 }
 
-static void timer_start(void)
+static uint64_t now_us(void)
 {
-    IOWR_ALTERA_AVALON_TIMER_CONTROL(TIMER_BASE,
-        ALTERA_AVALON_TIMER_CONTROL_CONT_MSK |
-        ALTERA_AVALON_TIMER_CONTROL_START_MSK);
-}
+    alt_u32  t1, t2;
+    uint32_t snap, within;
 
-/* Counts DOWN, so elapsed is start - end, and the period wraps. */
-static uint32_t elapsed_counts(uint32_t start, uint32_t end)
-{
-    return (start >= end) ? (start - end)
-                          : (start + (TIMER_LOAD_VALUE + 1) - end);
-}
+    do {
+        t1   = alt_nticks();
+        snap = timer_snapshot();
+        t2   = alt_nticks();
+    } while (t1 != t2);          /* a tick landed mid-read: take it again */
 
-static uint32_t counts_to_us(uint32_t counts)
-{
-    return (uint32_t)((uint64_t)counts * 1000000ull / TIMER_FREQ);
+    within = (uint32_t)TIMER_LOAD_VALUE - snap;      /* counts into this tick */
+    return (uint64_t)t1 * (1000000ull / (uint64_t)alt_ticks_per_second())
+         + ((uint64_t)within * 1000000ull) / (uint64_t)TIMER_FREQ;
 }
 
 /* ===========================================================================
@@ -246,14 +259,14 @@ static void test_word_access(void)
 static uint32_t test_one_row(void)
 {
     volatile uint16_t *p = SDRAM_BASE_C;
-    uint32_t i, t0, t1, us;
+    uint32_t i, us;
+    uint64_t t0;
     int ok = 1;
 
-    t0 = timer_snapshot();
+    t0 = now_us();
     for (i = 0; i < COL_WORDS; i++) p[i] = patt(i);
     alt_dcache_flush_all();
-    t1 = timer_snapshot();
-    us = counts_to_us(elapsed_counts(t0, t1));
+    us = (uint32_t)(now_us() - t0);
 
     for (i = 0; i < COL_WORDS; i++) {
         if (p[i] != patt(i)) {
@@ -284,14 +297,14 @@ static void test_row_thrash(uint32_t one_row_us)
 {
     volatile uint16_t *p = SDRAM_BASE_C;
     const uint32_t n = 256;
-    uint32_t i, t0, t1, us;
+    uint32_t i, us;
+    uint64_t t0;
     int ok = 1;
 
-    t0 = timer_snapshot();
+    t0 = now_us();
     for (i = 0; i < n; i++) p[i * BANK_STRIDE] = patt(i * BANK_STRIDE);
     alt_dcache_flush_all();
-    t1 = timer_snapshot();
-    us = counts_to_us(elapsed_counts(t0, t1));
+    us = (uint32_t)(now_us() - t0);
 
     for (i = 0; i < n; i++) {
         if (p[i * BANK_STRIDE] != patt(i * BANK_STRIDE)) {
@@ -327,7 +340,8 @@ static void test_four_banks(void)
 {
     volatile uint16_t *p = SDRAM_BASE_C;
     const uint32_t n = 1024;
-    uint32_t i, t0, t1, us;
+    uint32_t i, us;
+    uint64_t t0;
     int ok = 1;
 
     /* addr = (col << 0) | (bank0 << COL_BITS) | (bank1 << (COL_BITS+1+13)) */
@@ -336,11 +350,10 @@ static void test_four_banks(void)
          | ((((i) >> 0) & 1u) << COL_BITS) \
          | ((((i) >> 1) & 1u) << (COL_BITS + 1 + 13)))
 
-    t0 = timer_snapshot();
+    t0 = now_us();
     for (i = 0; i < n; i++) p[BANK_ROT_ADDR(i)] = patt(BANK_ROT_ADDR(i));
     alt_dcache_flush_all();
-    t1 = timer_snapshot();
-    us = counts_to_us(elapsed_counts(t0, t1));
+    us = (uint32_t)(now_us() - t0);
 
     for (i = 0; i < n; i++) {
         uint32_t a = BANK_ROT_ADDR(i);
@@ -370,15 +383,16 @@ static void test_refresh(void)
 {
     volatile uint16_t *p = SDRAM_BASE_C + 0x10000;
     const uint32_t n = 4096;
-    uint32_t i, t0;
+    uint32_t i;
+    uint64_t t0;
     int ok = 1;
 
     for (i = 0; i < n; i++) p[i] = patt(0x10000u + i);
     alt_dcache_flush_all();
 
     printf("        idling ~1 s (over 120 full refresh periods)...\n");
-    t0 = timer_snapshot();
-    while (counts_to_us(elapsed_counts(t0, timer_snapshot())) < 1000000u) {
+    t0 = now_us();
+    while ((now_us() - t0) < 1000000ull) {
         /* nothing: the controller must refresh on its own */
     }
 
@@ -405,19 +419,19 @@ static void test_refresh(void)
 static void test_full_march(void)
 {
     volatile uint16_t *p = SDRAM_BASE_C;
-    uint32_t i, t0, t1, wr_us, rd_us;
+    uint32_t i, wr_us, rd_us;
+    uint64_t t0;
     int ok = 1;
 
     printf("        marching %lu words (%lu MByte)...\n",
            (unsigned long)SDRAM_WORDS, (unsigned long)(SDRAM_SPAN >> 20));
 
-    t0 = timer_snapshot();
+    t0 = now_us();
     for (i = 0; i < SDRAM_WORDS; i++) p[i] = patt(i);
     alt_dcache_flush_all();
-    t1 = timer_snapshot();
-    wr_us = counts_to_us(elapsed_counts(t0, t1));
+    wr_us = (uint32_t)(now_us() - t0);
 
-    t0 = timer_snapshot();
+    t0 = now_us();
     for (i = 0; i < SDRAM_WORDS; i++) {
         if (p[i] != patt(i)) {
             ok = 0;
@@ -426,8 +440,7 @@ static void test_full_march(void)
             break;
         }
     }
-    t1 = timer_snapshot();
-    rd_us = counts_to_us(elapsed_counts(t0, t1));
+    rd_us = (uint32_t)(now_us() - t0);
 
     check("full march: every word in the device written and verified", ok);
     if (wr_us && rd_us) {
@@ -442,6 +455,22 @@ int main(void)
 {
     uint32_t one_row_us;
 
+    /* Unbuffered stdout.
+     *
+     * The JTAG UART is a pipe to a host that may not be attached yet, and
+     * this program never returns - it ends in an idle loop - so anything
+     * left in a stdio buffer is never flushed. Buffered, the whole run
+     * produces no output at all and looks exactly like a CPU that is not
+     * running. Unbuffered, each line appears as it happens, which also makes
+     * a hang report itself: the last line printed is the test that hung.
+     *
+     * SMALL_C_LIB has no setvbuf - the reduced printf writes straight through,
+     * so there is nothing to unbuffer. The guard is what lets one source file
+     * serve both BSPs. */
+#ifndef SMALL_C_LIB
+    setvbuf(stdout, NULL, _IONBF, 0);
+#endif
+
     printf("\n");
     printf("=============================================================\n");
     printf(" Avalon-MM SDRAM Controller - Nios II memory test\n");
@@ -449,8 +478,6 @@ int main(void)
            (unsigned long)(SDRAM_SPAN >> 20), (unsigned long)SDRAM_BASE,
            (unsigned long)SDRAM_WORDS);
     printf("=============================================================\n\n");
-
-    timer_start();
 
     IOWR_ALTERA_AVALON_PIO_DATA(PIO_LED_BASE, 0x001);
     test_data_bus();
