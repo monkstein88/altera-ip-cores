@@ -93,6 +93,12 @@ proc f_fact   {d} { return [field $d 80 65] }
 proc f_wrcyc  {d} { return [field $d 112 81] }
 proc f_rdcyc  {d} { return [field $d 144 113] }
 proc f_words  {d} { return [field $d 176 145] }
+# Words this scenario actually COMPARED against the expected pattern.
+# pass_acc starts true, so a scenario that issued nothing would report a
+# pass on an optimistic default. The design refuses to pass a scenario
+# that verified zero words; this is the host-side cross-check that it
+# verified as many as it claimed to write.
+proc f_chk    {d} { return [field $d 217 186] }
 # What the design is actually acting on, after its stability filter. Reading
 # this back is how you tell "the board ignored me" from "the board did what I
 # asked and the answer is genuinely wrong".
@@ -101,6 +107,10 @@ proc f_src    {d} { return [field $d 185 177] }
 set ERRNAME(0) "none"
 set ERRNAME(1) "data mismatch"
 set ERRNAME(2) "watchdog timeout"
+set ERRNAME(3) "scenario verified nothing"
+# An unknown code must not crash the reporter - that is how a failing
+# run turned into a Tcl stack trace with the result buried above it.
+for {set e 4} {$e < 8} {incr e} { set ERRNAME($e) "unknown code $e" }
 
 # 16 bits per word at 100 MHz -> bytes/s = words * 2 / (cycles * 10ns).
 # MB/s here means 10^6 bytes/s.
@@ -258,9 +268,24 @@ foreach s {3 4 5 7} {
     set w  [f_words $d]
     set wc [f_wrcyc $d]
     set rdc [f_rdcyc $d]
+    set ck [f_chk $d]
     puts [format "  %-22s %10d %10d %12.1f %12.1f" \
           $NAME($s) $w $wc [mbps $w $wc] [mbps $w $rdc]]
     if {[f_pass $d] != 1} { set rc 1 }
+    # These four are block scenarios: they write t_count words and then read
+    # and compare exactly the same number. Anything else means the read pass
+    # did not run to completion, and "passed" would be an optimistic default.
+    # Both halves matter. A scenario that does nothing reports 0 and 0, so
+    # equality alone is satisfied trivially - the design's own gate is what
+    # catches that case, and this is the cross-check that it is still armed.
+    if {$ck == 0 || $w == 0} {
+        puts [format "    FAIL: %s verified %d words of %d - it did nothing" \
+              $NAME($s) $ck $w]
+        set rc 1
+    } elseif {$ck != $w} {
+        puts [format "    FAIL: verified %d words but the scenario covers %d" $ck $w]
+        set rc 1
+    }
 }
 puts "\n  Scenario 3 stays inside one bank and one row; scenario 5 forces a"
 puts "  PRECHARGE and ACTIVATE before every single word. The gap between them"

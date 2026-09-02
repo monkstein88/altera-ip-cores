@@ -45,7 +45,7 @@ export QUARTUS_ROOT=/opt/intelFPGA/18.1     # first run only, to generate the sy
 Generating the Platform Designer system needs `qsys-generate`, which is part of
 a Quartus installation but needs no licence. After that it is Verilator alone.
 
-Current result: **59 checks passed, 0 failed, 0 timing violations, 0 illegal
+Current result: **61 checks passed, 0 failed, 0 timing violations, 0 illegal
 device accesses.**
 
 The nine phases are the ones the original demonstration had, with the last four

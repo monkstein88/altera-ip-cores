@@ -19,7 +19,7 @@ Measured on the board, at 100 MHz on a 16-bit bus whose ceiling is 200 MB/s:
 | Scenario | Words | Write cycles | Write MB/s | Read MB/s |
 |---|---|---|---|---|
 | 3 column sweep — every access a row hit | 512 | 513 | **199.6** | 197.3 |
-| 4 bank toggle | 1,024 | 1,025 | 199.8 | 198.3 |
+| 4 bank toggle — alternating bank *and* row | 1,024 | 4,064 | 50.4 | 48.9 |
 | 5 row thrash — every access a row miss | 256 | 1,734 | **29.5** | 27.6 |
 | 7 full 32 MB march | 16,777,216 | 17,149,074 | 195.7 | 195.7 |
 
@@ -27,9 +27,20 @@ Measured on the board, at 100 MHz on a 16-bit bus whose ceiling is 200 MB/s:
 The simulation predicted scenario 5 at exactly 1,734 cycles for 256 words; the
 silicon returned exactly 1,734. Verilator and the part agree cycle for cycle.
 
-Scenario 6 is the one no simulation can settle — 4,096 words survived 250 ms
-with no access at all, which is about 32,000 refresh intervals. Auto-refresh
-is happening and the part is holding its data.
+Scenario 4 sits between the two extremes on purpose. It used to walk a block
+across the bank bit and report 199.8 MB/s, but every address in that walk was
+in row 0 — which meant a controller with one shared open-row register passed
+it, measured, on this board. It now alternates bank *and* row so that each
+bank is revisited at the row the other one just opened, which is the access
+per-bank tracking exists for and costs a row miss most of the time. The lower
+number is the test doing its job.
+
+Scenario 6 idles 250 ms and then re-reads 4,096 words. That is *not* proof
+that refresh works: with refresh disabled outright this scenario still passed
+on this board, because a cell at room temperature holds its charge for tens of
+seconds. What enforces the refresh interval is the `tREFI` check in the core
+testbench. See the [DE0-Nano Nios notes](../de0_nano_nios/README.md) for the
+measurement.
 
 ## What it is, and what it is a copy of
 
@@ -88,7 +99,7 @@ export QUARTUS_ROOT=/opt/intelFPGA/18.1     # first run only, to generate the sy
 ./simulation/verilator/run_sim.sh
 ```
 
-Current result: **59 checks passed, 0 failed, 0 timing violations, 0 illegal
+Current result: **61 checks passed, 0 failed, 0 timing violations, 0 illegal
 device accesses** — the same nine phases as the DE10-Lite, against this part's
 geometry and timings.
 

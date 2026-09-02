@@ -114,6 +114,15 @@ module demo_sdram_seq #(
     output logic [31:0]              perf_wr_cycles,
     output logic [31:0]              perf_rd_cycles,
     output logic [31:0]              perf_words,
+    // Words this scenario actually COMPARED against the expected pattern.
+    //
+    // pass_acc starts true and is only cleared by a mismatch, so a scenario
+    // that issued nothing at all would report a pass on an optimistic
+    // default. This is the evidence that it did not: the checks below refuse
+    // to pass a scenario that verified zero words, and a host can cross-check
+    // this against perf_words - a block scenario must compare exactly as many
+    // words as it said it would write.
+    output logic [31:0]              chk_count,
 
     // ---- command interface to demo_avl_mm_master --------------------------
     output logic                     cmd_valid,
@@ -132,6 +141,7 @@ module demo_sdram_seq #(
     localparam logic [2:0] ERR_NONE    = 3'd0;
     localparam logic [2:0] ERR_DATA    = 3'd1;   // read back the wrong word
     localparam logic [2:0] ERR_TIMEOUT = 3'd2;   // watchdog fired
+    localparam logic [2:0] ERR_NOWORK  = 3'd3;   // scenario verified nothing
 
     // ---- phase kinds ------------------------------------------------------
     localparam logic [2:0] PH_END    = 3'd0;
@@ -453,6 +463,7 @@ module demo_sdram_seq #(
             perf_wr_cycles <= '0;
             perf_rd_cycles <= '0;
             perf_words     <= '0;
+            chk_count      <= '0;
             iss_addr       <= '0;
             iss_left       <= '0;
             chk_addr       <= '0;
@@ -499,6 +510,7 @@ module demo_sdram_seq #(
                     if (auto_mode) pass_bitmap <= '0;
                     phase        <= 3'd0;
                     pass_acc     <= 1'b1;
+                    chk_count    <= '0;
                     fail_latched <= 1'b0;
                     result_valid <= 1'b0;
                     err_code     <= ERR_NONE;
@@ -581,8 +593,9 @@ module demo_sdram_seq #(
                         end
                         pass_acc <= 1'b0;
                     end
-                    chk_addr <= chk_next;
-                    chk_left <= chk_left - 32'd1;
+                    chk_addr  <= chk_next;
+                    chk_left  <= chk_left - 32'd1;
+                    chk_count <= chk_count + 32'd1;
                 end
 
                 // Phase end. A write phase is done when the last command has
@@ -658,7 +671,8 @@ module demo_sdram_seq #(
                                 end
                                 pass_acc <= 1'b0;
                             end
-                            ser_st <= SER_NXT;
+                            chk_count <= chk_count + 32'd1;
+                            ser_st    <= SER_NXT;
                         end
                     end
                     SER_NXT: begin
@@ -680,8 +694,14 @@ module demo_sdram_seq #(
             ST_FINISH: begin
                 cmd_valid    <= 1'b0;
                 result_valid <= 1'b1;
-                result_pass  <= pass_acc;
-                pass_bitmap[scen[2:0]] <= pass_acc;
+                // A scenario that compared nothing cannot pass, however
+                // clean its (untouched) failure flag looks.
+                result_pass  <= pass_acc && (chk_count != 32'd0);
+                pass_bitmap[scen[2:0]] <= pass_acc && (chk_count != 32'd0);
+                if (pass_acc && (chk_count == 32'd0) && !fail_latched) begin
+                    err_code     <= ERR_NOWORK;
+                    fail_latched <= 1'b1;
+                end
                 done_count   <= done_count + 4'd1;
 
                 if (sweep && !(freeze && !pass_acc) && (scen < NUM_SCENARIOS-1)) begin
@@ -689,6 +709,7 @@ module demo_sdram_seq #(
                     cur_scenario <= scen + 4'd1;
                     phase        <= 3'd0;
                     pass_acc     <= 1'b1;
+                    chk_count    <= '0;
                     perf_wr_cycles <= '0;
                     perf_rd_cycles <= '0;
                     perf_words     <= '0;

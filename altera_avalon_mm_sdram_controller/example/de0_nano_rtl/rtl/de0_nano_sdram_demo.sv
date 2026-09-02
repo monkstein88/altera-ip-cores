@@ -132,9 +132,10 @@ module de0_nano_sdram_demo (
     // Guarded by ENABLE_ISSP so a simulator never has to resolve the
     // altsource_probe primitive, for which there is no source.
     //
-    //   probe[184:0] = { src_stable[7:0], perf_words[31:0], perf_rd_cycles[31:0],
+    //   probe[MSB:0] = { chk_count[31:0], src_stable[8:0], perf_words[31:0],
+    //                    perf_rd_cycles[31:0],
     //                    perf_wr_cycles[31:0], fail_actual[15:0],
-    //                    fail_expected[15:0], fail_addr[23:0], 1'b0,
+    //                    fail_expected[15:0], fail_addr[23:0], auto_eff,
     //                    err_code[2:0], done_count[3:0], pll_locked,
     //                    running, result_valid, result_pass,
     //                    cur_scenario[3:0], pass_bitmap[7:0] }
@@ -151,10 +152,12 @@ module de0_nano_sdram_demo (
     // counter has no such window. That failure mode cost real time in this
     // repository's firewall demo; it is designed out here.
     // ----------------------------------------------------------------------
-    // Width follows the address, rather than being hand-counted: 161 fixed
-    // bits plus one failing address. On this board that is 185, where the
+    // Width follows the address, rather than being hand-counted: 193 fixed
+    // bits plus one failing address. chk_count sits at the TOP of the vector
+    // so that adding it moved no existing field offset - the host scripts
+    // index absolute bit positions. On this board that is 185, where the
     // DE10-Lite's 25-bit address makes it 186.
-    localparam int PROBE_W = 161 + ADDR_WIDTH;
+    localparam int PROBE_W = 193 + ADDR_WIDTH;
     logic [PROBE_W-1:0] issp_probe;
     logic [8:0]   issp_source;      // raw, straight off the JTAG shift register
     logic [8:0]   src_stable;       // what the design actually acts on
@@ -186,6 +189,7 @@ module de0_nano_sdram_demo (
     logic [ADDR_WIDTH-1:0]   fail_addr;
     logic [DATA_WIDTH-1:0]   fail_expected, fail_actual;
     logic [31:0]             perf_wr_cycles, perf_rd_cycles, perf_words;
+    logic [31:0]             chk_count;
 
     // ----------------------------------------------------------------------
     // THE JTAG SOURCE REGISTER IS NOT UPDATED ATOMICALLY.
@@ -307,6 +311,7 @@ module de0_nano_sdram_demo (
         .perf_wr_cycles (perf_wr_cycles),
         .perf_rd_cycles (perf_rd_cycles),
         .perf_words     (perf_words),
+        .chk_count      (chk_count),
         .cmd_valid      (cmd_valid),
         .cmd_write      (cmd_write),
         .cmd_addr       (cmd_addr),
@@ -373,13 +378,18 @@ module de0_nano_sdram_demo (
     // ----------------------------------------------------------------------
     // ISSP
     // ----------------------------------------------------------------------
-    assign issp_probe = {src_stable,            // 184:177
-                         perf_words,            // 176:145
-                         perf_rd_cycles,        // 144:113
-                         perf_wr_cycles,        // 112:81
-                         fail_actual,           //  80:65
-                         fail_expected,         //  64:49
-                         fail_addr,             //  48:24
+    // Bit numbers are for THIS board's 24-bit address. They used to be the
+    // DE10-Lite's, copied across unchanged, and were every one of them off by
+    // one below fail_addr - the Tcl reader was right and the comment was
+    // wrong, which is the wrong way round for a comment to be.
+    assign issp_probe = {chk_count,             // 216:185
+                         src_stable,            // 184:176
+                         perf_words,            // 175:144
+                         perf_rd_cycles,        // 143:112
+                         perf_wr_cycles,        // 111:80
+                         fail_actual,           //  79:64
+                         fail_expected,         //  63:48
+                         fail_addr,             //  47:24
                          auto_eff,              //     23
                          err_code,              //  22:20
                          done_count,            //  19:16

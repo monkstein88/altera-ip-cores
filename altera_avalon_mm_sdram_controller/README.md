@@ -121,9 +121,12 @@ Also outstanding:
   [DE0-Nano Nios notes](example/de0_nano_nios/README.md). The refresh interval
   itself is enforced by the timing checker in simulation, which fails all
   thirteen configurations on `tREFI`.
-- **Asserting that work happened.** `pass_acc` starts true and is only cleared
-  on a mismatch, and the board script prints the transaction counters rather
-  than checking them, so a scenario that issued nothing would report a pass.
+- ~~Asserting that work happened.~~ **Done.** The sequencer counts the words
+  it actually compared and refuses to pass a scenario that verified none, with
+  a distinct error code; the board script cross-checks that count against the
+  words the scenario covers. Proved by giving a scenario an empty phase table
+  and running it on the board: it now reports "scenario verified nothing"
+  where it used to report a pass.
 - **A second board.** The DE0-Nano runs: eight of eight RTL scenarios and ten
   of ten Nios II checks. The DE10-Lite builds, fits and
   closes timing, and has never been programmed into a part - so its preset,
@@ -252,8 +255,8 @@ altera_avalon_mm_sdram_controller/
 | [`tb/`](tb) | 166 checks per configuration, on the command stream as well as the data | Passing |
 | [`simulation/questa/run_sim.tcl`](simulation/questa/run_sim.tcl) | The same 13 configurations, plus code coverage and assertion non-vacuity | 22 assertion instances, **none vacuous** |
 | [`benchmark/`](benchmark/README.md) | Throughput against the core being replaced | Passing |
-| [`example/de10_lite_rtl`](example/de10_lite_rtl/README.md) | DE10-Lite board demonstration, 9 phases | 59 checks in simulation; no DE10-Lite here to run it on |
-| [`example/de0_nano_rtl`](example/de0_nano_rtl/README.md) | DE0-Nano board demonstration, same nine phases at the other part's geometry | 59 checks in simulation, **8/8 scenarios on the board** |
+| [`example/de10_lite_rtl`](example/de10_lite_rtl/README.md) | DE10-Lite board demonstration, 9 phases | 61 checks in simulation; no DE10-Lite here to run it on |
+| [`example/de0_nano_rtl`](example/de0_nano_rtl/README.md) | DE0-Nano board demonstration, same nine phases at the other part's geometry | 61 checks in simulation, **8/8 scenarios on the board** |
 | [`example/de10_lite_nios`](example/de10_lite_nios/README.md) | Nios II memory test through cache, interconnect and a width adapter | Builds; byte enables and 32-bit access are only reachable here |
 | [`example/de0_nano_nios`](example/de0_nano_nios/README.md) | The same, on the DE0-Nano | **10/10 checks on the board** |
 | Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met, +1.011 ns DE0-Nano, +0.208 ns DE10-Lite |

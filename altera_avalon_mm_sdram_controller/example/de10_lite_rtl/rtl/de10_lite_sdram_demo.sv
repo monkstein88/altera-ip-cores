@@ -133,9 +133,10 @@ module de10_lite_sdram_demo (
     // Guarded by ENABLE_ISSP so a simulator never has to resolve the
     // altsource_probe primitive, for which there is no source.
     //
-    //   probe[185:0] = { src_stable[8:0], perf_words[31:0], perf_rd_cycles[31:0],
+    //   probe[MSB:0] = { chk_count[31:0], src_stable[8:0], perf_words[31:0],
+    //                    perf_rd_cycles[31:0],
     //                    perf_wr_cycles[31:0], fail_actual[15:0],
-    //                    fail_expected[15:0], fail_addr[24:0], 1'b0,
+    //                    fail_expected[15:0], fail_addr[24:0], auto_eff,
     //                    err_code[2:0], done_count[3:0], pll_locked,
     //                    running, result_valid, result_pass,
     //                    cur_scenario[3:0], pass_bitmap[7:0] }
@@ -152,11 +153,14 @@ module de10_lite_sdram_demo (
     // counter has no such window. That failure mode cost real time in this
     // repository's firewall demo; it is designed out here.
     // ----------------------------------------------------------------------
-    // Width follows the address rather than being hand-counted: 161 fixed
+    // Width follows the address rather than being hand-counted: 193 fixed
     // bits plus one failing address. The fixed part grew by one when the JTAG
-    // source gained its override bit, which is exactly the sort of edit that
-    // silently desynchronises a literal from the thing it describes.
-    localparam int PROBE_W = 161 + ADDR_WIDTH;
+    // source gained its override bit, and by 32 when chk_count was added,
+    // which is exactly the sort of edit that silently desynchronises a literal
+    // from the thing it describes. chk_count sits at the TOP of the vector so
+    // that adding it moved no existing field offset - the host scripts index
+    // absolute bit positions.
+    localparam int PROBE_W = 193 + ADDR_WIDTH;
     logic [PROBE_W-1:0] issp_probe;
     logic [8:0]   issp_source;      // raw, straight off the JTAG shift register
     logic [8:0]   src_stable;       // what the design actually acts on
@@ -188,6 +192,7 @@ module de10_lite_sdram_demo (
     logic [ADDR_WIDTH-1:0]   fail_addr;
     logic [DATA_WIDTH-1:0]   fail_expected, fail_actual;
     logic [31:0]             perf_wr_cycles, perf_rd_cycles, perf_words;
+    logic [31:0]             chk_count;
 
     // ----------------------------------------------------------------------
     // THE JTAG SOURCE REGISTER IS NOT UPDATED ATOMICALLY.
@@ -307,6 +312,7 @@ module de10_lite_sdram_demo (
         .perf_wr_cycles (perf_wr_cycles),
         .perf_rd_cycles (perf_rd_cycles),
         .perf_words     (perf_words),
+        .chk_count      (chk_count),
         .cmd_valid      (cmd_valid),
         .cmd_write      (cmd_write),
         .cmd_addr       (cmd_addr),
@@ -373,7 +379,8 @@ module de10_lite_sdram_demo (
     // ----------------------------------------------------------------------
     // ISSP
     // ----------------------------------------------------------------------
-    assign issp_probe = {src_stable,            // 184:177
+    assign issp_probe = {chk_count,             // 217:186
+                         src_stable,            // 185:177
                          perf_words,            // 176:145
                          perf_rd_cycles,        // 144:113
                          perf_wr_cycles,        // 112:81

@@ -78,6 +78,7 @@ module de0_nano_sdram_demo_tb;
     logic [AW-1:0] fail_addr;
     logic [DW-1:0] fail_expected, fail_actual;
     logic [31:0] perf_wr_cycles, perf_rd_cycles, perf_words;
+    logic [31:0] chk_count;
 
     // ---- sequencer <-> master --------------------------------------------
     logic cmd_valid, cmd_ready, cmd_write, rsp_valid;
@@ -115,7 +116,7 @@ module de0_nano_sdram_demo_tb;
         .pass_bitmap(pass_bitmap), .done_count(done_count), .err_code(err_code),
         .fail_addr(fail_addr), .fail_expected(fail_expected), .fail_actual(fail_actual),
         .perf_wr_cycles(perf_wr_cycles), .perf_rd_cycles(perf_rd_cycles),
-        .perf_words(perf_words),
+        .perf_words(perf_words), .chk_count(chk_count),
         .cmd_valid(cmd_valid), .cmd_write(cmd_write), .cmd_addr(cmd_addr),
         .cmd_wdata(cmd_wdata), .cmd_be(cmd_be), .cmd_ready(cmd_ready),
         .rsp_valid(rsp_valid), .rsp_data(rsp_data));
@@ -321,6 +322,11 @@ module de0_nano_sdram_demo_tb;
         $display("\n--- Phase 2: reported word counts ---");
         run_scenario(4'd3, fin);
         check("scenario 3 reports one row of columns", perf_words === COL_WORDS);
+        // pass_acc starts true and is only cleared by a mismatch, so "passed"
+        // is the default a scenario reports when it does nothing at all. This
+        // is the evidence that it did something: the words it compared must
+        // equal the words it covered.
+        check("scenario 3 verified every word it covered", chk_count === perf_words);
         check("scenario 3 spent a sane number of write cycles",
               perf_wr_cycles > COL_WORDS && perf_wr_cycles < 32'd4000);
         // Keep scenario 3's cost so scenario 5 can be compared against what
@@ -332,6 +338,7 @@ module de0_nano_sdram_demo_tb;
 
         run_scenario(4'd5, fin);
         check("scenario 5 reports 256 words", perf_words === 32'd256);
+        check("scenario 5 verified every word it covered", chk_count === perf_words);
         // Every access in scenario 5 is a row miss: PRECHARGE, ACTIVATE, then
         // one word. Scenario 3 is a row hit every time. Four times the cost
         // per word is a conservative floor for that difference - on this part
