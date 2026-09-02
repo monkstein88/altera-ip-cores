@@ -39,3 +39,6 @@ example/de10_lite_rtl/simulation/verilator/.*.log
 
 # Intermediate HTML from build_pdf.py
 doc/tools/.render_*.html
+
+# Questa assertion report
+simulation/questa/assert_report.txt

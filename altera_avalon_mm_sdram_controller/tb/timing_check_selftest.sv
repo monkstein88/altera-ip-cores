@@ -49,6 +49,10 @@ module timing_check_selftest;
     //   tRAS 37 ns / 10 ns = 3.7 -> 4      tRRD 14 ns -> 2
     //   tWR  14 ns / 10 ns = 1.4 -> 2      tMRD 14 ns -> 2
     localparam int N_RCD = 2, N_RP = 2, N_RAS = 4, N_RRD = 2, N_WR = 2, N_MRD = 2;
+    // tRFC 60 ns at 100 MHz is 6 cycles. Read-to-write turnaround is a bus
+    // property rather than a device timing: CAS latency plus the cycle the
+    // device needs to stop driving DQ.
+    localparam int N_RFC = 6, N_WTR = 4;
     // The stretched instance: tRC 105 ns -> 11 cycles.
     localparam int N_RC_STRETCH = 11;
 
@@ -92,6 +96,7 @@ module timing_check_selftest;
     task automatic PRE (input logic [1:0] b); drive(0,1,0,b,13'h000); endtask
     task automatic PREA;                      drive(0,1,0,2'd0,13'h400); endtask
     task automatic MRS;                       drive(0,0,0,2'd0,13'h030); endtask
+    task automatic REF;                       drive(0,0,1,2'd0,13'h000); endtask
     task automatic nop(input int n);
         begin repeat (n) begin @(posedge clk); #0.1; end end
     endtask
@@ -199,12 +204,36 @@ module timing_check_selftest;
         expect_delta_rc($sformatf("tRC  at %0d cycles (exact)     accepted",
                                   N_RC_STRETCH), 0);
 
+        // ---- tRFC: AUTO REFRESH -> ACTIVATE ----------------------------
+        // tRFC was not checked at all until now, and it is the only refresh
+        // timing there is. A controller that activates too soon after a
+        // refresh reads a row that has not finished being restored.
+        quiesce; REF; nop(N_RFC-2); ACT(0);
+        expect_delta($sformatf("tRFC at %0d cycles (one short) rejected", N_RFC-1), 1);
+        quiesce; REF; nop(N_RFC-1); ACT(0);
+        expect_delta($sformatf("tRFC at %0d cycles (exact)     accepted", N_RFC), 0);
+
+        // ---- tRFC: AUTO REFRESH -> AUTO REFRESH ------------------------
+        quiesce; REF; nop(N_RFC-2); REF;
+        expect_delta($sformatf("tRFC REF->REF at %0d cycles rejected", N_RFC-1), 1);
+        quiesce; REF; nop(N_RFC-1); REF;
+        expect_delta($sformatf("tRFC REF->REF at %0d cycles accepted", N_RFC), 0);
+
+        // ---- read -> write bus turnaround ------------------------------
+        // Not a device timing but a contention hazard on the shared DQ bus,
+        // and invisible to any functional model: the model stops driving and
+        // the controller reads back its own value.
+        quiesce; ACT(0); nop(N_RAS+2); RD(0); nop(N_WTR-2); WR(0);
+        expect_delta($sformatf("read->write at %0d cycles (one short) rejected", N_WTR-1), 1);
+        quiesce; ACT(0); nop(N_RAS+2); RD(0); nop(N_WTR-1); WR(0);
+        expect_delta($sformatf("read->write at %0d cycles (exact)     accepted", N_WTR), 0);
+
         // ---- structural checks -----------------------------------------
         quiesce; ACT(0); nop(8); ACT(0);
         expect_delta("ACTIVATE to an already-open bank rejected", 1);
         quiesce; RD(0);
         expect_delta("column command to a closed bank rejected", 1);
-        quiesce; ACT(0); nop(8); drive(0,0,1,2'd0,13'h0);   // REFRESH, bank open
+        quiesce; ACT(0); nop(8); REF;                       // REFRESH, bank open
         expect_delta("REFRESH with a bank still open rejected", 1);
 
         $display("-------------------------------------------------------------------------");

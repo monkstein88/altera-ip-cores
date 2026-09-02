@@ -1,7 +1,8 @@
 # Avalon-MM SDRAM Controller
 
-**Status: working controller, packaged for Platform Designer, documented, and
-verified in simulation. Not yet on hardware.**
+**Status: working controller, packaged for Platform Designer, documented,
+verified in simulation, synthesised, and closing timing at 100 MHz on the
+DE10-Lite's MAX 10. Not yet run on a board.**
 
 A from-scratch SDR SDRAM controller for Avalon-MM, intended to replace
 [`altera_avalon_new_sdram_controller`](../altera_avalon_new_sdram_controller)
@@ -32,15 +33,18 @@ controllers. ISSI IS42S16320D at 100 MHz, 16-bit bus, CAS 3. Peak 200 MB/s.
 
 | Pattern | Intel's core | Custom core | Speedup |
 |---|---|---|---|
-| seq write | 194.3 | **197.6** | 1.02× |
-| seq read | 194.0 | **196.0** | 1.01× |
+| seq write | 194.3 | **198.3** | 1.02× |
+| seq read | 194.0 | **196.1** | 1.01× |
 | seq read/write | 21.9 | **78.9** | 3.6× |
 | same-row rd/wr | 21.9 | **78.9** | 3.6× |
 | bank+row walk | 21.9 | **65.5** | 3.0× |
-| **4-bank same row** | 21.9 | **195.5** | **8.9×** |
-| random | 22.0 | **44.4** | 2.0× |
+| **4-bank same row** | 21.9 | **194.7** | **8.9×** |
+| random | 22.0 | **44.5** | 2.0× |
 
-0 data errors, 0 timing violations.
+0 data errors, 0 timing violations. Both columns are measured, not quoted:
+Intel's core is generated from a local Quartus installation by
+[`benchmark/gen_dut.sh`](benchmark/gen_dut.sh) and driven by the same
+stimulus.
 
 **Sequential streaming was already finished** and is unchanged — 97% of the bus
 before, 98–99% now. Anyone claiming a large win here should be disbelieved.
@@ -68,6 +72,29 @@ fully random access.
 | Refresh | immediate | postponed up to 8, spent when idle or when forced |
 | Timings | ns, `ceil` | ns, `ceil`, **plus tRAS and tRRD** — which a per-bank design needs and a single-row design does not |
 | Command buffering | — | 8-deep, so look-ahead has something to look at |
+| Buffer output | — | registered and pre-decoded, so the scheduler is not behind a multiplexer |
+
+## Cost and speed
+
+Quartus 18.1.1 Standard, MAX 10 `10M50DAF484C7G` (the DE10-Lite's part), Slow
+1200 mV 85 °C model. Both controllers synthesised standalone with the same
+constraints, so the comparison is like for like.
+
+| | Intel's core | Custom core |
+|---|---|---|
+| Logic elements | 353 | 1,193 |
+| Registers | 225 | 779 |
+| f_MAX | 115.2 MHz | **101.0 MHz** |
+
+The whole DE10-Lite demonstration — controller, sequencer, master, PLL,
+displays and JTAG — fits in **2,805 LEs and 1,602 registers**, 6% of the
+device, and closes 100 MHz with **0.430 ns** of setup slack.
+
+The core costs about 3.4× the logic of the controller it replaces and runs at
+0.88× its f_MAX. That is what per-bank row tracking, look-ahead and an 8-deep
+command buffer cost. It is worth it at and below 100 MHz, where the throughput
+table above applies; it is not a free substitution, and a design already at
+115 MHz with Intel's core cannot simply swap this one in.
 
 ## What is left
 
@@ -80,15 +107,18 @@ be measured on this same ruler before being believed.
 
 Also outstanding:
 
-- **Hardware.** Everything here is simulation and component generation. No
-  Quartus licence in the development environment, so no f_MAX, no resource
-  numbers, no board run.
+- **A board.** The design synthesises, fits, meets timing and produces a
+  bitstream, but has never been programmed into a part. Refresh and retention
+  are the things only silicon can settle: no functional model forgets.
+- **f_MAX headroom.** 101 MHz against a 100 MHz target is 1% of margin. The
+  critical path is the loop from the registered FIFO head, through the S_RUN
+  priority chain, through `f_pop` and back into that register. Shortening it
+  further means splitting the priority chain across two cycles, which costs a
+  cycle on every row change and should be measured before being believed.
 - **More device presets.** Only the DE10-Lite's part is supplied, because it is
   the only one whose timing has been checked against a datasheet and exercised
   through the benchmark. Adding one is a block of XML; inventing the numbers is
   the part that would be wrong.
-- **A parameter sweep in the regression** — several presets × clock rates,
-  rather than testing one configuration and shipping N untested ones.
 
 ## Using it in Platform Designer
 
@@ -178,12 +208,20 @@ altera_avalon_mm_sdram_controller/
 
 | Flow | Covers | Result |
 |---|---|---|
-| [`simulation/verilator/run_sim.sh`](simulation/verilator/run_sim.sh) | Lint, timing-checker self-test, testbench across 8 configurations, lint in 4 geometries | 14 checks, 1152 testbench assertions |
-| [`tb/`](tb) | 144 checks per configuration, on the command stream as well as the data | Passing |
+| [`simulation/verilator/run_sim.sh`](simulation/verilator/run_sim.sh) | Lint of RTL, checker and model; timing-checker self-test; testbench across 11 configurations including three clock rates; lint in 4 geometries; Quartus Analysis & Synthesis | 20 checks, 1760 testbench assertions |
+| [`tb/`](tb) | 160 checks per configuration, on the command stream as well as the data | Passing |
+| [`simulation/questa/run_sim.tcl`](simulation/questa/run_sim.tcl) | The same 11 configurations, plus code coverage and assertion non-vacuity | 22 assertion instances, **none vacuous** |
 | [`benchmark/`](benchmark/README.md) | Throughput against the core being replaced | Passing |
 | [`example/de10_lite_rtl`](example/de10_lite_rtl/README.md) | Board demonstration, 9 phases | 58 checks passing |
-| [`doc/tools/check_facts.py`](doc/tools/check_facts.py) | Every number in the documents, re-derived from the RTL | 192 claims |
-| Questa, hardware | Coverage, non-vacuity, retention | **Not run — no licence** |
+| Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met, +0.430 ns |
+| [`doc/tools/check_facts.py`](doc/tools/check_facts.py) | Every number in the documents, re-derived from the RTL — and the throughput table re-measured by running the benchmark | 192 claims |
+| Hardware | Retention, refresh on silicon | **Not run — no board** |
+
+Questa reports every one of the 22 assertion instances passing **non-vacuously**,
+which is the number that matters: an assertion that only ever passes because
+its antecedent never held has verified nothing while reporting green. Merged
+code coverage across the sweep is 94.5% statement, 91.9% branch and 100% FSM
+state on the controller.
 
 The testbench asserts on the **command stream**, not only the data. A
 controller that closed and reopened a row before every access would return
@@ -191,10 +229,30 @@ correct data and pass any integrity check; four banks with one row open each,
 accessed in rotation, is asserted to cost exactly four ACTIVATEs and zero
 PRECHARGEs.
 
-Proven by fault injection: six faults were introduced into the controller and
-each was caught by the layer meant to catch it — directed tests for byte
-enables and read latency, the assertions for turnaround, row bookkeeping and
-refresh bounding, and the timing checker for tRCD.
+Proven by fault injection. Every JEDEC timing the controller gates on was
+deleted in turn and the regression re-run:
+
+| Fault injected | Caught by |
+|---|---|
+| tRCD, tRP, tRAS, tRRD, tWR, tRFC | the timing checker |
+| read→write turnaround | the assertions and the timing checker |
+| byte enables, read latency | directed tests |
+| row bookkeeping, refresh bounding | the assertions |
+| refresh stopped entirely | directed tests and the timing checker |
+
+Two survive, and both for structural reasons rather than because nothing is
+looking. **tRC** cannot be violated by a controller that already respects tRAS
+and tRP, because ceil(tRAS) + ceil(tRP) ≥ ceil(tRC) at every clock. **tMRD** is
+satisfied by the initialisation sequence itself: the earliest command after
+LOAD MODE is three cycles later, and tMRD is two.
+
+Getting there took fixing the suite as well as the core. tRAS and tWR were
+checked but never *provoked* — every row change in the regression followed a
+write, where tWR expires on the same cycle as tRAS and masks it — so deleting
+either gate changed nothing while the benchmark's traffic reported thousands of
+violations. And the checker's tally was cleared by reset, which the last
+scenario asserts, so the summary printed `timing violations: 0` over runs that
+had reported dozens on the transcript.
 
 ## Documentation
 

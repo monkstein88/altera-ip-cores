@@ -247,16 +247,19 @@ chk(len(nums) == len(built),
     f"{len(built)} figures are generated but {len(nums)} are captioned")
 
 # --------------------------------------------------------- 9. status
-# The core has never been on hardware. Every document must say so, and none
-# may claim otherwise - this is the single most misleading thing the
-# documentation could get wrong.
+# The core has been synthesised, fitted and timed, but never programmed into a
+# part. Every document must say so, and none may claim otherwise - this is the
+# single most misleading thing the documentation could get wrong.
+#
+# f_MAX and resource figures used to be forbidden here, because there was no
+# Quartus result to quote. There is now, so what is checked is the boundary
+# that still exists: synthesis results are legitimate, a running board is not.
 for doc_name, doc in (("user guide", UG), ("core README", RM)):
     chk(re.search(r"not yet (been )?(run )?on hardware|never (been )?run on hardware|"
-                  r"Simulation only|simulation only|Not yet on hardware",
+                  r"never been programmed|not been programmed|Not yet on hardware|"
+                  r"not yet run on a board|never run on a board",
                   doc, re.I) is not None,
-        f"the {doc_name} does not state that the core has not been run on hardware")
-    chk("f_MAX" not in doc or re.search(r"no f_MAX|f_MAX[^.]{0,40}not", doc),
-        f"the {doc_name} quotes an f_MAX, which cannot have been measured")
+        f"the {doc_name} does not state that the core has not been run on a board")
     # And no positive claim of a hardware result FOR THIS CORE. Scoped to this
     # core deliberately: the documents legitimately cite the 194 MB/s that the
     # other core's example did measure on a board, and a check that flags a
@@ -272,6 +275,67 @@ for doc_name, doc in (("user guide", UG), ("core README", RM)):
     for m in re.finditer(r"[^.\n]*\d+\s*MHz on hardware[^.\n]*", doc, re.I):
         chk(False, f"the {doc_name} quotes a hardware clock rate: "
                    f"\"{m.group(0).strip()[:70]}\"")
+
+# ------------------------------------------- 10. the throughput table is real
+# Section 5 above compares the three copies of the performance table against
+# EACH OTHER. That is necessary and not sufficient: all three agreed on 197.6
+# and 196.0 for a year while the benchmark printed 197.7 and 196.1, because
+# nothing ever compared the documents to the tool that produced them.
+#
+# So run it. The custom core needs no Quartus, so this costs a Verilator build
+# and about a second of simulation. Skipped, loudly, if Verilator is missing.
+def bench_rows():
+    """Run benchmark/ for the custom core and return {pattern: MB/s string}."""
+    import shutil, subprocess, tempfile
+    if not shutil.which("verilator"):
+        return None
+    with tempfile.TemporaryDirectory() as td:
+        build = subprocess.run(
+            ["verilator", "--binary", "--timing", "--assert",
+             "-Wno-WIDTHEXPAND", "-Wno-WIDTHTRUNC", "-Wno-DECLFILENAME",
+             "-Wno-INITIALDLY", "-Wno-BLKSEQ", "-Wno-PROCASSINIT",
+             "-MAKEFLAGS", "VK_PCH_I_FAST= VK_PCH_I_SLOW=",
+             "-DDUT_MODULE=avalon_mm_sdram_controller",
+             "--top-module", "sdram_bench_tb", "-o", "bench", "-Mdir", td,
+             os.path.join(ROOT, "rtl/avalon_mm_sdram_controller.sv"),
+             os.path.join(ROOT, "tb/sdram_device_model.sv"),
+             os.path.join(ROOT, "benchmark/sdram_traffic_gen.sv"),
+             os.path.join(ROOT, "tb/sdram_timing_check.sv"),
+             os.path.join(ROOT, "benchmark/sdram_bench_tb.sv")],
+            capture_output=True, text=True)
+        if build.returncode != 0:
+            return {"__build_failed__": build.stderr[-400:]}
+        run = subprocess.run([os.path.join(td, "bench")],
+                             capture_output=True, text=True)
+        rows = {}
+        for ln in run.stdout.splitlines():
+            # Parsed from the RIGHT, against the fixed trailing columns, not
+            # by assuming the pattern column is wide enough for its longest
+            # name. It was not: "4-bank same row" ran into the cycle count.
+            m = re.match(r"\s{2}(.+?)\s+(\d+)\s+(\d+)\s+([\d.]+)\s+[\d.]+%\s+\S",
+                         ln)
+            if m:
+                rows[m.group(1).strip()] = m.group(4)
+        return rows
+
+
+measured = bench_rows()
+if measured is None:
+    print("check_facts: note - verilator not found, "
+          "the throughput table was compared only against itself")
+elif "__build_failed__" in measured:
+    chk(False, "the benchmark did not build, so the throughput table is "
+               f"unverified: {measured['__build_failed__']}")
+else:
+    chk(len(measured) >= 6,
+        f"the benchmark printed {len(measured)} patterns, expected at least 6")
+    for name, (intel, custom) in tables["user guide"].items():
+        chk(name in measured,
+            f'the documents quote a pattern "{name}" the benchmark does not print')
+        if name in measured:
+            chk(measured[name] == custom,
+                f'"{name}": the documents say {custom} MB/s, '
+                f"the benchmark measures {measured[name]}")
 
 # ---------------------------------------------------------------- report
 print(f"check_facts: {passes} claims verified, {len(fails)} mismatches")

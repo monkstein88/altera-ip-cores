@@ -26,13 +26,25 @@
 // PARAMETERISED IN TIME, NOT IN CYCLES
 // ------------------------------------
 // Every device timing is an integer number of picoseconds, converted to cycles
-// here with ceiling division and never allowed below one cycle. Cycle counts
-// are deliberately NOT exposed: a timing parameter rounded the wrong way is
-// silent data corruption at temperature months later, not a clean failure, and
-// pushing that arithmetic onto the integrator guarantees someone gets it
-// wrong. Retarget by changing the timings and the clock, not by recomputing
-// cycles. The Platform Designer component asks for nanoseconds and scales
-// them; picoseconds are the wire format, for the reason given below.
+// here. Cycle counts are deliberately NOT exposed: a timing parameter rounded
+// the wrong way is silent data corruption at temperature months later, not a
+// clean failure, and pushing that arithmetic onto the integrator guarantees
+// someone gets it wrong. Retarget by changing the timings and the clock, not
+// by recomputing cycles. The Platform Designer component asks for nanoseconds
+// and scales them; picoseconds are the wire format, for the reason given below.
+//
+// Which way a timing rounds depends on what KIND of limit it is, and getting
+// that uniform was a bug:
+//
+//   * MINIMUM delays - tRC, tRAS, tRP, tRCD, tRRD, tWR, tMRD, tRFC - round UP.
+//     A cycle too many costs performance; a cycle too few corrupts.
+//   * The MAXIMUM refresh interval rounds DOWN, for exactly the same reason
+//     read the other way round. Rounding it up refreshes the part less often
+//     than it allows.
+//   * Timings the datasheet states in CLOCKS rather than in time - tRRD, tWR
+//     and tMRD are 2 clocks on this part at every speed grade - additionally
+//     carry a floor in cycles. Below about 71 MHz a 14 ns figure is less than
+//     one clock, and without the floor all three collapse to a single cycle.
 //
 // COMMAND TIMING CONVENTION
 // -------------------------
@@ -137,24 +149,63 @@ module avalon_mm_sdram_controller #(
     localparam int DQM_W = DATA_BITS / 8;
 
     // =========================================================================
-    // ns -> cycles.  Always rounds UP, never below 1.
+    // Time -> cycles.  INTEGER ARITHMETIC ONLY.
     // =========================================================================
-    // NOTE: the familiar `int'((ns*khz + 999_999)/1_000_000)` ceiling is wrong
-    // in SystemVerilog. `int'(real)` rounds to NEAREST (IEEE 1800-2017 6.24.1),
-    // so the bias and the rounding compound and a whole extra cycle appears
-    // whenever the quotient is an integer - tRC 60 ns at 100 MHz became 7
-    // cycles instead of 6. Conservative, but it costs a cycle on every row
-    // cycle, and it is not what the parameter says.
-    function automatic int unsigned cyc_ns(input real ns);
-        real c;
-        c = $ceil((ns * real'(CLK_KHZ)) / 1_000_000.0 - 1.0e-9);
-        return (c < 1.0) ? 1 : int'(c);
+    // These were `real` until Quartus was pointed at them. Analysis & Synthesis
+    // in Quartus Standard rejects a `real` VARIABLE outright - "Error (10172):
+    // real variable data type values are not supported" - even inside a
+    // function that is only ever evaluated at elaboration. The core did not
+    // synthesise at all, and no simulation flow could have told us: Verilator
+    // lints it clean with -Wall and nothing waived.
+    //
+    // So the conversion is integer picoseconds throughout. cycles =
+    // ps * CLK_KHZ / 1e9, because ps*1e-12 s x kHz*1e3 Hz = ps*kHz*1e-9.
+    //
+    // EVERY intermediate must be 64-bit and every literal explicitly sized. An
+    // unsized decimal literal is only guaranteed 32 bits, so `1_000_000_000_000`
+    // silently truncates - which is the same class of unit bug as the quoted
+    // FLOAT parameter this core already carries scar tissue from.
+    //
+    // Range: T_*_PS is at most 2^31 ps (2.1 ms); at 1 GHz that is 2.1e15,
+    // comfortably inside a 64-bit product.
+    localparam longint unsigned PS_PER_CYC_DIV = 64'd1_000_000_000;
+
+    // Minimum timings: ACT->RD, PRE->ACT and friends. Rounding UP is the safe
+    // direction - a cycle too many costs performance, a cycle too few is
+    // silent corruption at temperature.
+    function automatic int unsigned cyc_ps(input longint unsigned ps);
+        longint unsigned num;
+        num = ps * longint'(CLK_KHZ);
+        return (num == 0) ? 1
+             : int'((num + PS_PER_CYC_DIV - 1) / PS_PER_CYC_DIV);
     endfunction
 
-    // Picoseconds. Exact for every value either parameter can hold: at 1 GHz a
-    // 60 ns figure is 6e10, far inside a double's exact-integer range.
-    function automatic int unsigned cyc_ps(input int ps);
-        return cyc_ns(real'(ps) / 1000.0);
+    // MAXIMUM timings - so far only the refresh interval. Rounding up here is
+    // the WRONG direction: it refreshes less often than the part requires.
+    // This is the one conversion in the core that floors.
+    function automatic int unsigned cyc_ps_max(input longint unsigned ps);
+        longint unsigned c;
+        c = (ps * longint'(CLK_KHZ)) / PS_PER_CYC_DIV;
+        return (c < 1) ? 1 : int'(c);
+    endfunction
+
+    // Some SDR timings are specified in CLOCKS, not in time. On the ISSI
+    // IS42S16320D the cycle column is 2 for tRRD, tDPL(tWR) and tMRD at every
+    // speed grade, while the nanosecond column tracks the grade's tCK - which
+    // is what "2 clocks" means when written out in ns.
+    //
+    // Converting those back to cycles is exact only while tCK is at or below
+    // the figure the datasheet quoted. Below roughly 71 MHz, 14 ns is less
+    // than one clock and all three collapse to a single cycle - an illegal
+    // command stream that the timing checker used to agree with, because it
+    // derived the same number from the same nanoseconds.
+    localparam int unsigned MIN_CYC_RRD = 2;   // JEDEC SDR: tRRD >= 2 clocks
+    localparam int unsigned MIN_CYC_WR  = 2;   // tDPL      >= 2 clocks
+    localparam int unsigned MIN_CYC_MRD = 2;   // tMRD      >= 2 clocks
+
+    function automatic int unsigned at_least(input int unsigned c,
+                                             input int unsigned floor_c);
+        return (c < floor_c) ? floor_c : c;
     endfunction
 
     // Counters are loaded with (cycles - 1) because the command outputs are
@@ -163,27 +214,42 @@ module avalon_mm_sdram_controller #(
         return (c <= 1) ? 0 : c - 1;
     endfunction
 
-    localparam int unsigned CYC_RC   = cyc_ps(T_RC_PS);
-    localparam int unsigned CYC_RAS  = cyc_ps(T_RAS_PS);
-    localparam int unsigned CYC_RP   = cyc_ps(T_RP_PS);
-    localparam int unsigned CYC_RCD  = cyc_ps(T_RCD_PS);
-    localparam int unsigned CYC_RRD  = cyc_ps(T_RRD_PS);
-    localparam int unsigned CYC_WR   = cyc_ps(T_WR_PS);
-    localparam int unsigned CYC_MRD  = cyc_ps(T_MRD_PS);
-    localparam int unsigned CYC_RFC  = cyc_ps(T_RFC_PS);
-    localparam int unsigned CYC_INIT = cyc_ns(real'(T_INIT_US) * 1000.0);
-    // Average interval between AUTO REFRESH commands.
+    localparam int unsigned CYC_RC   = cyc_ps(longint'(T_RC_PS));
+    localparam int unsigned CYC_RAS  = cyc_ps(longint'(T_RAS_PS));
+    localparam int unsigned CYC_RP   = cyc_ps(longint'(T_RP_PS));
+    localparam int unsigned CYC_RCD  = cyc_ps(longint'(T_RCD_PS));
+    localparam int unsigned CYC_RRD  = at_least(cyc_ps(longint'(T_RRD_PS)),
+                                                MIN_CYC_RRD);
+    localparam int unsigned CYC_WR   = at_least(cyc_ps(longint'(T_WR_PS)),
+                                                MIN_CYC_WR);
+    localparam int unsigned CYC_MRD  = at_least(cyc_ps(longint'(T_MRD_PS)),
+                                                MIN_CYC_MRD);
+    localparam int unsigned CYC_RFC  = cyc_ps(longint'(T_RFC_PS));
+    localparam int unsigned CYC_INIT = cyc_ps(longint'(T_INIT_US) * 64'd1_000_000);
+    // Average interval between AUTO REFRESH commands. REF_PERIOD_MS ms in ps
+    // is x 1e9, and that product needs 64 bits well before REF_PERIOD_MS gets
+    // interesting.
     localparam int unsigned CYC_REFI =
-        cyc_ns((real'(REF_PERIOD_MS) * 1_000_000.0) / real'(REF_ROWS));
+        cyc_ps_max((longint'(REF_PERIOD_MS) * 64'd1_000_000_000)
+                   / longint'(REF_ROWS));
 
     // Bus turnaround. A READ issued at T has the device driving DQ at T+CAS.
     // A WRITE drives DQ in its own cycle, so the earliest safe write is
     // T+CAS+1. The other direction is free - the datasheet allows write data
     // to be immediately followed by a READ command.
     localparam int unsigned CYC_WTR = CAS_LAT + 1;
-    // READ -> PRECHARGE of the same bank. For a length-1 burst the array
-    // access has already happened, so one cycle is enough.
-    localparam int unsigned CYC_RDP = 1;
+    // READ -> PRECHARGE of the same bank needs no counter.
+    //
+    // The datasheet puts the earliest non-truncating PRECHARGE at (CAS-1)
+    // cycles before the last data element. For a length-1 burst that is
+    // T+CAS-(CAS-1) = T+1, for CAS 2 and CAS 3 alike. The command outputs are
+    // registered, so the soonest any command can follow a READ is already one
+    // cycle - the constraint is met by construction.
+    //
+    // There used to be a c_rdp counter here. It was loaded with gate(1) = 0
+    // on every read and therefore never held a non-zero value: Questa's
+    // statement coverage reported its decrement as unreachable, which is what
+    // sent us back to the datasheet to confirm the reasoning above.
 
     localparam int TW        = 8;       // timing counter width, cycles
     localparam int RD_PIPE_D = CAS_LAT + RD_EXTRA_LAT;
@@ -262,9 +328,17 @@ module avalon_mm_sdram_controller #(
     // =========================================================================
     localparam int FAW = $clog2(FIFO_DEPTH);
 
+    // The entry carries the access ALREADY DECODED into bank, row and column.
+    // Decoding on the way in rather than on the way out keeps the address map
+    // off the scheduler's critical path, which runs from the read pointer,
+    // through this array's output multiplexer, through the whole S_RUN
+    // priority chain, and into the timing counters. That path is what sets
+    // f_MAX for the whole core.
     typedef struct packed {
         logic                   is_rd;
-        logic [ADDR_W-1:0]      addr;
+        logic [BANK_BITS-1:0]   bank;
+        logic [ROW_BITS-1:0]    row;
+        logic [COL_BITS-1:0]    col;
         logic [DATA_BITS-1:0]   wdata;
         logic [DQM_W-1:0]       be_n;
     } req_t;
@@ -280,32 +354,98 @@ module avalon_mm_sdram_controller #(
     // At least two entries queued, so look-ahead has something to look at.
     assign f_two   = ((wptr - rptr) > (FAW+1)'(1));
 
-    req_t              head;
-    logic [ADDR_W-1:0] nxt_addr;      // look-ahead needs the address, nothing else
-    assign head     = fifo[rptr[FAW-1:0]];
-    assign nxt_addr = fifo[rptr[FAW-1:0] + 1'b1].addr;
-
     // A full FIFO does not stall the master if it is also popping this cycle;
     // without that, a 1-in/1-out steady state would stall every other cycle
-    // and halve throughput. `f_pop` depends on the FIFO head and the bank
-    // state, never on `f_push`, so there is no combinational loop.
+    // and halve throughput. `f_pop` depends on the registered FIFO head and
+    // the bank state, never on `f_push`, so there is no combinational loop.
     assign f_push         = az_cs && (!az_rd_n || !az_wr_n) && !za_waitrequest;
     assign za_waitrequest = !init_done || (f_full && !f_pop);
 
-    initial begin
-        for (int i = 0; i < FIFO_DEPTH; i++) fifo[i] = '0;
+    req_t push_ent;
+    assign push_ent = '{is_rd: !az_rd_n,
+                        bank:  bank_of(az_addr),
+                        row:   row_of(az_addr),
+                        col:   az_addr[COL_BITS-1:0],
+                        wdata: az_data,
+                        be_n:  az_be_n};
+
+    // =========================================================================
+    // Registered FIFO output
+    //
+    // `head` and the look-ahead entry are REGISTERS, not multiplexer outputs.
+    //
+    // Something has to select the entry the read pointer names, but it does
+    // not have to happen in the same cycle as the scheduler. With `head`
+    // combinational the critical path ran from rptr, through a FIFO_DEPTH-way
+    // multiplexer, through the entire S_RUN priority chain, and into the
+    // timing counters and row bookkeeping - eighteen levels of logic, and
+    // f_MAX 83 MHz for a core whose every published figure assumes 100.
+    //
+    // The three candidate entries are read from the array using rptr ALONE, so
+    // those multiplexers start settling at the clock edge. `f_pop` arrives
+    // late, from the scheduler, but only ever selects between values that are
+    // already resolved. Getting that ordering the wrong way round - computing
+    // the next index first and then indexing the array with it - puts the
+    // multiplexer back downstream of the scheduler and buys nothing.
+    // =========================================================================
+    localparam logic [FAW-1:0] IDX1 = FAW'(1);
+    localparam logic [FAW-1:0] IDX2 = FAW'(2);
+
+    logic [FAW-1:0] r0, r1, r2;
+    assign r0 = rptr[FAW-1:0];
+    assign r1 = rptr[FAW-1:0] + IDX1;
+    assign r2 = rptr[FAW-1:0] + IDX2;
+
+    // Write-to-read bypass: the entry being pushed this cycle is not in the
+    // array yet, so a read pointer that lands on the slot being written has to
+    // take it from the input instead.
+    logic byp0, byp1, byp2;
+    assign byp0 = f_push && (wptr[FAW-1:0] == r0);
+    assign byp1 = f_push && (wptr[FAW-1:0] == r1);
+    assign byp2 = f_push && (wptr[FAW-1:0] == r2);
+
+    // Only the head is needed in full. Look-ahead asks where the next access
+    // lives, never what it carries, so the deeper two multiplexers are just
+    // bank and row.
+    req_t                 ent0, ent1;
+    logic [BANK_BITS-1:0] ent2_bank;
+    logic [ROW_BITS-1:0]  ent2_row;
+    assign ent0      = byp0 ? push_ent      : fifo[r0];
+    assign ent1      = byp1 ? push_ent      : fifo[r1];
+    assign ent2_bank = byp2 ? push_ent.bank : fifo[r2].bank;
+    assign ent2_row  = byp2 ? push_ent.row  : fifo[r2].row;
+
+    req_t                 head;
+    logic [BANK_BITS-1:0] nxt_bank;
+    logic [ROW_BITS-1:0]  nxt_row;
+
+    always_ff @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            head     <= '0;
+            nxt_bank <= '0;
+            nxt_row  <= '0;
+        end else begin
+            head     <= f_pop ? ent1      : ent0;
+            nxt_bank <= f_pop ? ent2_bank : ent1.bank;
+            nxt_row  <= f_pop ? ent2_row  : ent1.row;
+        end
     end
 
+    // The FIFO body is cleared from the reset branch, NOT from an initial
+    // block. A variable assigned in an always_ff may not be written by any
+    // other process (IEEE 1800-2017 9.2.2.4); Questa rejects the combination
+    // outright - "(vopt-7061) Variable 'fifo' driven in an always_ff block,
+    // may not be driven by any other process" - and no simulation ever ran
+    // because of it. Clearing here costs nothing: the entries are already
+    // unreachable until wptr moves.
     always_ff @(posedge clk or negedge reset_n) begin
         if (!reset_n) begin
             wptr <= '0;
             rptr <= '0;
+            for (int i = 0; i < FIFO_DEPTH; i++) fifo[i] <= '0;
         end else begin
             if (f_push) begin
-                fifo[wptr[FAW-1:0]] <= '{is_rd: !az_rd_n,
-                                         addr:  az_addr,
-                                         wdata: az_data,
-                                         be_n:  az_be_n};
+                fifo[wptr[FAW-1:0]] <= push_ent;
                 wptr <= wptr + 1'b1;
             end
             if (f_pop) rptr <= rptr + 1'b1;
@@ -323,24 +463,20 @@ module avalon_mm_sdram_controller #(
     logic [TW-1:0] c_rp  [BANKS];   // until ACT allowed     (tRP)
     logic [TW-1:0] c_rc  [BANKS];   // until ACT allowed     (tRC)
     logic [TW-1:0] c_wr  [BANKS];   // until PRE allowed     (tWR)
-    logic [TW-1:0] c_rdp [BANKS];   // until PRE allowed after a read
     logic [TW-1:0] c_rrd;           // until any ACT allowed (tRRD)
     logic [TW-1:0] c_rfc;           // until any ACT/REF allowed (tRFC, tMRD)
     logic [TW-1:0] c_wtr;           // until a WRITE may follow a READ
 
-    // A bank may be activated when it is closed and tRP, tRC, tRRD and tRFC
-    // all permit it.
-    function automatic logic act_ok(input logic [BANK_BITS-1:0] b);
-        return !row_open[b] && (c_rp[b] == '0) && (c_rc[b] == '0)
-               && (c_rrd == '0) && (c_rfc == '0);
-    endfunction
-
-    // A bank may be precharged when the row has been open for tRAS, any write
-    // data has settled for tWR, and any read has left the array.
-    function automatic logic pre_ok(input logic [BANK_BITS-1:0] b);
-        return row_open[b] && (c_ras[b] == '0) && (c_wr[b] == '0)
-               && (c_rdp[b] == '0);
-    endfunction
+    // Readiness is evaluated for EVERY bank in parallel and selected
+    // afterwards, rather than selecting the bank and then evaluating it.
+    // Both forms describe the same function, but only this one lets the
+    // counter comparisons - which depend on nothing but registers - settle
+    // while the FIFO output multiplexer is still resolving. Written as
+    // functions of a late-arriving bank index they were serialised behind it,
+    // and the whole chain showed up as the critical path.
+    logic act_ok_v [BANKS];   // closed, and tRP/tRC/tRRD/tRFC all permit ACT
+    logic pre_ok_v [BANKS];   // open, and tRAS/tWR have elapsed
+    logic rcd_ok_v [BANKS];   // tRCD elapsed, so a column command is legal
 
     logic any_open, all_pre_ok, all_rp_done;
 
@@ -349,9 +485,14 @@ module avalon_mm_sdram_controller #(
         all_pre_ok  = 1'b1;
         all_rp_done = 1'b1;
         for (int b = 0; b < BANKS; b++) begin
+            act_ok_v[b] = !row_open[b] && (c_rp[b] == '0) && (c_rc[b] == '0)
+                          && (c_rrd == '0) && (c_rfc == '0);
+            pre_ok_v[b] = row_open[b] && (c_ras[b] == '0) && (c_wr[b] == '0);
+            rcd_ok_v[b] = (c_rcd[b] == '0);
+
             if (row_open[b]) begin
                 any_open = 1'b1;
-                if (!pre_ok(BANK_BITS'(b))) all_pre_ok = 1'b0;
+                if (!pre_ok_v[b]) all_pre_ok = 1'b0;
             end
             if (c_rp[b] != '0) all_rp_done = 1'b0;
         end
@@ -400,18 +541,34 @@ module avalon_mm_sdram_controller #(
     logic [ROW_BITS-1:0]  h_row,  n_row;
     logic                 h_hit,  n_hit, n_conflict, h_ready;
 
-    assign h_bank = bank_of(head.addr);
-    assign h_row  = row_of(head.addr);
-    assign n_bank = bank_of(nxt_addr);
-    assign n_row  = row_of(nxt_addr);
+    assign h_bank = head.bank;
+    assign h_row  = head.row;
+    assign n_bank = nxt_bank;
+    assign n_row  = nxt_row;
 
-    assign h_hit  = row_open[h_bank] && (open_row[h_bank] == h_row);
-    assign n_hit  = row_open[n_bank] && (open_row[n_bank] == n_row);
+    // Row-match against EVERY bank in parallel, then select - not select the
+    // bank and then compare. Both operands are registers, so all BANKS
+    // comparisons resolve straight out of the clock edge and the bank index
+    // only has to pick a bit. Comparing after the multiplexer instead puts a
+    // ROW_BITS-wide equality in series with it, and that sits on the loop from
+    // `head`, through the scheduler, through `f_pop`, and back into `head`,
+    // which is what limits f_MAX once the FIFO output is registered.
+    logic h_match_v [BANKS];
+    logic n_match_v [BANKS];
+    always_comb begin
+        for (int b = 0; b < BANKS; b++) begin
+            h_match_v[b] = (open_row[b] == h_row);
+            n_match_v[b] = (open_row[b] == n_row);
+        end
+    end
+
+    assign h_hit  = row_open[h_bank] && h_match_v[h_bank];
+    assign n_hit  = row_open[n_bank] && n_match_v[n_bank];
     // The next access wants a different row in a bank that is already open.
-    assign n_conflict = row_open[n_bank] && (open_row[n_bank] != n_row);
+    assign n_conflict = row_open[n_bank] && !n_match_v[n_bank];
 
     // Reads never wait on turnaround; writes wait for the read bus to clear.
-    assign h_ready = h_hit && (c_rcd[h_bank] == '0)
+    assign h_ready = h_hit && rcd_ok_v[h_bank]
                      && (head.is_rd || (c_wtr == '0));
 
     always_comb begin
@@ -443,16 +600,16 @@ module avalon_mm_sdram_controller #(
                     // The row is open and the column command is legal: go.
                     cmd      = head.is_rd ? C_RD : C_WR;
                     cmd_ba   = h_bank;
-                    cmd_addr = col_addr(head.addr[COL_BITS-1:0]);
+                    cmd_addr = col_addr(head.col);
                     do_wdata = !head.is_rd;
                     f_pop    = 1'b1;
                 end else if (!f_empty && !h_hit && row_open[h_bank]
-                             && pre_ok(h_bank)) begin
+                             && pre_ok_v[h_bank]) begin
                     // Wrong row in this bank - close it.
                     cmd      = C_PRE;
                     cmd_ba   = h_bank;
                     cmd_addr = '0;                  // A10 = 0: this bank only
-                end else if (!f_empty && !h_hit && act_ok(h_bank)) begin
+                end else if (!f_empty && !h_hit && act_ok_v[h_bank]) begin
                     // Bank closed - open the row we need.
                     cmd      = C_ACT;
                     cmd_ba   = h_bank;
@@ -461,11 +618,11 @@ module avalon_mm_sdram_controller #(
                     // Nothing to do for the head this cycle. Prepare the one
                     // behind it: this is what turns a bank-to-bank walk from a
                     // series of stalls into a pipeline.
-                    if (n_conflict && pre_ok(n_bank)) begin
+                    if (n_conflict && pre_ok_v[n_bank]) begin
                         cmd      = C_PRE;
                         cmd_ba   = n_bank;
                         cmd_addr = '0;
-                    end else if (!n_hit && act_ok(n_bank)) begin
+                    end else if (!n_hit && act_ok_v[n_bank]) begin
                         cmd      = C_ACT;
                         cmd_ba   = n_bank;
                         cmd_addr = SA_BITS'(n_row);
@@ -554,7 +711,6 @@ module avalon_mm_sdram_controller #(
                 c_rp [b]    <= '0;
                 c_rc [b]    <= '0;
                 c_wr [b]    <= '0;
-                c_rdp[b]    <= '0;
             end
         end else begin
             // ---- timing counters tick down ----
@@ -564,14 +720,17 @@ module avalon_mm_sdram_controller #(
                 if (c_rp [b] != '0) c_rp [b] <= c_rp [b] - 1'b1;
                 if (c_rc [b] != '0) c_rc [b] <= c_rc [b] - 1'b1;
                 if (c_wr [b] != '0) c_wr [b] <= c_wr [b] - 1'b1;
-                if (c_rdp[b] != '0) c_rdp[b] <= c_rdp[b] - 1'b1;
             end
             if (c_rrd != '0) c_rrd <= c_rrd - 1'b1;
             if (c_rfc != '0) c_rfc <= c_rfc - 1'b1;
             if (c_wtr != '0) c_wtr <= c_wtr - 1'b1;
 
             // ---- refresh timer ----
-            if (ref_timer >= 16'(CYC_REFI)) begin
+            // (CYC_REFI - 1) so the timer spans exactly CYC_REFI cycles:
+            // counting 0..CYC_REFI inclusive is CYC_REFI+1 of them, which
+            // stretched the interval past tREFI in the one direction that
+            // loses data. Measured 783 cycles where the part allows 781.25.
+            if (ref_timer >= 16'(CYC_REFI - 1)) begin
                 ref_timer <= '0;
                 if (ref_pend != 4'hF) ref_pend <= ref_pend + 1'b1;
             end else begin
@@ -588,8 +747,7 @@ module avalon_mm_sdram_controller #(
                 c_rrd            <= TW'(gate(CYC_RRD));
             end
             if (issue_rd) begin
-                c_rdp[cmd_ba] <= TW'(gate(CYC_RDP));
-                c_wtr         <= TW'(gate(CYC_WTR));
+                c_wtr <= TW'(gate(CYC_WTR));
             end
             if (issue_wr) begin
                 c_wr[cmd_ba] <= TW'(gate(CYC_WR));

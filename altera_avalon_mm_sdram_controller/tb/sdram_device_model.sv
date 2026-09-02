@@ -78,13 +78,16 @@ module sdram_device_model #(
     logic [2:0] cas_lat = 3'd3;          // overwritten by LOAD MODE REGISTER
 
     // ---- command decode ----------------------------------------------------
-    logic sel, cmd_act, cmd_rd, cmd_wr, cmd_pre, cmd_ref, cmd_mrs, cmd_pre_all;
+    logic sel, cmd_act, cmd_rd, cmd_wr, cmd_pre, cmd_mrs, cmd_pre_all;
     assign sel         = zs_cke && !zs_cs_n;
     assign cmd_act     = sel && !zs_ras_n &&  zs_cas_n &&  zs_we_n;
     assign cmd_rd      = sel &&  zs_ras_n && !zs_cas_n &&  zs_we_n;
     assign cmd_wr      = sel &&  zs_ras_n && !zs_cas_n && !zs_we_n;
     assign cmd_pre     = sel && !zs_ras_n &&  zs_cas_n && !zs_we_n;
-    assign cmd_ref     = sel && !zs_ras_n && !zs_cas_n &&  zs_we_n;
+    // AUTO REFRESH is deliberately not decoded: this model does not implement
+    // the refresh interval or retention, so there would be nothing to do with
+    // it. sdram_timing_check is what holds the controller to the refresh
+    // rate, and it has a self-test that pins the threshold.
     assign cmd_mrs     = sel && !zs_ras_n && !zs_cas_n && !zs_we_n;
     assign cmd_pre_all = cmd_pre && zs_addr[10];
 
@@ -150,7 +153,14 @@ module sdram_device_model #(
         bad_access = 0;
     end
 
-    always_ff @(posedge clk) if (zs_cke) begin
+    // Plain `always`, not `always_ff`. This is a behavioural device model - it
+    // stores into an associative array and counts errors with a blocking
+    // increment, neither of which is flop semantics - and `always_ff` forbids
+    // the state it holds from being written by any other process
+    // (IEEE 1800-2017 9.2.2.4). With the initial block above that made the
+    // model illegal: Verilator 5.050 rejects it as MULTIDRIVEN on
+    // `bad_access`, which took the entire licence-free regression down.
+    always @(posedge clk) if (zs_cke) begin
         // ---- row commands ----
         if (cmd_mrs) cas_lat <= zs_addr[6:4];
 

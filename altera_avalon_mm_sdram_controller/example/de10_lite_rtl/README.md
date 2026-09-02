@@ -5,11 +5,13 @@ project's SDRAM controller, driven by plain RTL. No CPU, no software: a
 sequencer walks a set of memory-test scenarios, checks every word it reads back,
 and reports over JTAG and on the seven-segment displays.
 
-**Status: simulated, not yet run on hardware.** There is no Quartus licence in
-this project's development environment, so the design has never been compiled to
-a bitstream or programmed onto a board. Everything below that describes a board
-is describing what the design is *for*, not what has been observed. The
-simulation results are real and reproducible.
+**Status: simulated, compiled, and closing timing — not yet run on hardware.**
+The design builds through Quartus 18.1.1 Standard for the DE10-Lite's MAX 10,
+fits in 6% of the device, meets its 100 MHz constraint with 0.430 ns of setup
+slack, and produces a `.sof`. It has never been programmed into a part, so
+everything below that describes a *running board* is describing what the design
+is for, not what has been observed. The simulation and compilation results are
+real and reproducible.
 
 ## What it is, and what it is a copy of
 
@@ -77,13 +79,24 @@ whose result nobody reads cannot fail.
 ```bash
 export QUARTUS_ROOT=/opt/intelFPGA/18.1
 ./build.sh qsys        # generate the Platform Designer system
-./build.sh fpga        # compile  (NEEDS A LICENCE - not done here)
-./run_on_board.sh      # program and read the result over JTAG
+./build.sh fpga        # synthesise, fit, time and assemble
+./run_on_board.sh      # program and read the result over JTAG  (NOT DONE HERE)
 ```
 
-`build.sh fpga` is the step that has never been run in this project. It needs a
-Quartus licence for MAX 10, and until someone runs it there are no resource
-figures, no f_MAX, and no hardware result for this core.
+`build.sh fpga` completes with 0 errors and produces a bitstream:
+
+| | |
+|---|---|
+| Logic elements | 2,805 / 49,760 (6%) |
+| Registers | 1,602 |
+| Pins | 110 / 360 |
+| Setup slack, 100 MHz system clock | **+0.430 ns** |
+| Setup slack, SDRAM interface | +1.996 ns |
+| f_MAX | 104.5 MHz |
+
+`run_on_board.sh` is the step that has never been run. Until someone programs a
+board there is no hardware result for this core, and refresh and retention stay
+unproven - no functional model forgets.
 
 ## Files
 

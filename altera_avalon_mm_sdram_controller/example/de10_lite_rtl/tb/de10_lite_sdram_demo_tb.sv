@@ -155,7 +155,7 @@ module de10_lite_sdram_demo_tb;
     // separately, against the same nanosecond figures the preset carries. The
     // demonstration this replaces had no equivalent: it could have driven the
     // part illegally and still passed every scenario.
-    sdram_timing_check #(.CLK_KHZ(100_000)) u_tchk (
+    sdram_timing_check #(.CLK_KHZ(100_000), .CAS_LAT(3)) u_tchk (
         .clk(clk), .reset_n(resetn), .cke(DRAM_CKE), .cs_n(DRAM_CS_N),
         .ras_n(DRAM_RAS_N), .cas_n(DRAM_CAS_N), .we_n(DRAM_WE_N),
         .ba(DRAM_BA), .addr(DRAM_ADDR));

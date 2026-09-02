@@ -48,10 +48,12 @@ not where the headroom was. See section 7.
 
 ## 1.3 Status
 
-**Simulation only.** The core has never been synthesised or run on hardware:
-there is no Quartus licence in its development environment. There are therefore
-no resource figures and no f_MAX in this document, and none should be inferred.
-What has been measured is described in sections 7 and 8, and is reproducible.
+**Verified in simulation, synthesised, and closing timing — but never run on a
+board.** The core compiles through Quartus 18.1.1 Standard for the DE10-Lite's
+MAX 10, fits, meets a 100 MHz constraint with 0.430 ns of setup slack, and
+produces a bitstream. It has not been programmed into a part, so refresh and
+retention on silicon remain unproven: no functional model forgets. Resource and
+f_MAX figures are in section 7.4 and are reproducible.
 
 ---
 
@@ -286,13 +288,13 @@ Theoretical peak 200 MB/s.
 
 | Pattern | Intel's core | This core | Speedup |
 |---|---|---|---|
-| seq write | 194.3 | 197.6 | 1.02× |
-| seq read | 194.0 | 196.0 | 1.01× |
+| seq write | 194.3 | 198.3 | 1.02× |
+| seq read | 194.0 | 196.1 | 1.01× |
 | seq read/write | 21.9 | 78.9 | 3.6× |
 | same-row rd/wr | 21.9 | 78.9 | 3.6× |
 | bank+row walk | 21.9 | 65.5 | 3.0× |
-| **4-bank same row** | 21.9 | **195.5** | **8.9×** |
-| random | 22.0 | 44.4 | 2.0× |
+| **4-bank same row** | 21.9 | **194.7** | **8.9×** |
+| random | 22.0 | 44.5 | 2.0× |
 
 0 data errors, 0 timing violations, both controllers.
 
@@ -304,20 +306,50 @@ gain is entirely in mixed and scattered traffic.
 > harness measures the right thing — but no figure in this table has itself
 > been observed on a board.
 
+## 7.4 Resources and f_MAX
+
+Quartus 18.1.1 Standard, MAX 10 `10M50DAF484C7G`, Slow 1200 mV 85 °C model.
+Both controllers synthesised standalone under the same constraints.
+
+| | Intel's core | This core |
+|---|---|---|
+| Logic elements | 353 | 1,193 |
+| Registers | 225 | 779 |
+| f_MAX | 115.2 MHz | 101.0 MHz |
+
+The complete DE10-Lite demonstration — this controller plus sequencer, master,
+PLL, seven-segment displays and JTAG probes — occupies 2,805 logic elements and
+1,602 registers, 6% of the device, and closes its 100 MHz constraint with
+0.430 ns of setup slack. The SDRAM interface paths close with 1.996 ns.
+
+> **Caution:** the throughput table in 7.3 assumes 100 MHz for both
+> controllers. Cycle counts are a property of the scheduler; megabytes per
+> second are not. This core reaches 101 MHz and the core it replaces reaches
+> 115, so the ratios hold at 100 MHz and below and stop holding above it. A
+> system already running Intel's controller above 101 MHz cannot substitute
+> this one without lowering its clock.
+
+The critical path is the loop from the registered command-buffer head, through
+the scheduler's priority chain, through the pop decision, and back into that
+register. Buffering the FIFO output is what made 100 MHz reachable at all: with
+the head taken combinationally from the array, the multiplexer and the entire
+priority chain shared one cycle, and f_MAX was 83 MHz.
+
 ---
 
 # 8. Verification
 
 | Flow | What it covers | Status |
 |---|---|---|
-| `simulation/verilator/run_sim.sh` | Lint, timing-checker self-test, testbench across 8 configurations, lint in 4 geometries | **14 checks, 1152 testbench assertions, passing** |
-| `tb/avalon_mm_sdram_controller_tb.sv` | 144 checks per configuration, asserting on the command stream as well as the data | Passing |
+| `simulation/verilator/run_sim.sh` | Lint of RTL, checker and model; timing-checker self-test; testbench across 11 configurations including three clock rates; lint in 4 geometries; Quartus Analysis & Synthesis | **20 checks, 1760 testbench assertions, passing** |
+| `tb/avalon_mm_sdram_controller_tb.sv` | 160 checks per configuration, asserting on the command stream as well as the data | Passing |
 | `tb/avalon_mm_sdram_controller_sva.sv` | Avalon protocol, command legality, DQ contention, row bookkeeping | Passing |
-| `tb/sdram_timing_check.sv` | tRC, tRAS, tRP, tRCD, tRRD, tWR, tMRD | Passing, with a 17-check threshold self-test |
+| `tb/sdram_timing_check.sv` | tRC, tRAS, tRP, tRCD, tRRD, tWR, tMRD, tRFC, read-to-write turnaround, refresh interval | Passing, with a 23-check threshold self-test |
 | `benchmark/` | Throughput against the core being replaced | Passing |
 | `example/de10_lite_rtl` | Board-level demonstration, 9 phases | 58 checks passing in simulation |
-| `simulation/questa/run_sim.tcl` | Coverage and assertion non-vacuity | **Not run — no licence available** |
-| Hardware | Everything | **Not run** |
+| `simulation/questa/run_sim.tcl` | Coverage and assertion non-vacuity, same 11 configurations | 22 assertion instances, **none vacuous** |
+| Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met with 0.430 ns slack |
+| Hardware | Retention and refresh on silicon | **Not run — no board** |
 
 ## 8.1 The testbench checks the mechanism, not only the data
 
@@ -346,13 +378,13 @@ meant to catch it:
 
 | Limitation | Detail |
 |---|---|
-| **Never run on hardware** | No Quartus licence in the development environment. No f_MAX, no resource figures, no board result |
+| **Never run on hardware** | The design synthesises, fits, meets timing and produces a bitstream, but has not been programmed into a part. Retention and refresh on silicon are unproven |
 | **No bursting** | The slave is non-bursting; every transfer is one word. Bursts would amortise the read/write turnaround and are the main remaining performance work |
 | **No reordering** | Transfers are served in order. A reorder buffer grouping same-direction accesses is the other half of that work |
 | **One chip select** | Multi-device configurations are not supported |
 | **Single clock domain** | No clock-crossing on the slave port |
 | **One device preset** | Only the DE10-Lite's part. Others need datasheet figures |
-| **Questa flow unverified** | Written to the same pattern as the firewall cores but never executed here |
+| **f_MAX headroom is thin** | 101 MHz standalone against a 100 MHz target. The critical path is the loop from the registered FIFO head through the priority chain and back; shortening it further means splitting that chain across two cycles |
 
 ---
 

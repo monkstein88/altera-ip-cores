@@ -44,9 +44,21 @@ fi
 # The timing checker had two off-by-one bugs that made it reject legal command
 # streams. Fault injection did not catch them; a threshold test does. It costs
 # under a second, so there is no reason to make it optional.
+# Build directories are removed rather than reused. Verilator writes absolute
+# paths into the makefiles it generates, so a tree copied or shared between
+# machines fails with "No rule to make target .../verilated.cpp" pointing at a
+# path that does not exist here - which looks like a broken harness rather than
+# a stale cache.
+rm -rf "$BUILD" "$BUILD.selftest"
+
+# See simulation/verilator/run_sim.sh for why this override has to reach make
+# on its command line rather than through the environment.
+MK_OVERRIDE="VK_PCH_I_FAST= VK_PCH_I_SLOW="
+
 echo "== timing checker self-test =="
 verilator --binary --timing --top-module timing_check_selftest \
     -o selftest -Mdir "$BUILD.selftest" \
+    -MAKEFLAGS "$MK_OVERRIDE" \
     ${CXX_EXTRA:+-CFLAGS "$CXX_EXTRA"} \
     -Wno-WIDTHEXPAND \
     "$TB/sdram_timing_check.sv" "$TB/timing_check_selftest.sv" || exit $?
@@ -78,6 +90,7 @@ echo "lint clean"
 
 echo "== verilating =="
 VFLAGS=(--binary --timing --assert "${WARN_OFF[@]}"
+        -MAKEFLAGS "$MK_OVERRIDE"
         -DDUT_MODULE="$DUT_MODULE"
         --top-module sdram_bench_tb -o bench -Mdir "$BUILD")
 [[ -n "$CXX_EXTRA" ]] && VFLAGS+=(-CFLAGS "$CXX_EXTRA")

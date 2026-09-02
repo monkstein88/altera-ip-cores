@@ -8,17 +8,24 @@
 # Four things run here, in order, because each one is worthless without the one
 # before it:
 #
-#   1. LINT the RTL with -Wall and nothing waived. The testbench needs a couple
-#      of waivers for its own idioms; the RTL gets none.
+#   1. LINT the RTL with -Wall and nothing waived, and the checker and device
+#      model with only the waivers their own idioms need. The RTL gets none.
 #   2. SELF-TEST the timing checker. It is the thing that decides whether the
 #      controller drives the part legally, and it has been wrong before - in
 #      two different ways, both of which made it reject legal command streams.
 #      Measuring anything with an unchecked ruler is how that went unnoticed.
-#   3. RUN the testbench across a parameter sweep. Not lint-only: every
-#      configuration is simulated, because the configurations most likely to
-#      break are the ones nobody simulates.
-#   4. LINT the RTL again in each swept configuration, which catches width and
+#   3. RUN the testbench across a parameter sweep, INCLUDING THE CLOCK RATE.
+#      Not lint-only: every configuration is simulated, because the
+#      configurations most likely to break are the ones nobody simulates. The
+#      clock used to be a localparam in the testbench, so every expectation in
+#      it silently assumed 100 MHz - and the cycle counts the controller
+#      derives from nanoseconds are exactly what changes with it.
+#   4. LINT the RTL again in each swept geometry, which catches width and
 #      truncation faults that only appear at a particular geometry.
+#   5. SYNTHESISE, if a Quartus installation is visible. Analysis & Synthesis
+#      needs no licence, takes seconds, and is the only step here that would
+#      have caught the `real` variable that made this core unsynthesisable in
+#      Quartus Standard while every simulation flow reported it clean.
 #
 # Needs Verilator 5.050 or newer for `--binary --timing`. No licence, no
 # Quartus, no vendor libraries.
@@ -79,6 +86,29 @@ else
     bad "RTL lint" "$OUT"
 fi
 
+# The checker and the device model are not the RTL, but they are the things
+# that decide whether the RTL is correct, and they were never linted at all.
+# That is how an `initial` block writing a variable an always_ff also writes -
+# illegal under IEEE 1800-2017 9.2.2.4 - sat in the device model until a
+# Verilator upgrade turned it into an error and took the whole regression down.
+if OUT=$(verilator --lint-only -Wall -Wno-DECLFILENAME -Wno-WIDTHEXPAND \
+            --top-module sdram_timing_check "$TB/sdram_timing_check.sv" 2>&1); then
+    ok "timing checker lints clean (-Wall)"
+else
+    bad "timing checker lint" "$OUT"
+fi
+# BLKSEQ and PROCASSINIT are this model's own idioms, not defects: it is a
+# behavioural device, it stores into an associative array with blocking
+# assignments, and its mode register carries a power-up default that LOAD MODE
+# then overwrites. Everything else it gets held to.
+if OUT=$(verilator --lint-only -Wall -Wno-DECLFILENAME -Wno-WIDTHEXPAND \
+            -Wno-BLKSEQ -Wno-PROCASSINIT \
+            --top-module sdram_device_model "$TB/sdram_device_model.sv" 2>&1); then
+    ok "device model lints clean (-Wall)"
+else
+    bad "device model lint" "$OUT"
+fi
+
 # -----------------------------------------------------------------------------
 # 2. The timing checker's own threshold self-test
 # -----------------------------------------------------------------------------
@@ -121,6 +151,14 @@ SWEEP=(
     "-GADDR_MAP=1"
     "-GCAS_LAT=2 -GLOOKAHEAD=0 -GFIFO_DEPTH=2"
     "-GADDR_MAP=1 -GLOOKAHEAD=0"
+    # Clock rates. Every device timing is a nanosecond figure divided by this,
+    # so it decides every cycle count in the core. 143 MHz is the part's rated
+    # speed; 50 MHz is below the point where tRRD, tWR and tMRD - which the
+    # datasheet specifies in CLOCKS, not in time - would round down to a single
+    # cycle if the floors in the RTL were not there.
+    "-GCLK_KHZ=143000"
+    "-GCLK_KHZ=50000"
+    "-GCLK_KHZ=50000 -GCAS_LAT=2 -GLOOKAHEAD=0"
 )
 for cfg in "${SWEEP[@]}"; do
     label="${cfg:-defaults}"
@@ -167,6 +205,42 @@ for g in "${GEOM[@]}"; do
         bad "lint [$g]" "$OUT"
     fi
 done
+
+# -----------------------------------------------------------------------------
+# 5. Synthesis, if a Quartus installation is visible
+#
+# Analysis & Synthesis needs no licence and takes seconds. It is skipped
+# silently when Quartus is not installed, because the rest of this script is
+# deliberately licence-free and vendor-free - but when it IS available there is
+# no excuse for shipping RTL nobody has ever compiled.
+#
+# This exists because the core once used a `real` variable inside an
+# elaboration-time function. Quartus Standard rejects that outright
+# ("Error (10172): real variable data type values are not supported"), so the
+# core did not synthesise at all - while Verilator linted it clean with -Wall
+# and nothing waived, and all eight testbench configurations passed.
+# -----------------------------------------------------------------------------
+say ""
+say "== synthesis: Quartus Analysis & Synthesis =="
+QROOT="${QUARTUS_ROOT:-/opt/intelFPGA/18.1}"
+QMAP="$QROOT/quartus/bin/quartus_map"
+if [[ ! -x "$QMAP" ]]; then
+    say "  SKIP  no Quartus at $QROOT (set QUARTUS_ROOT to enable)"
+else
+    SYN="$BUILD/synth"
+    rm -rf "$SYN"; mkdir -p "$SYN"
+    cat > "$SYN/syn.qsf" <<QSF
+set_global_assignment -name FAMILY "MAX 10"
+set_global_assignment -name DEVICE 10M50DAF484C7G
+set_global_assignment -name TOP_LEVEL_ENTITY avalon_mm_sdram_controller
+set_global_assignment -name SYSTEMVERILOG_FILE $RTL
+QSF
+    if ( cd "$SYN" && "$QMAP" syn > synth.log 2>&1 ); then
+        ok "RTL synthesises (Quartus Analysis & Synthesis)"
+    else
+        bad "RTL synthesis" "$(grep -E '^Error|Error \(' "$SYN/synth.log" | head -3)"
+    fi
+fi
 
 echo ""
 echo "  $pass passed, $fail failed"

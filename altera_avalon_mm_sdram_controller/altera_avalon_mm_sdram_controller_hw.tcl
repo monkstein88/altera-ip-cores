@@ -456,6 +456,27 @@ proc cyc_of {ns khz} {
     return $c
 }
 
+# Same, with a floor in CLOCKS. tRRD, tDPL(tWR) and tMRD are specified by the
+# datasheet as 2 clocks; the nanosecond column is just 2 x that speed grade's
+# tCK. Below about 71 MHz a 14 ns figure is less than one clock and all three
+# would round to a single cycle. The HDL floors them; this has to agree or the
+# numbers reported here are not the numbers that get built.
+proc cyc_of_min {ns khz floor} {
+    set c [cyc_of $ns $khz]
+    if {$c < $floor} { set c $floor }
+    return $c
+}
+
+# The refresh interval is a MAXIMUM, not a minimum, so it floors. Rounding it
+# up refreshes less often than the part allows, which is the one direction that
+# loses data.
+proc cyc_of_max {ns khz} {
+    if {$khz <= 0} { return 0 }
+    set c [expr {int(floor((double($ns) * double($khz)) / 1000000.0))}]
+    if {$c < 1} { set c 1 }
+    return $c
+}
+
 proc validate {} {
     set row   [get_parameter_value ROW_BITS]
     set col   [get_parameter_value COL_BITS]
@@ -511,10 +532,19 @@ proc validate {} {
     set c_ras [cyc_of $t_ras $khz]
     set c_rp  [cyc_of $t_rp  $khz]
     set c_rcd [cyc_of $t_rcd $khz]
-    set c_rrd [cyc_of $t_rrd $khz]
-    set c_wr  [cyc_of $t_wr  $khz]
+    set c_rrd [cyc_of_min $t_rrd $khz 2]
+    set c_wr  [cyc_of_min $t_wr  $khz 2]
     set c_rfc [cyc_of $t_rfc $khz]
-    set c_refi [cyc_of [expr {($refp * 1000000.0) / double($refr)}] $khz]
+    set c_refi [cyc_of_max [expr {($refp * 1000000.0) / double($refr)}] $khz]
+
+    # Tell the integrator when a clock-count floor is doing the work, rather
+    # than silently building something different from what the nanoseconds say.
+    set t_mrd [get_parameter_value T_MRD_NS]
+    foreach {nm ns} [list tRRD $t_rrd tWR $t_wr tMRD $t_mrd] {
+        if {[cyc_of $ns $khz] < 2} {
+            send_message info "$nm is ${ns} ns, which at [format %.3f [expr {double($khz)/1000.0}]] MHz is less than two clocks. SDR SDRAM specifies it as a 2 clock minimum regardless of frequency, so the controller will use 2 cycles rather than [cyc_of $ns $khz]."
+        }
+    }
 
     # The HDL holds these in 8-bit counters.
     foreach {nm v} [list tRC $c_rc tRAS $c_ras tRP $c_rp tRCD $c_rcd \
@@ -535,6 +565,15 @@ proc validate {} {
         send_message warning "Refresh will consume roughly [format %.1f [expr {100.0 * $ref_cost / $c_refi}]]% of the memory bandwidth (one refresh every $c_refi cycles, costing about $ref_cost). That is high; check REF_ROWS and the refresh period."
     }
 
+    # ---- 5b. the power-on wait ----
+    # Every SDR datasheet asks for at least 100 us of NOPs with CKE high before
+    # the first command. Shorter values exist only so a simulation does not
+    # spend 100 us proving nothing, and they must never reach a board.
+    set tinit [get_parameter_value T_INIT_US]
+    if {$tinit < 100} {
+        send_message warning "The power-on wait is ${tinit} us. SDR SDRAM requires at least 100 us of NOP with CKE high before any command; anything less is a simulation shortcut and will not initialise a real part reliably."
+    }
+
     # ---- 6. things the HDL itself requires ----
     if {$col > 11} {
         send_message error "COL_BITS=$col is beyond what the column encoding supports. Column bit 10 steps over A10; there is nowhere for a twelfth to go."
@@ -553,7 +592,7 @@ proc validate {} {
 
     send_message info "Memory: [format %.0f $mbytes] MByte - $banks banks x [expr {1 << $row}] rows x [expr {1 << $col}] columns x $dw bits. Avalon word address is [expr {$row + $col + $bank}] bits."
 
-    send_message info "At [format %.3f [expr {double($khz)/1000.0}]] MHz the HDL will use: tRC=$c_rc tRAS=$c_ras tRP=$c_rp tRCD=$c_rcd tRRD=$c_rrd tWR=$c_wr tRFC=$c_rfc cycles, CAS=$cas, one refresh every $c_refi cycles. Rounded up from nanoseconds, so a cycle count one higher than the datasheet minimum is expected and correct."
+    send_message info "At [format %.3f [expr {double($khz)/1000.0}]] MHz the HDL will use: tRC=$c_rc tRAS=$c_ras tRP=$c_rp tRCD=$c_rcd tRRD=$c_rrd tWR=$c_wr tRFC=$c_rfc cycles, CAS=$cas, one refresh every $c_refi cycles. Minimum timings round UP from nanoseconds, so a cycle count one higher than the datasheet minimum is expected and correct; the refresh interval rounds DOWN, because it is a maximum."
 
     send_message info "$banks rows can be open at once, one per bank. A read/write turnaround inside an open row costs 0 cycles write-to-read and [expr {$cas + 1}] read-to-write, with no row command either way."
 

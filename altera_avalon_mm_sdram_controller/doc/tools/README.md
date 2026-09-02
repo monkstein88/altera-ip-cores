@@ -30,10 +30,17 @@ to a parameter default and two documents that quietly lie about it.
 
 It re-derives every parameter default and allowed range, the port count, every
 port name, the address-map bit positions, the preset's values, the assertion
-and cover counts, and the figure numbering. It also cross-checks the four
-copies of the performance table against each other, and asserts that no
-document claims a hardware result for this core — which has never been on a
-board.
+and cover counts, and the figure numbering. It asserts that no document claims
+a hardware result for this core, which has never been on a board.
+
+And it **runs the benchmark** and compares the throughput table against what
+the benchmark actually prints. Cross-checking the three copies of that table
+against each other was never enough: all three agreed on 197.6 and 196.0 while
+the tool printed 197.7 and 196.1, because nothing compared the documents to the
+thing that produced them. A check whose only reference is another copy of the
+same claim cannot catch a transcription error. The benchmark run needs
+Verilator and about ten seconds; without Verilator the check is skipped and
+says so.
 
 Every check was verified by fault injection: the drift it is meant to catch was
 introduced, and the check confirmed to fail. Two did not, at first, and were

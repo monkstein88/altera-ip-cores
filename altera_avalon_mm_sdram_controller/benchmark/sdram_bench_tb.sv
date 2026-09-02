@@ -36,6 +36,10 @@ module sdram_bench_tb;
     // ---------------- configuration ----------------
     localparam int  CLK_KHZ  = 100_000;          // 100 MHz
     localparam real CLK_NS   = 1_000_000.0 / real'(CLK_KHZ);
+    // Both controllers are measured at CAS 3, which is what the DE10-Lite part
+    // runs at. The timing checker needs it too: the read-to-write turnaround it
+    // enforces is CAS_LAT+1.
+    localparam int  CAS_LAT  = 3;
     localparam int  ADDR_W   = 25;               // word address, 32M x 16
     localparam int  DATA_W   = 16;
     localparam int  N_OPS    = 4096;             // per pattern
@@ -84,13 +88,27 @@ module sdram_bench_tb;
         .zs_cs_n(zs_cs_n), .zs_dq(zs_dq), .zs_dqm(zs_dqm),
         .zs_ras_n(zs_ras_n), .zs_we_n(zs_we_n));
 
+    // Look-ahead is a parameter of the custom core and does not exist on
+    // Intel's, so it cannot be a parameter of this testbench without breaking
+    // the other DUT. `defparam` under an ifdef reaches into the instance only
+    // when asked, which keeps one port map for both cores. Build with
+    // -DDUT_LOOKAHEAD=0 to turn it off.
+    //
+    // The look-ahead table in README.md is produced this way. Before this
+    // there was no supported way to reproduce it at all.
+    // (A comment line may not begin with the simulator's name - it is read as
+    //  a pragma - which is why the flag is quoted inline above.)
+`ifdef DUT_LOOKAHEAD
+    defparam dut.LOOKAHEAD = `DUT_LOOKAHEAD;
+`endif
+
     sdram_device_model mem (
         .clk(clk),
         .zs_addr(zs_addr), .zs_ba(zs_ba), .zs_cas_n(zs_cas_n), .zs_cke(zs_cke),
         .zs_cs_n(zs_cs_n), .zs_dq(zs_dq), .zs_dqm(zs_dqm),
         .zs_ras_n(zs_ras_n), .zs_we_n(zs_we_n));
 
-    sdram_timing_check #(.CLK_KHZ(CLK_KHZ)) tchk (
+    sdram_timing_check #(.CLK_KHZ(CLK_KHZ), .CAS_LAT(CAS_LAT)) tchk (
         .clk(clk), .reset_n(reset_n), .cke(zs_cke), .cs_n(zs_cs_n),
         .ras_n(zs_ras_n), .cas_n(zs_cas_n), .we_n(zs_we_n),
         .ba(zs_ba), .addr(zs_addr));
@@ -121,7 +139,7 @@ module sdram_bench_tb;
             pct  = 100.0 * mbps / PEAK_MBPS;
             tot_err += errors;
 
-            $display("  %-14s %8d %9d %10.1f %7.1f%%   %s",
+            $display("  %-16s %8d %9d %10.1f %7.1f%%   %s",
                      name, cycles, N_OPS * DATA_W/8, mbps, pct,
                      (errors == 0) ? "data ok" : $sformatf("%0d DATA ERRORS", errors));
         end
@@ -142,7 +160,7 @@ module sdram_bench_tb;
                  N_OPS, CLK_KHZ/1000, DATA_W);
         $display(" theoretical peak: %.1f MB/s", PEAK_MBPS);
         $display("=========================================================================");
-        $display("  pattern          cycles     bytes      MB/s   of peak   integrity");
+        $display("  pattern            cycles     bytes      MB/s   of peak   integrity");
         $display("  -------------------------------------------------------------------");
 
         // Fill the region first so the read patterns have known contents.

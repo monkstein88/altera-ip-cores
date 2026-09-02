@@ -27,13 +27,13 @@ Theoretical peak 200 MB/s. Both controllers, identical stimulus.
 
 | Pattern | Intel's core | Custom core | Speedup |
 |---|---|---|---|
-| seq write | 194.3 | **197.6** | 1.02× |
-| seq read | 194.0 | **196.0** | 1.01× |
+| seq write | 194.3 | **198.3** | 1.02× |
+| seq read | 194.0 | **196.1** | 1.01× |
 | seq read/write | 21.9 | **78.9** | 3.6× |
 | same-row rd/wr | 21.9 | **78.9** | 3.6× |
 | bank+row walk | 21.9 | **65.5** | 3.0× |
-| **4-bank same row** | 21.9 | **195.5** | **8.9×** |
-| random | 22.0 | **44.4** | 2.0× |
+| **4-bank same row** | 21.9 | **194.7** | **8.9×** |
+| random | 22.0 | **44.5** | 2.0× |
 
 0 data errors, 0 timing violations, both controllers.
 
@@ -43,8 +43,14 @@ hardware, which is the check that this harness is measuring the right thing.
 **`4-bank same row` is the headline.** Four banks, one row each, nothing but
 the column moving — a device needs no row commands at all for this. Intel's
 core runs it at 21.9 MB/s because it can only hold one row open. Per-bank
-tracking takes it to 195.5, which is 97.7% of the bus and within noise of pure
+tracking takes it to 194.7, which is 97.3% of the bus and within noise of pure
 sequential streaming.
+
+**These are cycle counts, and cycles are only megabytes at a clock.** Both
+columns assume 100 MHz. Intel's core reaches 115 MHz on this device and the
+custom core 101, so the ratios above hold at 100 MHz and below — which is where
+the DE10-Lite runs — and stop holding above it. See
+[Cost and speed](../README.md#cost-and-speed).
 
 **`same-row rd/wr` is now bounded by the bus, not the controller.** 78.9 MB/s
 is 2.53 cycles per access, and the read→write turnaround for a length-1 burst
@@ -61,11 +67,17 @@ correct and passes every pattern with it disabled.
 
 | Pattern | LOOKAHEAD=0 | LOOKAHEAD=1 |
 |---|---|---|
-| bank+row walk | 39.5 | **65.5** |
-| random | 36.0 | **44.4** |
+| bank+row walk | 39.6 | **65.5** |
+| random | 36.0 | **44.5** |
 
 Every other pattern is bit-identical, which is what you want — it should only
 matter where a row actually has to change.
+
+Reproduce with `-DDUT_LOOKAHEAD=0`. Look-ahead is a parameter of the custom
+core and does not exist on Intel's, so it cannot be a parameter of the
+testbench without breaking the other DUT; the define reaches into the instance
+only when asked. Until that was added there was no supported way to reproduce
+this table at all.
 
 ## Files
 
@@ -132,11 +144,25 @@ still return perfectly correct data. On silicon that is intermittent corruption
 at temperature, months later.
 
 `sdram_timing_check.sv` closes that hole. It watches the command bus, tracks
-per-bank state, and checks tRC, tRAS, tRP, tRCD, tRRD, tWR and tMRD against the
-same nanosecond parameters the controller is configured with — deriving cycles
-itself, so it cannot inherit an arithmetic error from the thing it is checking.
-It also rejects structural mistakes: a column command to a closed bank, an
-ACTIVATE to an already-open one, a refresh with a bank open.
+per-bank state, and checks tRC, tRAS, tRP, tRCD, tRRD, tWR, tMRD and **tRFC**
+against the same nanosecond parameters the controller is configured with —
+deriving cycles itself, so it cannot inherit an arithmetic error from the thing
+it is checking. It also enforces the **read-to-write bus turnaround**, rejects
+structural mistakes — a column command to a closed bank, an ACTIVATE to an
+already-open one, a refresh with a bank open — and bounds the refresh interval.
+
+tRFC, the refresh interval and the turnaround were all added after fault
+injection showed the checker could not see them. tRFC is the only refresh
+timing there is, and a controller that activated too early after a refresh
+passed every flow in this project. The refresh-interval check was worse than
+absent: `CHECK_REFRESH` gated an empty statement, so a controller that never
+refreshed at all was reported clean.
+
+The turnaround check matters most here. The benchmark does not bind the
+assertions — only the testbench does — so until it was added, `benchmark/` had
+no read-to-write check of any kind, and DQ contention is invisible to a
+functional model: the model stops driving and the controller reads back what it
+drove itself.
 
 ### And why the checker has a self-test
 
@@ -159,7 +185,7 @@ controller would like to be true. So the threshold is now pinned from the other
 side. `timing_check_selftest.sv` drives hand-counted command separations and
 requires that exactly (N-1) cycles is rejected and exactly N is accepted, for
 every parameter. A checker one cycle strict fails the second half; one cycle
-lax fails the first. 17 checks, run by `run_bench.sh` before anything is
+lax fails the first. 23 checks, run by `run_bench.sh` before anything is
 measured.
 
 The same `cyc()` bug had been copied into the controller, where it was merely

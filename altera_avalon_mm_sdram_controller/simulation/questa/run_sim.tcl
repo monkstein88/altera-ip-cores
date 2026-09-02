@@ -12,19 +12,31 @@
 #   COVERAGE          statement, branch, condition, expression, FSM and toggle,
 #                     merged across the sweep. The controller's scheduler is a
 #                     priority chain, and the branches that never execute are
-#                     exactly the ones worth knowing about.
+#                     exactly the ones worth knowing about - this is what showed
+#                     that the read-to-precharge counter could never hold a
+#                     non-zero value, and that the A10 step-over in col_addr was
+#                     never simulated at any geometry the sweep covers.
 #   NON-VACUITY       how many times each assertion passed for a real reason
 #                     rather than because its antecedent never held. An
 #                     assertion that only ever passes vacuously has verified
 #                     nothing while reporting green, and no other flow here can
 #                     tell you which ones those are.
 #
-# NOT VERIFIED IN THIS REPOSITORY'S DEVELOPMENT ENVIRONMENT. There is no Questa
-# licence available here, so unlike the two firewall cores - whose Questa
-# artefacts are committed and whose numbers are quoted from real runs - this
-# file has been written to the same pattern but never executed. Treat it as a
-# starting point rather than a known-good flow, and expect to adjust paths or
-# switches for your installation.
+# RUN, AND WHAT RUNNING IT FOUND
+#
+# This file was written to pattern and never executed until a Questa
+# installation was available. Two things were wrong, and only one of them was
+# in this file:
+#
+#   * `write report -assertions` is not a Questa command. Assertion pass and
+#     vacuity counts come from `coverage report -assert`.
+#   * The RTL would not elaborate at all. `fifo` was written by both an initial
+#     block and an always_ff, which IEEE 1800-2017 9.2.2.4 forbids and vopt
+#     rejects outright. Verilator linted it clean with -Wall and nothing
+#     waived, so nothing else in the project could have found it.
+#
+# Both are fixed. The sweep below matches the Verilator flow exactly, clock
+# rates included.
 # =============================================================================
 
 transcript file run.log
@@ -46,38 +58,48 @@ vlog -sv +acc +cover=sbceft ../../tb/avalon_mm_sdram_controller_tb.sv
 # FIFO_DEPTH changes the backpressure path, and ADDR_MAP puts every access in a
 # different bank so the command-count expectations are re-checked against a
 # different geometry.
-proc run_one {cas look depth map ucdb} {
-    set tag ${cas}_${look}_${depth}_${map}
+proc run_one {cas look depth map khz ucdb} {
+    set tag ${cas}_${look}_${depth}_${map}_${khz}
     vopt avalon_mm_sdram_controller_tb -o tb_opt_$tag +acc -cover sbceft -assertdebug \
         -G/avalon_mm_sdram_controller_tb/CAS_LAT=$cas \
         -G/avalon_mm_sdram_controller_tb/LOOKAHEAD=$look \
         -G/avalon_mm_sdram_controller_tb/FIFO_DEPTH=$depth \
-        -G/avalon_mm_sdram_controller_tb/ADDR_MAP=$map
+        -G/avalon_mm_sdram_controller_tb/ADDR_MAP=$map \
+        -G/avalon_mm_sdram_controller_tb/CLK_KHZ=$khz
     vsim tb_opt_$tag -coverage -assertdebug
     onfinish stop
     onbreak {resume}
     run -all
-    # Non-vacuous pass counts, which is the number that matters.
-    write report -assertions -append assert_report.txt
+    # Non-vacuous pass counts, which is the number that matters: the report
+    # gives Failure / Pass / Vacuous per assertion, and an assertion whose Pass
+    # count is zero has verified nothing however green it looks.
+    coverage report -assert -details -append -output assert_report.txt
     coverage save $ucdb
     quit -sim
 }
 
 if {[file exists assert_report.txt]} { file delete -force assert_report.txt }
 
-run_one 3 1 8  0 cov_c3_l1_d8_m0.ucdb
-run_one 2 1 8  0 cov_c2_l1_d8_m0.ucdb
-run_one 3 0 8  0 cov_c3_l0_d8_m0.ucdb
-run_one 3 1 2  0 cov_c3_l1_d2_m0.ucdb
-run_one 3 1 8  1 cov_c3_l1_d8_m1.ucdb
+# cas look depth map  kHz
+run_one 3 1  8  0 100000 c01.ucdb
+run_one 2 1  8  0 100000 c02.ucdb
+run_one 3 0  8  0 100000 c03.ucdb
+run_one 3 1  2  0 100000 c04.ucdb
+run_one 3 1 32  0 100000 c05.ucdb
+run_one 3 1  8  1 100000 c06.ucdb
+run_one 2 0  2  0 100000 c07.ucdb
+run_one 3 0  8  1 100000 c08.ucdb
+run_one 3 1  8  0 143000 c09.ucdb
+run_one 3 1  8  0  50000 c10.ucdb
+run_one 2 0  8  0  50000 c11.ucdb
 
 vcover merge coverage.ucdb \
-    cov_c3_l1_d8_m0.ucdb cov_c2_l1_d8_m0.ucdb cov_c3_l0_d8_m0.ucdb \
-    cov_c3_l1_d2_m0.ucdb cov_c3_l1_d8_m1.ucdb
+    c01.ucdb c02.ucdb c03.ucdb c04.ucdb c05.ucdb c06.ucdb \
+    c07.ucdb c08.ucdb c09.ucdb c10.ucdb c11.ucdb
 vcover report -details -output coverage_report.txt coverage.ucdb
 
 # ---- pass/fail, decided from the transcript rather than from exit codes -----
-# A simulator that ran five configurations and printed four "all tests passed"
+# A simulator that ran eleven configurations and printed ten "all tests passed"
 # has failed one of them, and will still exit 0.
 proc run_passed {} {
     if {![file exists run.log]} { return 0 }
@@ -90,7 +112,7 @@ proc run_passed {} {
         incr n
         incr idx
     }
-    if {$n < 5} { return 0 }
+    if {$n < 11} { return 0 }
     if {[string first "Assertion error" $txt] >= 0}   { return 0 }
     if {[string first "TIMING VIOLATION" $txt] >= 0}  { return 0 }
     if {[string first "MODEL ERROR" $txt] >= 0}       { return 0 }
@@ -98,7 +120,7 @@ proc run_passed {} {
 }
 
 if {[run_passed]} {
-    puts "RESULT: PASSED - all five configurations, no assertion failures,"
+    puts "RESULT: PASSED - all eleven configurations, no assertion failures,"
     puts "                 no timing violations, no illegal device accesses"
 } else {
     puts "RESULT: FAILED - see run.log"

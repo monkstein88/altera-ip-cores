@@ -41,7 +41,11 @@ module avalon_mm_sdram_controller_sva #(
     parameter int SA_BITS   = 13,
     parameter int ADDR_W    = 25,
     parameter int CAS_LAT   = 3,
-    parameter int FIFO_DEPTH = 8
+    parameter int FIFO_DEPTH = 8,
+    // The JEDEC postponement allowance, so the bound below tracks the
+    // controller's configuration instead of a magic number that happens to
+    // match today's default.
+    parameter int REF_MAX_PEND = 8
 ) (
     input logic                    clk,
     input logic                    reset_n,
@@ -252,7 +256,7 @@ module avalon_mm_sdram_controller_sva #(
     endgenerate
 
     // Postponed refreshes must stay inside the JEDEC allowance.
-    a_ref_pend_bounded: assert property (ref_pend <= 4'd8);
+    a_ref_pend_bounded: assert property (ref_pend <= 4'(REF_MAX_PEND));
 
     // Exactly one command per cycle. The encoding makes this structural, but
     // an accidental multi-driver on the command pins would show up here.

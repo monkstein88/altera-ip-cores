@@ -97,6 +97,16 @@ command either way.
 does two jobs: it decouples the master from row-change stalls, and it gives the
 scheduler something to look at beyond the access it is currently serving.
 
+Each entry is stored **already decoded** into bank, row and column, and the
+buffer's output is **registered**: the scheduler reads a flip-flop, not the
+array's multiplexer. Both exist for timing rather than function. With the head
+taken combinationally, the read pointer, a `FIFO_DEPTH`-way multiplexer, the
+address decode and the entire priority chain below all shared one cycle, and
+f_MAX was 83 MHz against a 100 MHz target. Splitting the multiplexer from the
+scheduler with a register — selecting between the pre-read candidate entries
+*after* they resolve, rather than computing an index first and indexing with it
+— reached 101 MHz for no change in cycle counts.
+
 **Scheduler.** One decision per cycle, in priority order:
 
 | Condition | Command issued |

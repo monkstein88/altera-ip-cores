@@ -36,7 +36,11 @@ module avalon_mm_sdram_controller_tb #(
     parameter int CAS_LAT    = 3,
     parameter int FIFO_DEPTH = 8,
     parameter int LOOKAHEAD  = 1,
-    parameter int ADDR_MAP   = 0
+    parameter int ADDR_MAP   = 0,
+    // The clock rate is swept too. It used to be a localparam, so every
+    // expectation below silently assumed 100 MHz - and the cycle counts the
+    // controller derives from nanoseconds are exactly what changes with it.
+    parameter int CLK_KHZ    = 100_000
 );
 
     // ---------------- configuration ----------------
@@ -44,7 +48,6 @@ module avalon_mm_sdram_controller_tb #(
     // cut to 2 us: the power-up wait is a counter, it is exercised by
     // t_initialisation below, and 100 us of NOPs in every other test is
     // simulation time spent proving nothing.
-    localparam int  CLK_KHZ   = 100_000;
     localparam real CLK_NS    = 1_000_000.0 / real'(CLK_KHZ);
     localparam int  DATA_BITS = 16;
     localparam int  ROW_BITS  = 13;
@@ -53,6 +56,12 @@ module avalon_mm_sdram_controller_tb #(
     localparam int  SA_BITS   = 13;
     localparam int  ADDR_W    = ROW_BITS + COL_BITS + BANK_BITS;   // 25
     localparam int  BANKS     = 1 << BANK_BITS;
+
+    // The refresh interval in cycles, derived here rather than quoted, so the
+    // expectations below follow the clock. Same floor as the RTL: tREFI is a
+    // MAXIMUM, so it rounds down. 64 ms / 8192 rows = 7.8125 us.
+    localparam longint unsigned REFI_PS = (64 * 64'd1_000_000_000) / 8192;
+    localparam int CYC_REFI = int'((REFI_PS * longint'(CLK_KHZ)) / 64'd1_000_000_000);
 
     logic clk = 0, reset_n = 0;
     always #(CLK_NS/2.0) clk = ~clk;
@@ -95,7 +104,11 @@ module avalon_mm_sdram_controller_tb #(
         .zs_cs_n(zs_cs_n), .zs_dq(zs_dq), .zs_dqm(zs_dqm),
         .zs_ras_n(zs_ras_n), .zs_we_n(zs_we_n));
 
-    sdram_timing_check #(.CLK_KHZ(CLK_KHZ)) tchk (
+    // CAS_LAT matters here: the read-to-write turnaround the checker
+    // enforces is CAS_LAT+1, so leaving it at the default checked every
+    // CAS 2 configuration against a CAS 3 bound and reported violations
+    // that were not violations.
+    sdram_timing_check #(.CLK_KHZ(CLK_KHZ), .CAS_LAT(CAS_LAT)) tchk (
         .clk(clk), .reset_n(reset_n), .cke(zs_cke), .cs_n(zs_cs_n),
         .ras_n(zs_ras_n), .cas_n(zs_cas_n), .we_n(zs_we_n),
         .ba(zs_ba), .addr(zs_addr));
@@ -104,7 +117,7 @@ module avalon_mm_sdram_controller_tb #(
     bind avalon_mm_sdram_controller avalon_mm_sdram_controller_sva #(
         .DATA_BITS(DATA_BITS), .ROW_BITS(ROW_BITS), .BANK_BITS(BANK_BITS),
         .SA_BITS(SA_BITS), .ADDR_W(ADDR_W), .CAS_LAT(CAS_LAT),
-        .FIFO_DEPTH(FIFO_DEPTH)
+        .FIFO_DEPTH(FIFO_DEPTH), .REF_MAX_PEND(8)
     ) sva_i (
         .clk(clk), .reset_n(reset_n),
         .az_addr(az_addr), .az_cs(az_cs), .az_rd_n(az_rd_n), .az_wr_n(az_wr_n),
@@ -213,8 +226,8 @@ module avalon_mm_sdram_controller_tb #(
     // precharges every bank - so a refresh landing inside the measured window
     // makes the count describe the refresh instead of the scheduler. Waiting
     // for one to happen solves both halves at once: every bank is left closed,
-    // which is a known starting state, and a full refresh interval (782 cycles
-    // at 100 MHz) is then clear before the next one can intrude.
+    // which is a known starting state, and a full refresh interval (CYC_REFI
+    // cycles, 781 at 100 MHz) is then clear before the next one can intrude.
     task automatic quiesce;
         int r0;
         begin
@@ -470,6 +483,112 @@ module avalon_mm_sdram_controller_tb #(
 
     // 7. Full-rate streaming, with the master never deasserting. Exercises the
     //    command buffer to full and the waitrequest path out of it.
+    // A row change driven as hard as the slave will accept it.
+    //
+    // Every row change elsewhere in this file follows a WRITE and is separated
+    // by a settle(), so the PRECHARGE lands long after the row opened. That
+    // hides tRAS completely: after a write, tWR expires on the same cycle tRAS
+    // does at these timings, so tWR masks it, and with the accesses spaced out
+    // neither gate is ever the thing being waited on.
+    //
+    // Fault injection proved the hole - deleting the controller's tRAS gate
+    // changed nothing in this regression, while the benchmark's traffic
+    // produced 2112 violations immediately. Two READS to different rows of one
+    // bank, issued back to back so both are already queued, make the scheduler
+    // precharge at the earliest cycle tRAS allows and nothing else.
+    task automatic t_row_change_tight;
+        logic [ADDR_W-1:0] a0, a1;
+        logic [DATA_BITS-1:0] d;
+        begin
+            start_test("back-to-back row change in one bank");
+            quiesce();
+            a0 = mk_addr(2, 300, 4);
+            a1 = mk_addr(2, 301, 4);          // same bank, different row
+            avm_write(a0, pat(a0));
+            avm_write(a1, pat(a1));
+            // quiesce() waits for a refresh, which precharges every bank. The
+            // measured window therefore starts with bank 2 CLOSED, so the
+            // first read has to activate and the PRECHARGE that follows is
+            // gated by tRAS from an ACTIVATE that just happened - which is the
+            // whole point. Priming with a read instead would leave the row
+            // open and tRAS long expired.
+            quiesce();
+            zero_counts();
+            avm_read_issue(a0);
+            avm_read_issue(a1);
+            settle(64);
+            chk_eq(n_ref, 0, "refreshes inside the measured window");
+            chk_eq(n_act, 2, "ACTIVATEs for two rows in one bank");
+            chk_eq(n_pre, 1, "PRECHARGEs for two rows in one bank");
+            // and the data still comes back in order
+            avm_read(a0, d);
+            chk(d == pat(a0), $sformatf("row 300 read %h, expected %h", d, pat(a0)));
+            avm_read(a1, d);
+            chk(d == pat(a1), $sformatf("row 301 read %h, expected %h", d, pat(a1)));
+        end
+    endtask
+
+    // tWR, isolated from tRAS.
+    //
+    // At the DE10-Lite timings a WRITE that immediately follows an ACTIVATE
+    // has tWR and tRAS expiring on the SAME cycle, so tRAS masks tWR entirely
+    // and deleting the tWR gate changes nothing. Writing into a row that has
+    // been open for a while separates them: tRAS is long gone, and the
+    // PRECHARGE that follows the write is gated by tWR alone.
+    task automatic t_write_recovery_tight;
+        logic [ADDR_W-1:0] a0, a1;
+        logic [DATA_BITS-1:0] d;
+        begin
+            start_test("write then immediate row change (tWR alone)");
+            quiesce();
+            a0 = mk_addr(1, 400, 7);
+            a1 = mk_addr(1, 401, 7);          // same bank, different row
+            avm_write(a1, pat(a1));           // prime the far row
+            quiesce();
+            avm_write(a0, pat(a0));           // opens row 400 and leaves it open
+            settle();                         // tRAS expires here, tWR does not
+            zero_counts();
+            avm_write(a0, pat(a0) ^ 16'h5555);
+            avm_read_issue(a1);               // forces PRECHARGE right after the write
+            settle(64);
+            chk_eq(n_ref, 0, "refreshes inside the measured window");
+            chk_eq(n_pre, 1, "PRECHARGEs for the row change");
+            chk_eq(n_act, 1, "ACTIVATEs for the row change");
+            avm_read(a0, d);
+            chk(d == (pat(a0) ^ 16'h5555), $sformatf("written word read %h", d));
+        end
+    endtask
+
+    // tRRD, which gates ACTIVATE to ACTIVATE across banks.
+    //
+    // Only look-ahead can ever put two ACTIVATEs close enough together to test
+    // it, and look-ahead needs two entries queued. Every other multi-bank test
+    // here uses blocking writes, so the buffer holds one entry at a time and
+    // the second ACTIVATE is never ready early. Issuing reads back to back
+    // with all four banks closed makes the scheduler open them as fast as
+    // tRRD allows.
+    task automatic t_bank_walk_tight;
+        logic [DATA_BITS-1:0] d;
+        logic [ADDR_W-1:0] a [4];
+        begin
+            start_test("back-to-back activates across banks (tRRD)");
+            for (int b = 0; b < BANKS; b++) a[b] = mk_addr(b, 600, 9);
+            for (int b = 0; b < BANKS; b++) avm_write(a[b], pat(a[b]));
+            quiesce();                        // every bank closed again
+            zero_counts();
+            for (int b = 0; b < BANKS; b++) avm_read_issue(a[b]);
+            settle(96);
+            chk_eq(n_ref, 0, "refreshes inside the measured window");
+            chk_eq(n_act, BANKS, "one ACTIVATE per bank");
+            chk_eq(n_pre, 0, "no PRECHARGEs - every bank was closed");
+            for (int b = 0; b < BANKS; b++) begin
+                avm_read(a[b], d);
+                chk(d == pat(a[b]), $sformatf("bank %0d read %h, expected %h",
+                                              b, d, pat(a[b])));
+            end
+        end
+    endtask
+
     task automatic t_streaming_backpressure;
         int i;
         logic [ADDR_W-1:0] a;
@@ -537,8 +656,8 @@ module avalon_mm_sdram_controller_tb #(
             // version of this test asserted the opposite and was simply wrong
             // about the design. What must hold is that postponement is bounded:
             // once REF_MAX_PEND have piled up, refresh is forced through even
-            // though the bus is still busy. tREFI is 782 cycles at 100 MHz, so
-            // 8 of them is about 6300 cycles of solid traffic.
+            // though the bus is still busy. At 100 MHz tREFI is 781 cycles, so
+            // 8 of them is about 6250 cycles of solid traffic.
             for (i = 0; i < 9000; i++) avm_write(mk_addr(i % BANKS, 500, i % 512),
                                                  16'hA5A5);
             refs = n_ref;
@@ -552,9 +671,14 @@ module avalon_mm_sdram_controller_tb #(
 
             // Idle refresh rate: over a long quiet period the controller must
             // keep up with tREFI, which is what actually preserves the data.
+            // Five refresh intervals of quiet must yield at least four
+            // refreshes - four rather than five because where the window falls
+            // relative to the timer costs at most one.
             zero_counts();
-            settle(4000);
-            chk(n_ref >= 4, $sformatf("refreshes over 4000 idle cycles: got %0d, expected >= 4 (tREFI = 782)", n_ref));
+            settle(5 * CYC_REFI);
+            chk(n_ref >= 4, $sformatf(
+                "refreshes over %0d idle cycles (5 x tREFI): got %0d, expected >= 4 (tREFI = %0d at %0d kHz)",
+                5 * CYC_REFI, n_ref, CYC_REFI, CLK_KHZ));
             // The JEDEC allowance itself is asserted continuously by the SVA
             // (a_ref_pend_bounded), which can see the counter; from out here
             // only the consequence is observable.
@@ -611,6 +735,9 @@ module avalon_mm_sdram_controller_tb #(
         t_turnaround_in_row();
         t_four_banks_one_row();
         t_row_change();
+        t_row_change_tight();
+        t_write_recovery_tight();
+        t_bank_walk_tight();
         t_streaming_backpressure();
         t_read_ordering();
         t_refresh_under_load();
