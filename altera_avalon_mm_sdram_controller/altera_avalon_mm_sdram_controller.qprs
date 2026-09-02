@@ -28,9 +28,18 @@
   SDRAM" preset for that reason, and only parts whose timing has been checked
   against a datasheet AND exercised through benchmark/ appear here.
 
-  tMRD is usually quoted in clocks rather than nanoseconds. Convert it at the
-  slowest clock the part is rated for, so the figure stays safe at whatever
-  speed the controller is actually run at.
+  tMRD, tRRD and tWR are quoted by many datasheets in CLOCKS rather than in
+  nanoseconds - on this part all three are 2 cycles at every speed grade, and
+  the nanosecond column is just 2 x that grade's tCK written out. Use the
+  nanosecond figure for the grade you are fitting when the datasheet gives one
+  (this part does: 14 ns at -7); otherwise multiply the clock count by the tCK
+  of the slowest grade the part is rated for.
+
+  Either way the HDL floors those three at 2 cycles, because a nanosecond
+  figure derived from a fast grade's tCK converts back to fewer than 2 cycles
+  once the controller is clocked slowly enough - below about 71 MHz for a 14 ns
+  figure. Do not rely on the floor to rescue a wrong number; it exists so that
+  a right number stays right at every clock.
 -->
 <ip>
   <presets version="12.1">

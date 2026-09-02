@@ -159,6 +159,11 @@ SWEEP=(
     "-GCLK_KHZ=143000"
     "-GCLK_KHZ=50000"
     "-GCLK_KHZ=50000 -GCAS_LAT=2 -GLOOKAHEAD=0"
+    # An eleven-bit column, where the column's top bit has to step over A10 -
+    # the auto-precharge flag - onto A11. That branch of col_addr() had never
+    # executed in simulation: the geometry sweep below only LINTS, and lint
+    # does not run code.
+    "-GCOL_BITS=11"
 )
 for cfg in "${SWEEP[@]}"; do
     label="${cfg:-defaults}"

@@ -40,8 +40,13 @@ derive_clock_uncertainty
 #   max = t_AC(max) + trace delay + clock skew  = 5.4 + 0.4 + 0.1 = 5.9 ns
 #   min = t_OH(min) + trace delay - clock skew  = 2.7 + 0.4 - 0.1 = 3.0 ns
 #
-# t_AC 5.4 ns is the same access time given to the controller as its TAC
-# parameter in qsys/build_system.tcl - the two have to agree.
+# t_AC 5.4 ns and t_OH 2.7 ns are the ISSI IS42S16320D -7 figures at CAS 3
+# (datasheet tac3 max and toh3 min). Unlike the controller this example
+# replaces, THIS core has no TAC parameter: the DQ return path is handled
+# entirely by the -3 ns shift on DRAM_CLK plus RD_EXTRA_LAT, which is 0 for a
+# direct connection. So these two lines and the PLL phase are the only places
+# the board's read timing is described - there is no third copy to disagree
+# with them.
 # ---------------------------------------------------------------------------
 set_input_delay -max -clock clk_dram_ext 5.9 [get_ports DRAM_DQ*]
 set_input_delay -min -clock clk_dram_ext 3.0 [get_ports DRAM_DQ*]

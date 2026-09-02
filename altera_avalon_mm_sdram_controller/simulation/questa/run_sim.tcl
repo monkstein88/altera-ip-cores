@@ -58,14 +58,15 @@ vlog -sv +acc +cover=sbceft ../../tb/avalon_mm_sdram_controller_tb.sv
 # FIFO_DEPTH changes the backpressure path, and ADDR_MAP puts every access in a
 # different bank so the command-count expectations are re-checked against a
 # different geometry.
-proc run_one {cas look depth map khz ucdb} {
-    set tag ${cas}_${look}_${depth}_${map}_${khz}
+proc run_one {cas look depth map khz col ucdb} {
+    set tag ${cas}_${look}_${depth}_${map}_${khz}_${col}
     vopt avalon_mm_sdram_controller_tb -o tb_opt_$tag +acc -cover sbceft -assertdebug \
         -G/avalon_mm_sdram_controller_tb/CAS_LAT=$cas \
         -G/avalon_mm_sdram_controller_tb/LOOKAHEAD=$look \
         -G/avalon_mm_sdram_controller_tb/FIFO_DEPTH=$depth \
         -G/avalon_mm_sdram_controller_tb/ADDR_MAP=$map \
-        -G/avalon_mm_sdram_controller_tb/CLK_KHZ=$khz
+        -G/avalon_mm_sdram_controller_tb/CLK_KHZ=$khz \
+        -G/avalon_mm_sdram_controller_tb/COL_BITS=$col
     vsim tb_opt_$tag -coverage -assertdebug
     onfinish stop
     onbreak {resume}
@@ -80,26 +81,27 @@ proc run_one {cas look depth map khz ucdb} {
 
 if {[file exists assert_report.txt]} { file delete -force assert_report.txt }
 
-# cas look depth map  kHz
-run_one 3 1  8  0 100000 c01.ucdb
-run_one 2 1  8  0 100000 c02.ucdb
-run_one 3 0  8  0 100000 c03.ucdb
-run_one 3 1  2  0 100000 c04.ucdb
-run_one 3 1 32  0 100000 c05.ucdb
-run_one 3 1  8  1 100000 c06.ucdb
-run_one 2 0  2  0 100000 c07.ucdb
-run_one 3 0  8  1 100000 c08.ucdb
-run_one 3 1  8  0 143000 c09.ucdb
-run_one 3 1  8  0  50000 c10.ucdb
-run_one 2 0  8  0  50000 c11.ucdb
+# cas look depth map  kHz col
+run_one 3 1  8  0 100000 10 c01.ucdb
+run_one 2 1  8  0 100000 10 c02.ucdb
+run_one 3 0  8  0 100000 10 c03.ucdb
+run_one 3 1  2  0 100000 10 c04.ucdb
+run_one 3 1 32  0 100000 10 c05.ucdb
+run_one 3 1  8  1 100000 10 c06.ucdb
+run_one 2 0  2  0 100000 10 c07.ucdb
+run_one 3 0  8  1 100000 10 c08.ucdb
+run_one 3 1  8  0 143000 10 c09.ucdb
+run_one 3 1  8  0  50000 10 c10.ucdb
+run_one 2 0  8  0  50000 10 c11.ucdb
+run_one 3 1  8  0 100000 11 c12.ucdb
 
 vcover merge coverage.ucdb \
     c01.ucdb c02.ucdb c03.ucdb c04.ucdb c05.ucdb c06.ucdb \
-    c07.ucdb c08.ucdb c09.ucdb c10.ucdb c11.ucdb
+    c07.ucdb c08.ucdb c09.ucdb c10.ucdb c11.ucdb c12.ucdb
 vcover report -details -output coverage_report.txt coverage.ucdb
 
 # ---- pass/fail, decided from the transcript rather than from exit codes -----
-# A simulator that ran eleven configurations and printed ten "all tests passed"
+# A simulator that ran twelve configurations and printed eleven "all tests passed"
 # has failed one of them, and will still exit 0.
 proc run_passed {} {
     if {![file exists run.log]} { return 0 }
@@ -112,7 +114,7 @@ proc run_passed {} {
         incr n
         incr idx
     }
-    if {$n < 11} { return 0 }
+    if {$n < 12} { return 0 }
     if {[string first "Assertion error" $txt] >= 0}   { return 0 }
     if {[string first "TIMING VIOLATION" $txt] >= 0}  { return 0 }
     if {[string first "MODEL ERROR" $txt] >= 0}       { return 0 }
@@ -120,7 +122,7 @@ proc run_passed {} {
 }
 
 if {[run_passed]} {
-    puts "RESULT: PASSED - all eleven configurations, no assertion failures,"
+    puts "RESULT: PASSED - all twelve configurations, no assertion failures,"
     puts "                 no timing violations, no illegal device accesses"
 } else {
     puts "RESULT: FAILED - see run.log"

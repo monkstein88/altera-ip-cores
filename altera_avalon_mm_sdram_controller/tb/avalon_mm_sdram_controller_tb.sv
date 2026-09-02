@@ -40,7 +40,17 @@ module avalon_mm_sdram_controller_tb #(
     // The clock rate is swept too. It used to be a localparam, so every
     // expectation below silently assumed 100 MHz - and the cycle counts the
     // controller derives from nanoseconds are exactly what changes with it.
-    parameter int CLK_KHZ    = 100_000
+    parameter int CLK_KHZ    = 100_000,
+    // Geometry. Swept so that the address encoding is EXERCISED at more than
+    // one shape, not merely elaborated: at COL_BITS 11 the column's top bit
+    // has to step over A10, the auto-precharge flag, and that branch of
+    // col_addr() had never executed in simulation at any setting. The lint
+    // sweep covered the geometry; lint does not run code.
+    parameter int ROW_BITS   = 13,
+    parameter int COL_BITS   = 10,
+    parameter int BANK_BITS  = 2,
+    // SA_BITS is 13 because the timing checker's address port is 13 bits wide.
+    parameter int SA_BITS    = 13
 );
 
     // ---------------- configuration ----------------
@@ -50,11 +60,7 @@ module avalon_mm_sdram_controller_tb #(
     // simulation time spent proving nothing.
     localparam real CLK_NS    = 1_000_000.0 / real'(CLK_KHZ);
     localparam int  DATA_BITS = 16;
-    localparam int  ROW_BITS  = 13;
-    localparam int  COL_BITS  = 10;
-    localparam int  BANK_BITS = 2;
-    localparam int  SA_BITS   = 13;
-    localparam int  ADDR_W    = ROW_BITS + COL_BITS + BANK_BITS;   // 25
+    localparam int  ADDR_W    = ROW_BITS + COL_BITS + BANK_BITS;   // 25 by default
     localparam int  BANKS     = 1 << BANK_BITS;
 
     // The refresh interval in cycles, derived here rather than quoted, so the
@@ -589,6 +595,37 @@ module avalon_mm_sdram_controller_tb #(
         end
     endtask
 
+    // The column's top bit, wherever the encoding puts it.
+    //
+    // Column bit 10 has to step over A10 - the auto-precharge flag - and land
+    // on A11. Every other scenario here uses a small column, so at COL_BITS 11
+    // that branch of col_addr() runs but always writes a zero, and a mapping
+    // that dropped the bit entirely would look identical.
+    //
+    // Two addresses differing ONLY in the top column bit must not alias. If
+    // the bit were lost, the second write would land on the first address and
+    // the first read would return the second value.
+    task automatic t_top_column_bit;
+        logic [ADDR_W-1:0] a_lo, a_hi;
+        logic [DATA_BITS-1:0] d;
+        begin
+            start_test("top column bit steps over A10");
+            quiesce();
+            a_lo = mk_addr(2, 77, 5);
+            a_hi = mk_addr(2, 77, (1 << (COL_BITS-1)) | 5);
+            chk(a_lo != a_hi, "the two column addresses differ");
+            avm_write(a_lo, pat(a_lo));
+            avm_write(a_hi, pat(a_hi));
+            settle();
+            avm_read(a_lo, d);
+            chk(d == pat(a_lo),
+                $sformatf("low column read %h, expected %h (aliased?)", d, pat(a_lo)));
+            avm_read(a_hi, d);
+            chk(d == pat(a_hi),
+                $sformatf("high column read %h, expected %h", d, pat(a_hi)));
+        end
+    endtask
+
     task automatic t_streaming_backpressure;
         int i;
         logic [ADDR_W-1:0] a;
@@ -687,6 +724,73 @@ module avalon_mm_sdram_controller_tb #(
 
     // 10. Reset must return the controller to the beginning, not to a state
     //     that thinks rows are still open.
+    // Reset asserted from states other than S_RUN.
+    //
+    // The scenario above resets once, from steady operation. Questa's FSM
+    // coverage showed every other edge into S_RST unreached: reset during the
+    // power-on wait, during the initialisation refresh burst, during the
+    // mode-register load, and during a refresh sequence had never been tried.
+    // Reset is asynchronous, so a controller that came back with its bank
+    // bookkeeping disagreeing with the device would corrupt the first access
+    // after it and nothing here would have noticed.
+    task automatic t_reset_in_every_state;
+        logic [ADDR_W-1:0] a;
+        logic [DATA_BITS-1:0] d;
+        begin
+            start_test("reset from initialisation and refresh states");
+            a = mk_addr(0, 33, 12);
+
+            // Across the initialisation sequence. T_INIT_US is 2 us here, so
+            // the power-on wait is about 200 cycles and the precharge, the
+            // refresh burst and the mode-register load follow it.
+            // Stride ONE. S_INIT_PRE, S_INIT_MRS and the two wait states after
+            // them last a single cycle each, so any coarser sweep steps over
+            // them - a stride of 17 reached three of the seven init states and
+            // missed the rest.
+            for (int k = 2; k <= 300; k += 1) begin
+                reset_n = 1'b0; avm_idle(); settle(4);
+                reset_n = 1'b1;
+                repeat (k) tick();
+                reset_n = 1'b0; avm_idle(); settle(4);   // reset mid-init
+                reset_n = 1'b1;
+                rd_q.delete();
+                while (za_waitrequest) tick();
+            end
+
+            // And from inside a refresh sequence. With a row open and the bus
+            // idle the controller precharges, waits tRP and refreshes as soon
+            // as one falls due, so the sequence begins a known CYC_REFI after
+            // the previous refresh - which quiesce() has just observed.
+            // The window is swept rather than computed: quiesce() returns when
+            // a refresh has been ISSUED, which is already several cycles into
+            // the sequence, so the distance from there to the next sequence is
+            // not simply CYC_REFI.
+            for (int k = 0; k < 48; k++) begin
+                quiesce();
+                avm_write(a, pat(a));                    // leave a row open
+                repeat (CYC_REFI - 24 + k) tick();
+                reset_n = 1'b0; avm_idle(); settle(4);
+                reset_n = 1'b1;
+                rd_q.delete();
+                while (za_waitrequest) tick();
+            end
+
+            // Whatever it was interrupted doing, it must initialise properly
+            // and serve traffic afterwards.
+            zero_counts();
+            reset_n = 1'b0; avm_idle(); settle(4);
+            reset_n = 1'b1;
+            rd_q.delete();
+            while (za_waitrequest) tick();
+            chk_eq(n_pre_all, 1, "PRECHARGE ALL after the final reset");
+            chk_eq(n_mrs,     1, "LOAD MODE REGISTER after the final reset");
+            avm_write(a, pat(a));
+            avm_read(a, d);
+            chk(d == pat(a),
+                $sformatf("after reset storms read %h, expected %h", d, pat(a)));
+        end
+    endtask
+
     task automatic t_reset_recovery;
         logic [ADDR_W-1:0] a;
         logic [DATA_BITS-1:0] d;
@@ -738,10 +842,12 @@ module avalon_mm_sdram_controller_tb #(
         t_row_change_tight();
         t_write_recovery_tight();
         t_bank_walk_tight();
+        t_top_column_bit();
         t_streaming_backpressure();
         t_read_ordering();
         t_refresh_under_load();
         t_reset_recovery();
+        t_reset_in_every_state();
 
         settle(32);
         $display("-------------------------------------------------------------------------");

@@ -74,6 +74,24 @@ could have driven the part illegally and still printed ALL TESTS PASSED. Its
 count is reported in the summary and failing it fails the run, because a checker
 whose result nobody reads cannot fail.
 
+## Pin assignments and constraints
+
+All 110 pin assignments were checked line by line against the pin table in the
+**DE10-Lite User Manual** (System CD v2.2.0): every one matches.
+
+Worth knowing if you compare this against Terasic's own demonstrations: the
+`SDRAM_RTL_Test` project on that System CD assigns **twelve HEX3/HEX4 segment
+pins differently from its own user manual**. The pins are the same set, permuted
+between the two digits, so its displays show scrambled segments. This project
+follows the manual, which is why a diff against that demo shows twelve
+differences that are not errors here.
+
+The timing constraints - the -3 ns DRAM_CLK shift, the 5.9/3.0 ns input delays,
+the 1.6/-0.9 ns output delays and the shift-window multicycle - are Terasic's
+own figures for this board, and match their SDC exactly. The `t_AC` 5.4 ns and
+`t_OH` 2.7 ns behind the input delays are the ISSI IS42S16320D -7 datasheet
+values at CAS 3.
+
 ## Building for the board
 
 ```bash

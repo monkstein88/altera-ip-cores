@@ -341,13 +341,13 @@ priority chain shared one cycle, and f_MAX was 83 MHz.
 
 | Flow | What it covers | Status |
 |---|---|---|
-| `simulation/verilator/run_sim.sh` | Lint of RTL, checker and model; timing-checker self-test; testbench across 11 configurations including three clock rates; lint in 4 geometries; Quartus Analysis & Synthesis | **20 checks, 1760 testbench assertions, passing** |
-| `tb/avalon_mm_sdram_controller_tb.sv` | 160 checks per configuration, asserting on the command stream as well as the data | Passing |
+| `simulation/verilator/run_sim.sh` | Lint of RTL, checker and model; timing-checker self-test; testbench across 12 configurations including three clock rates and an 11-bit column; lint in 4 geometries; Quartus Analysis & Synthesis | **21 checks, 1992 testbench assertions, passing** |
+| `tb/avalon_mm_sdram_controller_tb.sv` | 166 checks per configuration, asserting on the command stream as well as the data | Passing |
 | `tb/avalon_mm_sdram_controller_sva.sv` | Avalon protocol, command legality, DQ contention, row bookkeeping | Passing |
 | `tb/sdram_timing_check.sv` | tRC, tRAS, tRP, tRCD, tRRD, tWR, tMRD, tRFC, read-to-write turnaround, refresh interval | Passing, with a 23-check threshold self-test |
 | `benchmark/` | Throughput against the core being replaced | Passing |
 | `example/de10_lite_rtl` | Board-level demonstration, 9 phases | 58 checks passing in simulation |
-| `simulation/questa/run_sim.tcl` | Coverage and assertion non-vacuity, same 11 configurations | 22 assertion instances, **none vacuous** |
+| `simulation/questa/run_sim.tcl` | Coverage and assertion non-vacuity, same 12 configurations | 22 assertion instances, **none vacuous**, 100% FSM state and transition |
 | Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met with 0.430 ns slack |
 | Hardware | Retention and refresh on silicon | **Not run — no board** |
 

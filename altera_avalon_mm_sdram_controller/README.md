@@ -208,9 +208,9 @@ altera_avalon_mm_sdram_controller/
 
 | Flow | Covers | Result |
 |---|---|---|
-| [`simulation/verilator/run_sim.sh`](simulation/verilator/run_sim.sh) | Lint of RTL, checker and model; timing-checker self-test; testbench across 11 configurations including three clock rates; lint in 4 geometries; Quartus Analysis & Synthesis | 20 checks, 1760 testbench assertions |
-| [`tb/`](tb) | 160 checks per configuration, on the command stream as well as the data | Passing |
-| [`simulation/questa/run_sim.tcl`](simulation/questa/run_sim.tcl) | The same 11 configurations, plus code coverage and assertion non-vacuity | 22 assertion instances, **none vacuous** |
+| [`simulation/verilator/run_sim.sh`](simulation/verilator/run_sim.sh) | Lint of RTL, checker and model; timing-checker self-test; testbench across 12 configurations including three clock rates and an 11-bit column; lint in 4 geometries; Quartus Analysis & Synthesis | 21 checks, 1992 testbench assertions |
+| [`tb/`](tb) | 166 checks per configuration, on the command stream as well as the data | Passing |
+| [`simulation/questa/run_sim.tcl`](simulation/questa/run_sim.tcl) | The same 12 configurations, plus code coverage and assertion non-vacuity | 22 assertion instances, **none vacuous** |
 | [`benchmark/`](benchmark/README.md) | Throughput against the core being replaced | Passing |
 | [`example/de10_lite_rtl`](example/de10_lite_rtl/README.md) | Board demonstration, 9 phases | 58 checks passing |
 | Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met, +0.430 ns |
@@ -219,9 +219,16 @@ altera_avalon_mm_sdram_controller/
 
 Questa reports every one of the 22 assertion instances passing **non-vacuously**,
 which is the number that matters: an assertion that only ever passes because
-its antecedent never held has verified nothing while reporting green. Merged
-code coverage across the sweep is 94.5% statement, 91.9% branch and 100% FSM
-state on the controller.
+its antecedent never held has verified nothing while reporting green.
+
+Merged code coverage on the controller across the sweep: **98.4% statement,
+92.6% branch, 85.0% condition, and 100% of FSM states and transitions.** The
+transitions took work — reset asserted from each initialisation and refresh
+state had never been tried, and four of those states last a single cycle, so
+the reset instant has to be swept cycle by cycle rather than sampled. What
+remains uncovered is the elaboration-time conversion functions, which Questa
+counts as statements but which never execute at run time, and an unreachable
+defensive `default`.
 
 The testbench asserts on the **command stream**, not only the data. A
 controller that closed and reopened a row before every access would return
