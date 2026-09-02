@@ -31,18 +31,47 @@
   `define DUT_MODULE sdram_mem_ctrl
 `endif
 
-module sdram_bench_tb;
+module sdram_bench_tb #(
+    // Which part to drive. 0 is the DE10-Lite's ISSI IS42S16320D-7, which is
+    // what the published comparison against Intel's core is measured on; 1 is
+    // the DE0-Nano's IS42S16160B-7.
+    //
+    // These figures are the same ones the Platform Designer presets carry, and
+    // doc/tools/check_facts.py holds the two copies to each other - the .qprs
+    // is the source, this is a copy, and a copy nobody checks is how a
+    // datasheet number drifts.
+    parameter int PART = 0
+);
 
     // ---------------- configuration ----------------
     localparam int  CLK_KHZ  = 100_000;          // 100 MHz
     localparam real CLK_NS   = 1_000_000.0 / real'(CLK_KHZ);
-    // Both controllers are measured at CAS 3, which is what the DE10-Lite part
-    // runs at. The timing checker needs it too: the read-to-write turnaround it
-    // enforces is CAS_LAT+1.
+    // Both controllers are measured at CAS 3, which is what both parts run at.
+    // The timing checker needs it too: the read-to-write turnaround it enforces
+    // is CAS_LAT+1.
     localparam int  CAS_LAT  = 3;
-    localparam int  ADDR_W   = 25;               // word address, 32M x 16
     localparam int  DATA_W   = 16;
     localparam int  N_OPS    = 4096;             // per pattern
+
+    // ---- the part ----------------------------------------------------------
+    localparam int  ROW_BITS  = 13;              // both parts
+    localparam int  BANK_BITS = 2;               // both parts
+    localparam int  SA_BITS   = 13;              // both parts
+    localparam int  COL_BITS  = (PART == 1) ? 9 : 10;
+    localparam int  ADDR_W    = ROW_BITS + COL_BITS + BANK_BITS;
+
+    // Timings, picoseconds, from each part's datasheet at CAS 3.
+    localparam int  T_RC_PS   = (PART == 1) ? 67_500 : 60_000;
+    localparam int  T_RAS_PS  = (PART == 1) ? 45_000 : 37_000;
+    localparam int  T_RP_PS   = (PART == 1) ? 20_000 : 15_000;
+    localparam int  T_RCD_PS  = (PART == 1) ? 20_000 : 15_000;
+    localparam int  T_RRD_PS  = (PART == 1) ? 14_000 : 14_000;
+    localparam int  T_WR_PS   = (PART == 1) ? 14_000 : 14_000;
+    localparam int  T_MRD_PS  = (PART == 1) ? 15_000 : 14_000;
+    localparam int  T_RFC_PS  = (PART == 1) ? 67_500 : 60_000;
+
+    localparam string PART_NAME = (PART == 1) ? "ISSI IS42S16160B-7  DE0-Nano 32 MByte"
+                                              : "ISSI IS42S16320D-7  DE10-Lite 64 MByte";
 
     // Theoretical ceiling: one 16-bit word per clock.
     localparam real PEAK_MBPS = (real'(CLK_KHZ) * 1000.0 * real'(DATA_W) / 8.0)
@@ -71,7 +100,8 @@ module sdram_bench_tb;
     logic        busy, done;
     logic [31:0] cycles, ops_issued, ops_retired, errors;
 
-    sdram_traffic_gen #(.ADDR_W(ADDR_W), .DATA_W(DATA_W)) gen (
+    sdram_traffic_gen #(.ADDR_W(ADDR_W), .DATA_W(DATA_W),
+                        .ROW_BITS(ROW_BITS), .COL_BITS(COL_BITS)) gen (
         .clk(clk), .reset_n(reset_n),
         .start(start), .pattern(pattern), .prime(prime), .n_ops(N_OPS), .base_addr('0),
         .busy(busy), .done(done), .cycles(cycles),
@@ -102,13 +132,43 @@ module sdram_bench_tb;
     defparam dut.LOOKAHEAD = `DUT_LOOKAHEAD;
 `endif
 
-    sdram_device_model mem (
+    // The part's geometry and timings, reaching into the instance the same way
+    // and for the same reason: Intel's core has neither these parameter names
+    // nor picosecond timings, so this cannot be a parameter of the instance
+    // without breaking the other DUT. Only needed away from the defaults, so
+    // it is guarded rather than always applied.
+`ifdef DUT_PART
+    defparam dut.ROW_BITS  = ROW_BITS;
+    defparam dut.COL_BITS  = COL_BITS;
+    defparam dut.BANK_BITS = BANK_BITS;
+    defparam dut.SA_BITS   = SA_BITS;
+    defparam dut.ADDR_W    = ADDR_W;
+    defparam dut.T_RC_PS   = T_RC_PS;
+    defparam dut.T_RAS_PS  = T_RAS_PS;
+    defparam dut.T_RP_PS   = T_RP_PS;
+    defparam dut.T_RCD_PS  = T_RCD_PS;
+    defparam dut.T_RRD_PS  = T_RRD_PS;
+    defparam dut.T_WR_PS   = T_WR_PS;
+    defparam dut.T_MRD_PS  = T_MRD_PS;
+    defparam dut.T_RFC_PS  = T_RFC_PS;
+`endif
+
+    sdram_device_model #(
+        .DATA_BITS(DATA_W), .ROW_BITS(ROW_BITS), .COL_BITS(COL_BITS),
+        .BANK_BITS(BANK_BITS), .SA_BITS(SA_BITS)
+    ) mem (
         .clk(clk),
         .zs_addr(zs_addr), .zs_ba(zs_ba), .zs_cas_n(zs_cas_n), .zs_cke(zs_cke),
         .zs_cs_n(zs_cs_n), .zs_dq(zs_dq), .zs_dqm(zs_dqm),
         .zs_ras_n(zs_ras_n), .zs_we_n(zs_we_n));
 
-    sdram_timing_check #(.CLK_KHZ(CLK_KHZ), .CAS_LAT(CAS_LAT)) tchk (
+    sdram_timing_check #(
+        .CLK_KHZ(CLK_KHZ), .CAS_LAT(CAS_LAT),
+        .T_RC_NS (real'(T_RC_PS ) / 1000.0), .T_RAS_NS(real'(T_RAS_PS) / 1000.0),
+        .T_RP_NS (real'(T_RP_PS ) / 1000.0), .T_RCD_NS(real'(T_RCD_PS) / 1000.0),
+        .T_RRD_NS(real'(T_RRD_PS) / 1000.0), .T_WR_NS (real'(T_WR_PS ) / 1000.0),
+        .T_MRD_NS(real'(T_MRD_PS) / 1000.0), .T_RFC_NS(real'(T_RFC_PS) / 1000.0)
+    ) tchk (
         .clk(clk), .reset_n(reset_n), .cke(zs_cke), .cs_n(zs_cs_n),
         .ras_n(zs_ras_n), .cas_n(zs_cas_n), .we_n(zs_we_n),
         .ba(zs_ba), .addr(zs_addr));
@@ -158,6 +218,7 @@ module sdram_bench_tb;
         $display("=========================================================================");
         $display(" SDRAM controller benchmark   %0d ops/pattern   %0d MHz   %0d-bit bus",
                  N_OPS, CLK_KHZ/1000, DATA_W);
+        $display(" part: %s", PART_NAME);
         $display(" theoretical peak: %.1f MB/s", PEAK_MBPS);
         $display("=========================================================================");
         $display("  pattern            cycles     bytes      MB/s   of peak   integrity");

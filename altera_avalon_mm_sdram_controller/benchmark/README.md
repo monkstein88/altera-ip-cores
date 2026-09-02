@@ -79,6 +79,37 @@ testbench without breaking the other DUT; the define reaches into the instance
 only when asked. Until that was added there was no supported way to reproduce
 this table at all.
 
+## The other part
+
+The DE0-Nano's IS42S16160B-7 has the same 4 banks and 8192 rows but a **9-bit
+column** where the DE10-Lite part has 10, and slower row timings: tRC 67.5 ns
+against 60, tRAS 45 against 37, tRP and tRCD 20 against 15.
+
+```bash
+./run_bench.sh avalon_mm_sdram_controller ../rtl/avalon_mm_sdram_controller.sv 1
+```
+
+| Pattern | DE10-Lite part | DE0-Nano part |
+|---|---|---|
+| seq write | 198.3 | 197.4 |
+| seq read | 196.1 | 195.2 |
+| seq read/write | 78.9 | 78.9 |
+| same-row rd/wr | 78.9 | 78.9 |
+| bank+row walk | 65.5 | **49.1** |
+| 4-bank same row | 194.7 | 195.3 |
+| random | 44.5 | **39.2** |
+
+Streaming and the same-row patterns are unchanged, which is what you would
+expect: they change rows rarely or never, so the row timings that differ
+between the parts never bind. The two that fall are the two that change rows
+constantly, and they fall by about the ratio of the parts' tRC. Nothing here is
+a controller difference - it is the same controller, told the truth about a
+slower part.
+
+There is no Intel column: `gen_dut.sh` generates that core with the DE10-Lite
+geometry fixed, so asking for another part with it is refused rather than
+quietly measuring the wrong thing.
+
 ## Files
 
 | File | Purpose |

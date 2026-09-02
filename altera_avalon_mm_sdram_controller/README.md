@@ -115,10 +115,11 @@ Also outstanding:
   priority chain, through `f_pop` and back into that register. Shortening it
   further means splitting the priority chain across two cycles, which costs a
   cycle on every row change and should be measured before being believed.
-- **More device presets.** Only the DE10-Lite's part is supplied, because it is
-  the only one whose timing has been checked against a datasheet and exercised
-  through the benchmark. Adding one is a block of XML; inventing the numbers is
-  the part that would be wrong.
+- **More device presets.** Two are supplied - the DE10-Lite's IS42S16320D-7 and
+  the DE0-Nano's IS42S16160B-7 - because those are the parts whose timing has
+  been checked against a datasheet and exercised through the benchmark and the
+  testbench. Adding one is a block of XML; inventing the numbers is the part
+  that would be wrong.
 
 ## Using it in Platform Designer
 
@@ -133,9 +134,19 @@ signals, and a `wire` conduit for the SDRAM pins — so swapping one component
 for the other in an existing system leaves every connection and every address
 assignment alone.
 
-Start from the **preset** for your part rather than typing timings in. Only
-the DE10-Lite's ISSI IS42S16320D is supplied today; adding one is a block of
-XML in the `.qprs`.
+Start from the **preset** for your part rather than typing timings in. Two are
+supplied today:
+
+| Preset | Part | Size | Geometry |
+|---|---|---|---|
+| `ISSI IS42S16320D-7 - DE10-Lite 64 MByte` | IS42S16320D-7 | 64 MB | 4 x 8192 x 1024 x 16 |
+| `ISSI IS42S16160B-7 - DE0-Nano 32 MByte` | IS42S16160B-7 | 32 MB | 4 x 8192 x **512** x 16 |
+
+Adding another is a block of XML in the `.qprs` - but a preset is a datasheet
+transcribed, so both of these are checked two ways: `doc/tools/check_facts.py`
+holds the preset against the copy the benchmark and testbench use, and the
+regression simulates each part's geometry and timings rather than only linting
+them.
 
 Two things it will not let you get wrong:
 
@@ -208,9 +219,9 @@ altera_avalon_mm_sdram_controller/
 
 | Flow | Covers | Result |
 |---|---|---|
-| [`simulation/verilator/run_sim.sh`](simulation/verilator/run_sim.sh) | Lint of RTL, checker and model; timing-checker self-test; testbench across 12 configurations including three clock rates and an 11-bit column; lint in 4 geometries; Quartus Analysis & Synthesis | 21 checks, 1992 testbench assertions |
+| [`simulation/verilator/run_sim.sh`](simulation/verilator/run_sim.sh) | Lint of RTL, checker and model; timing-checker self-test; testbench across 13 configurations including three clock rates and both supplied parts; lint in 4 geometries; Quartus Analysis & Synthesis | 22 checks, 2158 testbench assertions |
 | [`tb/`](tb) | 166 checks per configuration, on the command stream as well as the data | Passing |
-| [`simulation/questa/run_sim.tcl`](simulation/questa/run_sim.tcl) | The same 12 configurations, plus code coverage and assertion non-vacuity | 22 assertion instances, **none vacuous** |
+| [`simulation/questa/run_sim.tcl`](simulation/questa/run_sim.tcl) | The same 13 configurations, plus code coverage and assertion non-vacuity | 22 assertion instances, **none vacuous** |
 | [`benchmark/`](benchmark/README.md) | Throughput against the core being replaced | Passing |
 | [`example/de10_lite_rtl`](example/de10_lite_rtl/README.md) | Board demonstration, 9 phases | 58 checks passing |
 | Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met, +0.430 ns |

@@ -276,6 +276,71 @@ for doc_name, doc in (("user guide", UG), ("core README", RM)):
         chk(False, f"the {doc_name} quotes a hardware clock rate: "
                    f"\"{m.group(0).strip()[:70]}\"")
 
+# ------------------------------- 9b. the presets and the testbenches agree
+# Every preset must name a part the benchmark and the testbench can actually
+# be pointed at, and the figures in those testbenches must be the preset's.
+# They are separate copies of a datasheet, and a copy nobody checks is exactly
+# how one of them drifts.
+BENCH_TB = rd("benchmark/sdram_bench_tb.sv")
+
+presets = {}
+for blk in re.findall(r"<preset\b.*?</preset>", QPRS, re.S):
+    nm = re.search(r'name="([^"]+)"', blk)
+    vals = dict(re.findall(r'<parameter name="(\w+)"\s+value="([^"]+)"', blk))
+    if nm:
+        presets[nm.group(1)] = vals
+
+chk(len(presets) >= 2,
+    f"expected at least two device presets, found {len(presets)}")
+
+# A preset name containing a parenthesis or a comma loads and then cannot be
+# found by apply_preset - see the .qprs header.
+for nm in presets:
+    chk(not re.search(r"[(),]", nm),
+        f'preset name "{nm}" contains a parenthesis or comma, which '
+        f"apply_preset cannot then find")
+
+# The benchmark's PART table, which mirrors the presets.
+def bench_part(idx, key):
+    """The bench testbench's value for PART==idx, e.g. COL_BITS or T_RC_PS."""
+    m = re.search(rf"localparam int\s+{key}\s*=\s*\(PART == 1\)\s*\?\s*"
+                  rf"([0-9_]+)\s*:\s*([0-9_]+);", BENCH_TB)
+    if not m:
+        return None
+    return int(m.group(1 if idx == 1 else 2).replace("_", ""))
+
+# Match presets to PART indices by the part number in their name.
+part_of = {}
+for nm in presets:
+    if "IS42S16320D" in nm:
+        part_of[0] = nm
+    elif "IS42S16160B" in nm:
+        part_of[1] = nm
+
+chk(set(part_of) == {0, 1},
+    f"the benchmark knows two parts; the presets name {sorted(part_of)}")
+
+for idx, nm in sorted(part_of.items()):
+    pv = presets[nm]
+    got = bench_part(idx, "COL_BITS")
+    chk(got is not None, "could not read COL_BITS from the benchmark's part table")
+    if got is not None:
+        chk(str(got) == pv.get("COL_BITS"),
+            f'"{nm}": preset COL_BITS is {pv.get("COL_BITS")}, '
+            f"the benchmark uses {got}")
+    for ps_key, ns_key in (("T_RC_PS", "T_RC_NS"), ("T_RAS_PS", "T_RAS_NS"),
+                           ("T_RP_PS", "T_RP_NS"), ("T_RCD_PS", "T_RCD_NS"),
+                           ("T_RRD_PS", "T_RRD_NS"), ("T_WR_PS", "T_WR_NS"),
+                           ("T_MRD_PS", "T_MRD_NS"), ("T_RFC_PS", "T_RFC_NS")):
+        got = bench_part(idx, ps_key)
+        want = pv.get(ns_key)
+        if got is None or want is None:
+            chk(False, f'"{nm}": cannot compare {ps_key} against {ns_key}')
+        else:
+            chk(abs(got - float(want) * 1000.0) < 0.5,
+                f'"{nm}": preset {ns_key} is {want} ns, the benchmark uses '
+                f"{ps_key} = {got} ps")
+
 # ------------------------------------------- 10. the throughput table is real
 # Section 5 above compares the three copies of the performance table against
 # EACH OTHER. That is necessary and not sufficient: all three agreed on 197.6

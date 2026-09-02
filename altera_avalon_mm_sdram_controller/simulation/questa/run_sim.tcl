@@ -58,9 +58,26 @@ vlog -sv +acc +cover=sbceft ../../tb/avalon_mm_sdram_controller_tb.sv
 # FIFO_DEPTH changes the backpressure path, and ADDR_MAP puts every access in a
 # different bank so the command-count expectations are re-checked against a
 # different geometry.
-proc run_one {cas look depth map khz col ucdb} {
-    set tag ${cas}_${look}_${depth}_${map}_${khz}_${col}
-    vopt avalon_mm_sdram_controller_tb -o tb_opt_$tag +acc -cover sbceft -assertdebug \
+# `part` selects the device timings: 0 is the DE10-Lite's IS42S16320D-7, which
+# is the testbench's default, and 1 is the DE0-Nano's IS42S16160B-7. The
+# figures are the presets', held against them by doc/tools/check_facts.py.
+proc part_args {part} {
+    if {$part == 1} {
+        return [list \
+            -G/avalon_mm_sdram_controller_tb/T_RC_PS=67500 \
+            -G/avalon_mm_sdram_controller_tb/T_RAS_PS=45000 \
+            -G/avalon_mm_sdram_controller_tb/T_RP_PS=20000 \
+            -G/avalon_mm_sdram_controller_tb/T_RCD_PS=20000 \
+            -G/avalon_mm_sdram_controller_tb/T_MRD_PS=15000 \
+            -G/avalon_mm_sdram_controller_tb/T_RFC_PS=67500]
+    }
+    return [list]
+}
+
+proc run_one {cas look depth map khz col part ucdb} {
+    set tag ${cas}_${look}_${depth}_${map}_${khz}_${col}_${part}
+    eval vopt avalon_mm_sdram_controller_tb -o tb_opt_$tag +acc -cover sbceft -assertdebug \
+        [part_args $part] \
         -G/avalon_mm_sdram_controller_tb/CAS_LAT=$cas \
         -G/avalon_mm_sdram_controller_tb/LOOKAHEAD=$look \
         -G/avalon_mm_sdram_controller_tb/FIFO_DEPTH=$depth \
@@ -81,27 +98,28 @@ proc run_one {cas look depth map khz col ucdb} {
 
 if {[file exists assert_report.txt]} { file delete -force assert_report.txt }
 
-# cas look depth map  kHz col
-run_one 3 1  8  0 100000 10 c01.ucdb
-run_one 2 1  8  0 100000 10 c02.ucdb
-run_one 3 0  8  0 100000 10 c03.ucdb
-run_one 3 1  2  0 100000 10 c04.ucdb
-run_one 3 1 32  0 100000 10 c05.ucdb
-run_one 3 1  8  1 100000 10 c06.ucdb
-run_one 2 0  2  0 100000 10 c07.ucdb
-run_one 3 0  8  1 100000 10 c08.ucdb
-run_one 3 1  8  0 143000 10 c09.ucdb
-run_one 3 1  8  0  50000 10 c10.ucdb
-run_one 2 0  8  0  50000 10 c11.ucdb
-run_one 3 1  8  0 100000 11 c12.ucdb
+# cas look depth map  kHz col part
+run_one 3 1  8  0 100000 10 0 c01.ucdb
+run_one 2 1  8  0 100000 10 0 c02.ucdb
+run_one 3 0  8  0 100000 10 0 c03.ucdb
+run_one 3 1  2  0 100000 10 0 c04.ucdb
+run_one 3 1 32  0 100000 10 0 c05.ucdb
+run_one 3 1  8  1 100000 10 0 c06.ucdb
+run_one 2 0  2  0 100000 10 0 c07.ucdb
+run_one 3 0  8  1 100000 10 0 c08.ucdb
+run_one 3 1  8  0 143000 10 0 c09.ucdb
+run_one 3 1  8  0  50000 10 0 c10.ucdb
+run_one 2 0  8  0  50000 10 0 c11.ucdb
+run_one 3 1  8  0 100000 11 0 c12.ucdb
+run_one 3 1  8  0 100000  9 1 c13.ucdb
 
 vcover merge coverage.ucdb \
-    c01.ucdb c02.ucdb c03.ucdb c04.ucdb c05.ucdb c06.ucdb \
-    c07.ucdb c08.ucdb c09.ucdb c10.ucdb c11.ucdb c12.ucdb
+    c01.ucdb c02.ucdb c03.ucdb c04.ucdb c05.ucdb c06.ucdb c07.ucdb \
+    c08.ucdb c09.ucdb c10.ucdb c11.ucdb c12.ucdb c13.ucdb
 vcover report -details -output coverage_report.txt coverage.ucdb
 
 # ---- pass/fail, decided from the transcript rather than from exit codes -----
-# A simulator that ran twelve configurations and printed eleven "all tests passed"
+# A simulator that ran thirteen configurations and printed twelve "all tests passed"
 # has failed one of them, and will still exit 0.
 proc run_passed {} {
     if {![file exists run.log]} { return 0 }
@@ -114,7 +132,7 @@ proc run_passed {} {
         incr n
         incr idx
     }
-    if {$n < 12} { return 0 }
+    if {$n < 13} { return 0 }
     if {[string first "Assertion error" $txt] >= 0}   { return 0 }
     if {[string first "TIMING VIOLATION" $txt] >= 0}  { return 0 }
     if {[string first "MODEL ERROR" $txt] >= 0}       { return 0 }
@@ -122,7 +140,7 @@ proc run_passed {} {
 }
 
 if {[run_passed]} {
-    puts "RESULT: PASSED - all twelve configurations, no assertion failures,"
+    puts "RESULT: PASSED - all thirteen configurations, no assertion failures,"
     puts "                 no timing violations, no illegal device accesses"
 } else {
     puts "RESULT: FAILED - see run.log"

@@ -76,9 +76,20 @@ apply_preset sdram "ISSI IS42S16320D-7 - DE10-Lite 64 MByte"
 ```
 
 A preset carries the geometry, the timings and the refresh figures for one
-device, taken from its datasheet once. Only parts whose timing has been checked
-against a datasheet *and* exercised through `benchmark/` are supplied; adding
-one is a block of XML in `altera_avalon_mm_sdram_controller.qprs`.
+device, taken from its datasheet once. Two are supplied:
+
+| Preset name | Part | Size | Banks x rows x cols x bits |
+|---|---|---|---|
+| `ISSI IS42S16320D-7 - DE10-Lite 64 MByte` | IS42S16320D-7 | 64 MB | 4 x 8192 x 1024 x 16 |
+| `ISSI IS42S16160B-7 - DE0-Nano 32 MByte` | IS42S16160B-7 | 32 MB | 4 x 8192 x 512 x 16 |
+
+Only parts whose timing has been checked against a datasheet *and* exercised
+through `benchmark/` and the testbench are supplied; adding one is a block of
+XML in `altera_avalon_mm_sdram_controller.qprs`. Because a preset is a
+datasheet transcribed, both are held in place from two directions:
+`doc/tools/check_facts.py` compares each preset against the copy the benchmark
+and testbench carry, and the regression simulates each part's geometry and
+timings rather than only linting them.
 
 > **Caution:** There is deliberately no "generic SDRAM" preset. A timing
 > constant that is one speed grade optimistic produces a design that passes
@@ -341,13 +352,13 @@ priority chain shared one cycle, and f_MAX was 83 MHz.
 
 | Flow | What it covers | Status |
 |---|---|---|
-| `simulation/verilator/run_sim.sh` | Lint of RTL, checker and model; timing-checker self-test; testbench across 12 configurations including three clock rates and an 11-bit column; lint in 4 geometries; Quartus Analysis & Synthesis | **21 checks, 1992 testbench assertions, passing** |
+| `simulation/verilator/run_sim.sh` | Lint of RTL, checker and model; timing-checker self-test; testbench across 13 configurations including three clock rates and both supplied parts; lint in 4 geometries; Quartus Analysis & Synthesis | **22 checks, 2158 testbench assertions, passing** |
 | `tb/avalon_mm_sdram_controller_tb.sv` | 166 checks per configuration, asserting on the command stream as well as the data | Passing |
 | `tb/avalon_mm_sdram_controller_sva.sv` | Avalon protocol, command legality, DQ contention, row bookkeeping | Passing |
 | `tb/sdram_timing_check.sv` | tRC, tRAS, tRP, tRCD, tRRD, tWR, tMRD, tRFC, read-to-write turnaround, refresh interval | Passing, with a 23-check threshold self-test |
 | `benchmark/` | Throughput against the core being replaced | Passing |
 | `example/de10_lite_rtl` | Board-level demonstration, 9 phases | 58 checks passing in simulation |
-| `simulation/questa/run_sim.tcl` | Coverage and assertion non-vacuity, same 12 configurations | 22 assertion instances, **none vacuous**, 100% FSM state and transition |
+| `simulation/questa/run_sim.tcl` | Coverage and assertion non-vacuity, same 13 configurations | 22 assertion instances, **none vacuous**, 100% FSM state and transition |
 | Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met with 0.430 ns slack |
 | Hardware | Retention and refresh on silicon | **Not run — no board** |
 
@@ -383,7 +394,7 @@ meant to catch it:
 | **No reordering** | Transfers are served in order. A reorder buffer grouping same-direction accesses is the other half of that work |
 | **One chip select** | Multi-device configurations are not supported |
 | **Single clock domain** | No clock-crossing on the slave port |
-| **One device preset** | Only the DE10-Lite's part. Others need datasheet figures |
+| **Two device presets** | The DE10-Lite's IS42S16320D-7 and the DE0-Nano's IS42S16160B-7. Others need datasheet figures |
 | **f_MAX headroom is thin** | 101 MHz standalone against a 100 MHz target. The critical path is the loop from the registered FIFO head through the priority chain and back; shortening it further means splitting that chain across two cycles |
 
 ---

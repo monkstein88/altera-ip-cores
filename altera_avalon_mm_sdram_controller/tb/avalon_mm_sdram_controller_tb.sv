@@ -50,7 +50,20 @@ module avalon_mm_sdram_controller_tb #(
     parameter int COL_BITS   = 10,
     parameter int BANK_BITS  = 2,
     // SA_BITS is 13 because the timing checker's address port is 13 bits wide.
-    parameter int SA_BITS    = 13
+    parameter int SA_BITS    = 13,
+    // Device timings, picoseconds. Defaults are the DE10-Lite's IS42S16320D-7;
+    // override them together with the geometry to exercise another part. The
+    // figures come from each part's datasheet and are the same ones the
+    // Platform Designer presets carry - doc/tools/check_facts.py holds the
+    // copies to each other.
+    parameter int T_RC_PS    = 60_000,
+    parameter int T_RAS_PS   = 37_000,
+    parameter int T_RP_PS    = 15_000,
+    parameter int T_RCD_PS   = 15_000,
+    parameter int T_RRD_PS   = 14_000,
+    parameter int T_WR_PS    = 14_000,
+    parameter int T_MRD_PS   = 14_000,
+    parameter int T_RFC_PS   = 60_000
 );
 
     // ---------------- configuration ----------------
@@ -91,7 +104,10 @@ module avalon_mm_sdram_controller_tb #(
         .DATA_BITS(DATA_BITS), .ROW_BITS(ROW_BITS), .COL_BITS(COL_BITS),
         .BANK_BITS(BANK_BITS), .SA_BITS(SA_BITS), .CAS_LAT(CAS_LAT),
         .FIFO_DEPTH(FIFO_DEPTH), .CLK_KHZ(CLK_KHZ), .T_INIT_US(2),
-        .LOOKAHEAD(LOOKAHEAD), .ADDR_MAP(ADDR_MAP)
+        .LOOKAHEAD(LOOKAHEAD), .ADDR_MAP(ADDR_MAP),
+        .T_RC_PS(T_RC_PS), .T_RAS_PS(T_RAS_PS), .T_RP_PS(T_RP_PS),
+        .T_RCD_PS(T_RCD_PS), .T_RRD_PS(T_RRD_PS), .T_WR_PS(T_WR_PS),
+        .T_MRD_PS(T_MRD_PS), .T_RFC_PS(T_RFC_PS)
     ) dut (
         .clk(clk), .reset_n(reset_n),
         .az_addr(az_addr), .az_be_n(az_be_n), .az_cs(az_cs), .az_data(az_data),
@@ -114,7 +130,13 @@ module avalon_mm_sdram_controller_tb #(
     // enforces is CAS_LAT+1, so leaving it at the default checked every
     // CAS 2 configuration against a CAS 3 bound and reported violations
     // that were not violations.
-    sdram_timing_check #(.CLK_KHZ(CLK_KHZ), .CAS_LAT(CAS_LAT)) tchk (
+    sdram_timing_check #(
+        .CLK_KHZ(CLK_KHZ), .CAS_LAT(CAS_LAT),
+        .T_RC_NS (real'(T_RC_PS ) / 1000.0), .T_RAS_NS(real'(T_RAS_PS) / 1000.0),
+        .T_RP_NS (real'(T_RP_PS ) / 1000.0), .T_RCD_NS(real'(T_RCD_PS) / 1000.0),
+        .T_RRD_NS(real'(T_RRD_PS) / 1000.0), .T_WR_NS (real'(T_WR_PS ) / 1000.0),
+        .T_MRD_NS(real'(T_MRD_PS) / 1000.0), .T_RFC_NS(real'(T_RFC_PS) / 1000.0)
+    ) tchk (
         .clk(clk), .reset_n(reset_n), .cke(zs_cke), .cs_n(zs_cs_n),
         .ras_n(zs_ras_n), .cas_n(zs_cas_n), .we_n(zs_we_n),
         .ba(zs_ba), .addr(zs_addr));

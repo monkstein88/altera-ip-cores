@@ -164,6 +164,10 @@ SWEEP=(
     # executed in simulation: the geometry sweep below only LINTS, and lint
     # does not run code.
     "-GCOL_BITS=11"
+    # The DE0-Nano's IS42S16160B-7: a 9-bit column and slower row timings than
+    # the DE10-Lite part. A preset is only worth shipping if the configuration
+    # it names has actually been simulated.
+    "-GCOL_BITS=9 -GT_RC_PS=67500 -GT_RAS_PS=45000 -GT_RP_PS=20000 -GT_RCD_PS=20000 -GT_MRD_PS=15000 -GT_RFC_PS=67500"
 )
 for cfg in "${SWEEP[@]}"; do
     label="${cfg:-defaults}"

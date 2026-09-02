@@ -48,7 +48,12 @@
 
 module sdram_traffic_gen #(
     parameter int ADDR_W = 25,   // Avalon word address width
-    parameter int DATA_W = 16
+    parameter int DATA_W = 16,
+    // Geometry of the part being driven. The access patterns are defined in
+    // terms of banks, rows and columns, so they have to know where those live
+    // in the address - see the note above the derived constants below.
+    parameter int ROW_BITS = 13,
+    parameter int COL_BITS = 10
 ) (
     input  logic                clk,
     input  logic                reset_n,
@@ -108,12 +113,13 @@ module sdram_traffic_gen #(
     // pays for and a per-bank design does not.
     //
     // These constants describe the part, not the controller, so a different
-    // geometry only changes them.
+    // geometry only changes them - which is why ROW_BITS and COL_BITS are
+    // parameters. The DE0-Nano's IS42S16160B has a 9-bit column where the
+    // DE10-Lite's IS42S16320D has 10, and every pattern below follows from
+    // that without further change.
     // ------------------------------------------------------------------
-    localparam int ROW_BITS   = 13;
-    localparam int COL_BITS   = 10;              // addr[9:0]
-    localparam int BANK0_BIT  = COL_BITS;        // addr[10]  - the low bank bit
-    localparam int BANK1_BIT  = COL_BITS + 1 + ROW_BITS;   // addr[24]
+    localparam int BANK0_BIT  = COL_BITS;        // the low bank bit
+    localparam int BANK1_BIT  = COL_BITS + 1 + ROW_BITS;   // the high bank bit
 
     localparam logic [ADDR_W-1:0] BANK_STEP = (1 << BANK0_BIT);
     localparam logic [ADDR_W-1:0] COL_MASK  = ADDR_W'((1 << COL_BITS) - 1);
