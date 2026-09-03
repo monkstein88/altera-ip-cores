@@ -123,12 +123,12 @@ Results:
 
 | | |
 |---|---|
-| Logic elements | 5,101 / 49,760 (10%) |
+| Logic elements | 5,264 / 49,760 (11%) |
 | Registers | 3,003 |
 | Memory bits | 1,113,152 / 1,677,312 (66%) |
 | Program | 74 KB, in 128 KB of on-chip RAM |
-| Setup slack, 100 MHz system clock | **+0.163 ns** |
-| Setup slack, SDRAM interface | +2.165 ns |
+| Setup slack, 100 MHz system clock | **+0.380 ns** |
+| Setup slack, SDRAM interface | +2.042 ns |
 
 This used to close with 0.135 ns, which was thin enough to warn about: the CPU
 and its caches share a clock with the controller, and the controller was the

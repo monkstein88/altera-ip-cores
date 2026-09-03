@@ -39,23 +39,27 @@
 # looks exactly like the design ignoring you.
 # =============================================================================
 
+# Search EVERY cable for this board's device, not just the first one. With two
+# USB-Blasters attached - the normal state of a bench that has both boards -
+# taking the first cable picks whichever enumerated first, and then fails with
+# "no EP4CE22 in the JTAG chain" on a perfectly healthy setup.
+#
+# The DE0-Nano's Cyclone IV E shares a JTAG ID with several parts, which
+# jtagconfig reports as "10CL025(Y|Z)/EP3C25/EP4CE22", so the exact spelling is
+# tried first and the combined string second rather than requiring one form.
 set hw ""
-foreach h [get_hardware_names] { if {[string match "*USB-Blaster*" $h]} { set hw $h; break } }
-if {$hw eq ""} { puts "ERROR: no USB-Blaster found"; exit 1 }
-
 set dev ""
-# The DE0-Nano's Cyclone IV E. jtagconfig reports the ID shared by several
-# parts - "10CL025(Y|Z)/EP3C25/EP4CE22" - so match on EP4CE22 and fall back to
-# that combined string, rather than requiring one exact spelling.
-foreach d [get_device_names -hardware_name $hw] {
-    if {[string match "*EP4CE22*" $d]} { set dev $d; break }
-}
-if {$dev eq ""} {
-    foreach d [get_device_names -hardware_name $hw] {
-        if {[string match "*EP4CE*" $d] || [string match "*10CL025*" $d]} { set dev $d; break }
+foreach pat {*EP4CE22* *EP4CE* *10CL025*} {
+    foreach h [get_hardware_names] {
+        if {![string match "*USB-Blaster*" $h]} { continue }
+        foreach d [get_device_names -hardware_name $h] {
+            if {[string match $pat $d]} { set hw $h; set dev $d; break }
+        }
+        if {$dev ne ""} { break }
     }
+    if {$dev ne ""} { break }
 }
-if {$dev eq ""} { puts "ERROR: no EP4CE22 in the JTAG chain"; exit 1 }
+if {$dev eq ""} { puts "ERROR: no EP4CE22 on any USB-Blaster"; exit 1 }
 puts "cable  : $hw"
 puts "device : $dev"
 

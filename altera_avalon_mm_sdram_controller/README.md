@@ -165,21 +165,32 @@ Also outstanding:
   9 column bits and 32 MByte against 10 and 64 - so the address decode, the
   preset mechanism and the timing parameters are exercised across two
   geometries rather than fitted to one.
-- **f_MAX headroom.** 104.8 MHz against a 100 MHz target is 5% of margin, up
-  from 1% now that the row-match comparison is resolved a cycle ahead rather
-  than inside the scheduler loop. The critical path has moved with it: it
-  starts at the tRC counter, runs through `act_ok_v` and the S_RUN priority
-  chain, and ends in the row bookkeeping.
+- **f_MAX headroom, and what actually sets it.** 104.8 MHz standalone against
+  a 100 MHz target. Both demonstrations now close with over a nanosecond on
+  the system clock - +1.207 ns on the DE0-Nano, +1.037 on the DE10-Lite - but
+  that came from the fitter, not from the RTL, and the distinction is the
+  useful part.
 
-  Applying the same trick to the counters - a registered "reaches zero next
-  cycle" flag, so the loop never evaluates a comparison - **was tried and does
-  not help.** It measured 103.8 MHz standalone against 104.8, and took the
-  DE10-Lite demo from +0.208 ns to +0.011 for 208 more logic elements. The
-  counters do leave the critical path, but the path simply terminates one
-  register earlier at the same length: the comparison was never the expensive
-  part, the routed priority-chain loop is. Shortening it for real means
-  splitting that chain across two cycles, which costs a cycle on every row
-  change and should be measured before being believed.
+  **Placement, not logic depth, is what limits this design.** Five builds of
+  identical RTL at different fitter seeds measured 0.249, 0.770, 0.734, 0.451
+  and 0.472 ns on the DE10-Lite: a 0.52 ns spread on a 10 ns period, wider
+  than any of the RTL changes tried. High fitter effort, which the `.qsf` now
+  sets, gave 1.037, 0.553, 0.970, 1.000 and 1.127 over the same seeds - the
+  worst case roughly doubles, for no run-time cost.
+
+  Two RTL attempts at the same goal are worth recording as negative results.
+  Registering the row-match comparison **worked** and is in the design: 101.0
+  to 104.8 MHz standalone. Registering the counters' "reaches zero next cycle"
+  did **not**: 103.8 MHz standalone against 104.8, and the DE10-Lite demo from
+  +0.208 ns to +0.011 for 208 more logic elements. The counters do leave the
+  critical path, but it terminates one register earlier at the same length -
+  the comparison was never the expensive part.
+
+  Shortening the loop for real means splitting the priority chain across two
+  cycles, which costs a cycle on every row change. On a core whose whole
+  argument is cheap row changes that is a bad trade, and it should be measured
+  on the benchmark before anyone believes otherwise.
+
 - **More device presets.** Two are supplied - the DE10-Lite's IS42S16320D-7 and
   the DE0-Nano's IS42S16160B-7 - because those are the parts whose timing has
   been checked against a datasheet and exercised through the benchmark and the

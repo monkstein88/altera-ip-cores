@@ -133,24 +133,19 @@ export QUARTUS_ROOT=/opt/intelFPGA/18.1
 
 | | |
 |---|---|
-| Logic elements | 3,333 / 49,760 (7%) |
+| Logic elements | 3,320 / 49,760 (7%) |
 | Registers | 1,875 |
 | Pins | 110 / 360 |
-| Setup slack, 100 MHz system clock | **+0.249 ns** |
-| Setup slack, SDRAM interface | +2.150 ns |
-| f_MAX | 102.6 MHz |
+| Setup slack, 100 MHz system clock | **+1.037 ns** |
+| Setup slack, SDRAM interface | +2.370 ns |
+| f_MAX | 111.9 MHz |
 
-**+0.249 ns is inside the fitter's own run-to-run spread, so treat this as
-"closes, barely" rather than as margin.** It has now been run on a real part
-and works, which the slow 85 °C corner does not promise: a device on a desk is
-faster than that corner, so closing it there is the claim, not "it worked once". Two clean builds of the unchanged
-DE0-Nano Nios system differed by 0.24 ns, and this design has less than that in
-hand. The MAX 10 -7 is the slower of the two parts here and the controller is
-its critical path: the DE0-Nano closes the same 100 MHz with 1.011 ns. If a
-rebuild lands the wrong side of zero, the fix that bought the last 4 MHz is
-described in the core [README](../../README.md#what-is-left) - the tRC counter
-feeding `act_ok_v` is the current critical path, and its reaches-zero test
-could be registered the way the row match already is.
+**That margin is the fitter's, not the RTL's.** Five builds of identical RTL
+at different fitter seeds measured 0.249, 0.770, 0.734, 0.451 and 0.472 ns at
+default effort - a 0.52 ns spread on a 10 ns period, with the shipped seed
+landing on the unlucky end. The project now sets high fitter effort, which
+measured 1.037, 0.553, 0.970, 1.000 and 1.127 over the same seeds: the worst
+case roughly doubles. See the `.qsf` for the numbers and the reasoning.
 
 `run_on_board.sh` is what produced the transcript above. It needs no one
 looking at the board: it programs the part, drives every scenario over JTAG,

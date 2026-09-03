@@ -144,3 +144,26 @@ set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to "DRAM_RAS_N"
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to "DRAM_WE_N"
 
 set_global_assignment -name LAST_QUARTUS_VERSION "18.1.1 Standard Edition"
+# -----------------------------------------------------------------------------
+# Fitter effort.
+#
+# This design's setup slack is dominated by placement, not by logic depth. Five
+# builds of identical RTL at different fitter seeds measured, on the DE10-Lite:
+#
+#     default effort   0.249  0.770  0.734  0.451  0.472    worst 0.249
+#     high effort      1.037  0.553  0.970  1.000  1.127    worst 0.553
+#
+# A 0.52 ns spread at default effort, on a 10 ns period, with the shipped seed
+# landing on the unlucky end of it. That is why chasing the last nanosecond in
+# RTL did not pay: a registered "counter reaches zero" flag - the obvious next
+# move, and the one the README used to recommend - measured WORSE than the
+# comparison it replaced, because the routed loop, not the comparison, is what
+# sets the period.
+#
+# High effort roughly doubles the worst case and costs nothing at run time.
+# It is set here rather than left to whoever builds this, because a margin that
+# depends on the default seed being lucky is not a margin.
+# -----------------------------------------------------------------------------
+set_global_assignment -name OPTIMIZATION_MODE "HIGH PERFORMANCE EFFORT"
+set_global_assignment -name PHYSICAL_SYNTHESIS_COMBO_LOGIC ON
+set_global_assignment -name PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION ON

@@ -39,13 +39,20 @@
 # looks exactly like the design ignoring you.
 # =============================================================================
 
+# Search EVERY cable for this board's device, not just the first one. With two
+# USB-Blasters attached - the normal state of a bench that has both boards -
+# taking the first cable picks whichever enumerated first, and then fails with
+# "no 10M50 in the JTAG chain" on a perfectly healthy setup.
 set hw ""
-foreach h [get_hardware_names] { if {[string match "*USB-Blaster*" $h]} { set hw $h; break } }
-if {$hw eq ""} { puts "ERROR: no USB-Blaster found"; exit 1 }
-
 set dev ""
-foreach d [get_device_names -hardware_name $hw] { if {[string match "*10M50*" $d]} { set dev $d; break } }
-if {$dev eq ""} { puts "ERROR: no 10M50 in the JTAG chain"; exit 1 }
+foreach h [get_hardware_names] {
+    if {![string match "*USB-Blaster*" $h]} { continue }
+    foreach d [get_device_names -hardware_name $h] {
+        if {[string match "*10M50*" $d]} { set hw $h; set dev $d; break }
+    }
+    if {$dev ne ""} { break }
+}
+if {$dev eq ""} { puts "ERROR: no 10M50 on any USB-Blaster"; exit 1 }
 puts "cable  : $hw"
 puts "device : $dev"
 

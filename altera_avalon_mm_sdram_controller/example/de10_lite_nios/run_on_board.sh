@@ -31,6 +31,32 @@ export PATH="$SOPC_KIT_NIOS2/sdk2/bin:$SOPC_KIT_NIOS2/bin:$QUARTUS_ROOTDIR/bin:$
 # exits 0 - so it looks like a board that downloaded nothing.
 export PATH="$SOPC_KIT_NIOS2/bin/gnu/H-x86_64-pc-linux-gnu/bin:$PATH"
 
+# -----------------------------------------------------------------------------
+# Which cable? With two USB-Blasters attached - the normal state of a bench
+# that has both boards - quartus_pgm, nios2-download and nios2-terminal all
+# default to cable 1, which is a coin flip. Pick the one whose device matches
+# this board and pass it explicitly.
+# -----------------------------------------------------------------------------
+DEV_MATCH='10M50'
+pick_cable() {
+    local idx="" hit=""
+    while IFS= read -r line; do
+        case "$line" in
+            [0-9]*\)*) idx="${line%%)*}" ;;
+        esac
+        case "$line" in
+            *$DEV_MATCH*) [ -n "$idx" ] && { hit="$idx"; break; } ;;
+        esac
+    done < <("$JTAG_ROOT/quartus/bin/jtagconfig" 2>/dev/null)
+    echo "$hit"
+}
+CABLE="$(pick_cable)"
+if [[ -z "$CABLE" ]]; then
+    echo "error: no $DEV_MATCH found on any USB-Blaster - is the board plugged in?" >&2
+    exit 1
+fi
+echo "using JTAG cable $CABLE ($DEV_MATCH)"
+
 SOF="$HERE/quartus/output_files/de10_lite_sdram_nios.sof"
 ELF="$HERE/software/sdram_memtest.elf"
 
@@ -39,13 +65,13 @@ ELF="$HERE/software/sdram_memtest.elf"
 if [[ "${1:-}" != "--no-program" ]]; then
     [[ -f "$SOF" ]] || { echo "error: $SOF not found - run ./build.sh first" >&2; exit 1; }
     echo "=== programming the FPGA ==="
-    "$JTAG_ROOT/quartus/bin/quartus_pgm" -m jtag -o "p;$SOF" 2>&1 \
+    "$JTAG_ROOT/quartus/bin/quartus_pgm" -c "$CABLE" -m jtag -o "p;$SOF" 2>&1 \
         | grep -iE "Configuration succeeded|Error" || true
 fi
 
 echo
 echo "=== downloading the software ==="
-nios2-download -g "$ELF" 2>&1 | grep -iE "Downloaded|Verified|Error" || true
+nios2-download -c "$CABLE" -g "$ELF" 2>&1 | grep -iE "Downloaded|Verified|Error" || true
 
 echo
 echo "=== capturing the JTAG UART ==="
@@ -80,7 +106,7 @@ TERM_BIN="$JTAG_ROOT/quartus/bin/nios2-terminal"
 # there.
 LOG="$HERE/.run_on_board.log"
 : >"$LOG"
-"$TERM_BIN" --quit-after=720 >"$LOG" 2>&1 &
+"$TERM_BIN" --cable="$CABLE" --quit-after=720 >"$LOG" 2>&1 &
 TERM_PID=$!
 
 # Follows the log for as long as the terminal lives, then stops on its own.

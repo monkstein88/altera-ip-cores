@@ -175,16 +175,16 @@ Results:
 
 | | |
 |---|---|
-| Logic elements | 5,057 / 22,320 (23%) |
+| Logic elements | 5,049 / 22,320 (23%) |
 | Registers | 2,987 |
 | Memory bits | 300,672 / 608,256 (49%) |
 | Program | 16 KB, in 32 KB of on-chip RAM |
-| Setup slack, 100 MHz system clock | **+0.957 ns** |
-| Setup slack, SDRAM interface | +3.477 ns |
+| Setup slack, 100 MHz system clock | **+1.492 ns** |
+| Setup slack, SDRAM interface | +2.899 ns |
 
-From a clean `./build.sh`. Two clean builds of these same sources gave +0.957
-and +1.201 ns, so read the slack as "about a nanosecond", not as a constant -
-regenerating the Platform Designer system reshuffles the fit.
+From a clean `./build.sh`, with the high fitter effort the `.qsf` sets. Slack
+still moves between builds - placement, not logic depth, is what sets it here -
+so read it as "comfortably over a nanosecond" rather than as a constant.
 
 ## This board is much tighter on memory, and it took two goes to fit
 

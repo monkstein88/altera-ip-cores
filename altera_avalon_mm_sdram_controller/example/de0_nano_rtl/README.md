@@ -125,12 +125,12 @@ export QUARTUS_ROOT=/opt/intelFPGA/18.1
 
 | | |
 |---|---|
-| Logic elements | 3,123 / 22,320 (14%) |
-| Registers | 1,780 |
+| Logic elements | 3,321 / 22,320 (15%) |
+| Registers | 1,877 |
 | Pins | 54 / 154 |
-| Setup slack, 100 MHz system clock | **+1.011 ns** |
-| Setup slack, SDRAM interface | +3.398 ns |
-| f_MAX | 111.5 MHz |
+| Setup slack, 100 MHz system clock | **+1.207 ns** |
+| Setup slack, SDRAM interface | +3.486 ns |
+| f_MAX | 117.4 MHz |
 
 ## Pin assignments and constraints
 
