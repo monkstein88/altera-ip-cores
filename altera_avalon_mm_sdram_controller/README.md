@@ -107,8 +107,8 @@ table above applies; it is not a free substitution, and a design already at
 
 ## What each layer of verification actually catches
 
-Faults were injected into the controller one at a time, rebuilt, and run
-through both the simulation regression and a real DE0-Nano. This is the
+Seventeen faults were injected into the controller one at a time, rebuilt, and
+run through both the simulation regression and a real DE0-Nano. This is the
 evidence for what the word "verified" means here, and in particular for what
 the board does and does not settle.
 
@@ -116,27 +116,46 @@ the board does and does not settle.
 |---|---|---|---|
 | Bank decode: bank bit taken from a row bit | 11 of 22 configs fail | - | **fails** 1, 4, 6, 7 |
 | CAS latency: read data captured a cycle early | 13 fail | - | **fails** 1-7 |
+| Read data valid asserted a cycle early | 13 fail | - | **fails** all 8 |
+| FIFO write-to-read bypass disabled | 13 fail | - | **fails** 0, 1 |
+| Mode register: CAS field 2 while timing for 3 | 10 fail | - | **fails** 1, 3, 6, 7 |
+| Mode register: burst length 2, not 1 | 13 fail | - | **fails** 6, 7 |
+| Mode-register write skipped entirely | 13 fail | - | **fails** 6, 7 |
+| One shared open-row register, not one per bank | fails | - | **fails** 4, 6, 7 |
+| Refresh disabled outright | fails | **violation** | **fails** 6 |
 | tRCD ignored: column command straight after ACTIVATE | 11 fail | **violation** | **fails** 1, 4, 7 |
+| A scenario that verifies nothing | - | - | **fails** that scenario |
 | tRAS/tWR ignored: PRECHARGE straight after ACTIVATE | 13 fail | **violation** | passes |
 | tRP/tRC ignored: ACTIVATE straight after PRECHARGE | 11 fail | **violation** | passes |
 | Write-to-read turnaround ignored | 13 fail | SVA fires first | passes |
-| One shared open-row register, not one per bank | fails | - | **fails** 4, 6, 7 |
-| Refresh disabled outright | fails | **violation** | **fails** 6 |
-| A scenario that verifies nothing | - | - | **fails** that scenario |
+| Look-ahead ACTIVATEs the head's bank, not the next | 8 fail | **violation** | passes |
+| Power-up wait skipped | 7 fail | **violation** | passes |
+| The eight initialisation refreshes skipped | 18 fail | - | passes |
 
-**Simulation caught every one. The board caught six of nine.**
+**Simulation caught every one of the seventeen. The board caught eleven.**
 
-The three it misses are all pure timing: violating tRAS, tWR, tRP and tRC
-returns correct data on this part at 100 MHz, because a -7 device has real
-margin over its own datasheet minimums. A board can only observe the data that
-survives the command stream; it cannot observe the command stream. That is
-what `sdram_timing_check.sv` is for, and on those three faults it is the only
-thing that reports a problem at all.
+The six it misses divide into two kinds, and neither is a defect in the board
+tests. Four are pure timing or protocol violations - tRAS, tWR, tRP, tRC, an
+ACTIVATE to a bank that is already open - which a -7 part at 100 MHz absorbs,
+because it has real margin over its own datasheet minimums. Two are
+initialisation shortcuts: skipping the 100 us power-up wait and the eight
+refreshes JEDEC requires before the mode register is written. A device on a
+desk comes up anyway.
 
-Two of these entries are fixes rather than reassurance: the shared-row-register
-and refresh faults were both *missed* by the board tests as they originally
-stood, and the scenarios were rewritten until they caught them. The others
-confirm the layer that was supposed to catch them did.
+In every one of those six the command stream is illegal and the data is
+correct. **A board can observe the data that survives a command stream; it
+cannot observe the stream.** That is what `sdram_timing_check.sv` and the
+assertions are for, and on those six they are the only thing that reports a
+problem at all. The initialisation pair is the sharpest case: nothing in the
+timing checker fires for the missing refreshes either, and it is the
+testbench's data comparisons across 18 of 22 configurations that catch them.
+
+Three of the seventeen are fixes rather than reassurance. The shared open-row
+register, the disabled refresh and the do-nothing scenario were all *missed*
+by the board tests as they originally stood, and the scenarios were rewritten
+until they caught them - which is why the retention test now idles 12 s over
+8 MByte, why scenario 4 staggers rows across banks, and why a scenario that
+compares nothing can no longer report a pass.
 
 ## What is left
 
@@ -234,6 +253,12 @@ Also outstanding:
   argument is cheap row changes that is a bad trade, and it should be measured
   on the benchmark before anyone believes otherwise.
 
+- **More fault injection.** Seventeen faults have been injected and every one
+  was caught in simulation; the table above records which layer caught each.
+  Three of them found real gaps in the board tests, so the technique keeps
+  earning its time. What has not been probed: the refresh postponement
+  accounting, the DQM read-enable path, reset behaviour part-way through a
+  transfer, and the Avalon waitrequest handshake under back-pressure.
 - **More device presets.** Two are supplied - the DE10-Lite's IS42S16320D-7 and
   the DE0-Nano's IS42S16160B-7 - because those are the parts whose timing has
   been checked against a datasheet and exercised through the benchmark and the
