@@ -107,7 +107,7 @@ table above applies; it is not a free substitution, and a design already at
 
 ## What each layer of verification actually catches
 
-Seventeen faults were injected into the controller one at a time, rebuilt, and
+Twenty-two faults were injected into the controller one at a time, rebuilt, and
 run through both the simulation regression and a real DE0-Nano. This is the
 evidence for what the word "verified" means here, and in particular for what
 the board does and does not settle.
@@ -131,8 +131,23 @@ the board does and does not settle.
 | Look-ahead ACTIVATEs the head's bank, not the next | 8 fail | **violation** | passes |
 | Power-up wait skipped | 7 fail | **violation** | passes |
 | The eight initialisation refreshes skipped | 18 fail | - | passes |
+| Refresh postponement never forced | 13 fail | - | **fails** 6 |
+| Issuing a refresh does not clear the debt | 13 fail | - | **fails** all 8 |
+| DQM held high during reads | 14 fail | - | **fails** 1-7 |
+| waitrequest never asserted on a full buffer | 18 fail | - | **fails** 1-7 |
+| Reset leaves the command buffer's write pointer standing | **nothing** | - | passes |
 
-**Simulation caught every one of the seventeen. The board caught eleven.**
+**Of twenty-two faults, simulation caught twenty-one and the board fifteen.
+One was caught by nothing at all.**
+
+That one is worth the space. A reset that clears the command buffer's read
+pointer and leaves its write pointer standing - one line - passed all
+configurations in both simulators and all eight scenarios on a DE0-Nano. The
+buffer then looks not merely non-empty out of reset but FULL, so the
+controller stalls on waitrequest rather than serving the phantom entries, and
+no illegal command is ever issued for anything to notice. `t_reset_recovery`
+now loads the buffer, resets, and asserts the buffer is empty afterwards; with
+that check the fault fails immediately.
 
 The six it misses divide into two kinds, and neither is a defect in the board
 tests. Four are pure timing or protocol violations - tRAS, tWR, tRP, tRC, an
@@ -253,17 +268,22 @@ Also outstanding:
   argument is cheap row changes that is a bad trade, and it should be measured
   on the benchmark before anyone believes otherwise.
 
-- **More fault injection.** Seventeen faults have been injected and every one
-  was caught in simulation; the table above records which layer caught each.
-  Three of them found real gaps in the board tests, so the technique keeps
-  earning its time. What has not been probed: the refresh postponement
-  accounting, the DQM read-enable path, reset behaviour part-way through a
-  transfer, and the Avalon waitrequest handshake under back-pressure.
-- **More device presets.** Two are supplied - the DE10-Lite's IS42S16320D-7 and
-  the DE0-Nano's IS42S16160B-7 - because those are the parts whose timing has
-  been checked against a datasheet and exercised through the benchmark and the
-  testbench. Adding one is a block of XML; inventing the numbers is the part
-  that would be wrong.
+- **More fault injection.** Twenty-two faults have been injected; the table
+  above records which layer caught each. Four found real gaps and were fixed:
+  three in the board scenarios, and one - a reset that leaves the command
+  buffer's write pointer standing - that no layer caught at all until
+  `t_reset_recovery` was taught to check it.
+
+  What has not been probed: the mode register's write-burst and
+  operating-mode fields, CKE and self-refresh entry, the address decode under
+  `ADDR_MAP=1`, and the read-data path's behaviour when a master leaves
+  `az_rd_n` asserted across a refresh.
+- **More device presets.** Three are supplied: the DE10-Lite's IS42S16320D-7,
+  the DE0-Nano's IS42S16160B-7, and Micron's MT48LC4M16A2-75, which is on
+  neither board and is there because it is the only one with a different row
+  count. Adding another is a block of XML; inventing the numbers is the part
+  that would be wrong, so only parts whose timings have been read off a
+  datasheet and then run through the benchmark and the testbench are shipped.
 
 ## Using it in Platform Designer
 
@@ -368,9 +388,9 @@ altera_avalon_mm_sdram_controller/
 
 | Flow | Covers | Result |
 |---|---|---|
-| [`simulation/verilator/run_sim.sh`](simulation/verilator/run_sim.sh) | Lint of RTL, checker and model; timing-checker self-test; testbench across 13 configurations including three clock rates and both supplied parts; lint in 4 geometries; Quartus Analysis & Synthesis | 22 checks, 2158 testbench assertions |
-| [`tb/`](tb) | 166 checks per configuration, on the command stream as well as the data | Passing |
-| [`simulation/questa/run_sim.tcl`](simulation/questa/run_sim.tcl) | The same 13 configurations, plus code coverage and assertion non-vacuity | 22 assertion instances, **none vacuous** |
+| [`simulation/verilator/run_sim.sh`](simulation/verilator/run_sim.sh) | Lint of RTL, checker and model; timing-checker self-test; testbench across 14 configurations including three clock rates and all three supplied parts; lint in 4 geometries; Quartus Analysis & Synthesis | 23 checks, 167 checks per configuration |
+| [`tb/`](tb) | 167 checks per configuration, on the command stream as well as the data | Passing |
+| [`simulation/questa/run_sim.tcl`](simulation/questa/run_sim.tcl) | The same 14 configurations, plus code coverage and assertion non-vacuity | 22 assertion instances, **none vacuous** |
 | [`benchmark/`](benchmark/README.md) | Throughput against the core being replaced | Passing |
 | [`example/de10_lite_rtl`](example/de10_lite_rtl/README.md) | DE10-Lite board demonstration, 9 phases | 61 checks in simulation, **8/8 scenarios on the board** |
 | [`example/de0_nano_rtl`](example/de0_nano_rtl/README.md) | DE0-Nano board demonstration, same nine phases at the other part's geometry | 61 checks in simulation, **8/8 scenarios on the board** |

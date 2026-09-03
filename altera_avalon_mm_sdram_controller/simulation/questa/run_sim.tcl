@@ -71,6 +71,24 @@ proc part_args {part} {
             -G/avalon_mm_sdram_controller_tb/T_MRD_PS=15000 \
             -G/avalon_mm_sdram_controller_tb/T_RFC_PS=67500]
     }
+    if {$part == 2} {
+        # Micron MT48LC4M16A2-75: 12 row bits and - the reason it is here -
+        # 4,096 rows rather than 8,192, so tREFI is 15.625 us rather than
+        # 7.8125. Both ISSI parts share the 8,192, so without this the refresh
+        # arithmetic is only ever exercised one way.
+        return [list \
+            -G/avalon_mm_sdram_controller_tb/ROW_BITS=12 \
+            -G/avalon_mm_sdram_controller_tb/SA_BITS=12 \
+            -G/avalon_mm_sdram_controller_tb/REF_ROWS=4096 \
+            -G/avalon_mm_sdram_controller_tb/T_RC_PS=66000 \
+            -G/avalon_mm_sdram_controller_tb/T_RAS_PS=44000 \
+            -G/avalon_mm_sdram_controller_tb/T_RP_PS=20000 \
+            -G/avalon_mm_sdram_controller_tb/T_RCD_PS=20000 \
+            -G/avalon_mm_sdram_controller_tb/T_RRD_PS=15000 \
+            -G/avalon_mm_sdram_controller_tb/T_WR_PS=15000 \
+            -G/avalon_mm_sdram_controller_tb/T_MRD_PS=20000 \
+            -G/avalon_mm_sdram_controller_tb/T_RFC_PS=66000]
+    }
     return [list]
 }
 
@@ -112,14 +130,15 @@ run_one 3 1  8  0  50000 10 0 c10.ucdb
 run_one 2 0  8  0  50000 10 0 c11.ucdb
 run_one 3 1  8  0 100000 11 0 c12.ucdb
 run_one 3 1  8  0 100000  9 1 c13.ucdb
+run_one 3 1  8  0 100000  8 2 c14.ucdb
 
 vcover merge coverage.ucdb \
     c01.ucdb c02.ucdb c03.ucdb c04.ucdb c05.ucdb c06.ucdb c07.ucdb \
-    c08.ucdb c09.ucdb c10.ucdb c11.ucdb c12.ucdb c13.ucdb
+    c08.ucdb c09.ucdb c10.ucdb c11.ucdb c12.ucdb c13.ucdb c14.ucdb
 vcover report -details -output coverage_report.txt coverage.ucdb
 
 # ---- pass/fail, decided from the transcript rather than from exit codes -----
-# A simulator that ran thirteen configurations and printed twelve "all tests passed"
+# A simulator that ran fourteen configurations and printed thirteen "all tests passed"
 # has failed one of them, and will still exit 0.
 proc run_passed {} {
     if {![file exists run.log]} { return 0 }
@@ -140,7 +159,7 @@ proc run_passed {} {
 }
 
 if {[run_passed]} {
-    puts "RESULT: PASSED - all thirteen configurations, no assertion failures,"
+    puts "RESULT: PASSED - all fourteen configurations, no assertion failures,"
     puts "                 no timing violations, no illegal device accesses"
 } else {
     puts "RESULT: FAILED - see run.log"

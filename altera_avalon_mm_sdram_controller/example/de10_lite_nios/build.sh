@@ -18,6 +18,20 @@
 # supports MAX 10 - quartus/common/devkits/max10_de10_lite and the MAX 10
 # ALTPLL libraries are both present. It is only the CPU component that is
 # missing.
+#
+# EDITING THE CONTROLLER? RUN `qsys` (or the full build), NOT JUST `fpga`.
+#
+# qsys-generate COPIES rtl/avalon_mm_sdram_controller.sv into
+# qsys/<system>/synthesis/submodules/. Everything downstream - Quartus AND the
+# board-level simulation - compiles that copy, not the file you edited. So
+# `./build.sh fpga` after a change to the controller silently builds the
+# PREVIOUS controller, and a stale copy left behind by an interrupted build
+# keeps being simulated until someone regenerates.
+#
+# Both failure modes have happened here: a fault-injection run that appeared to
+# prove the design immune to a fault never present in the bitstream, and a
+# board-level testbench that failed four scenarios against a controller the
+# working tree no longer contained.
 # =============================================================================
 set -euo pipefail
 

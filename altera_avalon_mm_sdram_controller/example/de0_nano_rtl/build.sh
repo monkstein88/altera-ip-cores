@@ -11,6 +11,20 @@
 # Quartus 18.1 Standard is what this was built and verified with. There is no
 # CPU here, so a newer Quartus Standard that still supports Cyclone IV E
 # should also work - but the numbers in README.md come from 18.1.
+#
+# EDITING THE CONTROLLER? RUN `qsys` (or the full build), NOT JUST `fpga`.
+#
+# qsys-generate COPIES rtl/avalon_mm_sdram_controller.sv into
+# qsys/<system>/synthesis/submodules/. Everything downstream - Quartus AND the
+# board-level simulation - compiles that copy, not the file you edited. So
+# `./build.sh fpga` after a change to the controller silently builds the
+# PREVIOUS controller, and a stale copy left behind by an interrupted build
+# keeps being simulated until someone regenerates.
+#
+# Both failure modes have happened here: a fault-injection run that appeared to
+# prove the design immune to a fault never present in the bitstream, and a
+# board-level testbench that failed four scenarios against a controller the
+# working tree no longer contained.
 # =============================================================================
 set -euo pipefail
 

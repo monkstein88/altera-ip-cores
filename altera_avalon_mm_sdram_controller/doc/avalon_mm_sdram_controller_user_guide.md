@@ -78,12 +78,20 @@ apply_preset sdram "ISSI IS42S16320D-7 - DE10-Lite 64 MByte"
 ```
 
 A preset carries the geometry, the timings and the refresh figures for one
-device, taken from its datasheet once. Two are supplied:
+device, taken from its datasheet once. Three are supplied:
 
-| Preset name | Part | Size | Banks x rows x cols x bits |
-|---|---|---|---|
-| `ISSI IS42S16320D-7 - DE10-Lite 64 MByte` | IS42S16320D-7 | 64 MB | 4 x 8192 x 1024 x 16 |
-| `ISSI IS42S16160B-7 - DE0-Nano 32 MByte` | IS42S16160B-7 | 32 MB | 4 x 8192 x 512 x 16 |
+| Preset name | Part | Size | Banks x rows x cols x bits | On a board here |
+|---|---|---|---|---|
+| `ISSI IS42S16320D-7 - DE10-Lite 64 MByte` | IS42S16320D-7 | 64 MB | 4 x 8192 x 1024 x 16 | yes |
+| `ISSI IS42S16160B-7 - DE0-Nano 32 MByte` | IS42S16160B-7 | 32 MB | 4 x 8192 x 512 x 16 | yes |
+| `Micron MT48LC4M16A2-75 - 8 MByte simulated only` | MT48LC4M16A2-75 | 8 MB | 4 x **4096** x 256 x 16 | no |
+
+The third is on neither board. It is supplied because it is the only one of
+the three with a different **row count**, and therefore a different refresh
+interval: 4,096 rows in 64 ms is a tREFI of 15.625 us against the ISSI parts'
+7.8125. Two presets that happen to share a row count cannot show whether the
+refresh arithmetic follows the part or a default - and when this one was added
+it turned out that in two places it did not.
 
 Only parts whose timing has been checked against a datasheet *and* exercised
 through `benchmark/` and the testbench are supplied; adding one is a block of
@@ -356,13 +364,13 @@ priority chain shared one cycle, and f_MAX was 83 MHz.
 
 | Flow | What it covers | Status |
 |---|---|---|
-| `simulation/verilator/run_sim.sh` | Lint of RTL, checker and model; timing-checker self-test; testbench across 13 configurations including three clock rates and both supplied parts; lint in 4 geometries; Quartus Analysis & Synthesis | **22 checks, 2158 testbench assertions, passing** |
-| `tb/avalon_mm_sdram_controller_tb.sv` | 166 checks per configuration, asserting on the command stream as well as the data | Passing |
+| `simulation/verilator/run_sim.sh` | Lint of RTL, checker and model; timing-checker self-test; testbench across 14 configurations including three clock rates and all three supplied parts; lint in 4 geometries; Quartus Analysis & Synthesis | **23 checks, passing** |
+| `tb/avalon_mm_sdram_controller_tb.sv` | 167 checks per configuration, asserting on the command stream as well as the data | Passing |
 | `tb/avalon_mm_sdram_controller_sva.sv` | Avalon protocol, command legality, DQ contention, row bookkeeping | Passing |
 | `tb/sdram_timing_check.sv` | tRC, tRAS, tRP, tRCD, tRRD, tWR, tMRD, tRFC, read-to-write turnaround, refresh interval | Passing, with a 23-check threshold self-test |
 | `benchmark/` | Throughput against the core being replaced | Passing |
 | `example/de10_lite_rtl` | Board-level demonstration, 9 phases | 61 checks passing in simulation |
-| `simulation/questa/run_sim.tcl` | Coverage and assertion non-vacuity, same 13 configurations | 22 assertion instances, **none vacuous**, 100% FSM state and transition |
+| `simulation/questa/run_sim.tcl` | Coverage and assertion non-vacuity, same 14 configurations | 22 assertion instances, **none vacuous**, 100% FSM state and transition |
 | Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met with 1.011 ns slack (DE0-Nano), 0.208 ns (DE10-Lite) |
 | Hardware | Retention, refresh and full-device marches on silicon | **Both boards: 8/8 RTL and 10/10 Nios II each** |
 

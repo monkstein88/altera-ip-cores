@@ -326,12 +326,21 @@ for nm in presets:
 
 # The benchmark's PART table, which mirrors the presets.
 def bench_part(idx, key):
-    """The bench testbench's value for PART==idx, e.g. COL_BITS or T_RC_PS."""
-    m = re.search(rf"localparam int\s+{key}\s*=\s*\(PART == 1\)\s*\?\s*"
-                  rf"([0-9_]+)\s*:\s*([0-9_]+);", BENCH_TB)
+    """The bench testbench's value for PART==idx, e.g. COL_BITS or T_RC_PS.
+
+    Parses a chain of any length - `(PART == 1) ? a : (PART == 2) ? b : c` -
+    rather than assuming exactly two parts, which is what it did until a third
+    was added and every comparison silently stopped resolving."""
+    m = re.search(rf"localparam int\s+{key}\s*=\s*(.+?);", BENCH_TB, re.S)
     if not m:
         return None
-    return int(m.group(1 if idx == 1 else 2).replace("_", ""))
+    expr = m.group(1)
+    arms = {int(n): int(v.replace("_", ""))
+            for n, v in re.findall(r"\(PART ==\s*(\d+)\)\s*\?\s*([0-9_]+)", expr)}
+    if idx in arms:
+        return arms[idx]
+    tail = re.findall(r":\s*([0-9_]+)\s*$", expr.strip())
+    return int(tail[0].replace("_", "")) if tail else None
 
 # Match presets to PART indices by the part number in their name.
 part_of = {}
@@ -340,18 +349,25 @@ for nm in presets:
         part_of[0] = nm
     elif "IS42S16160B" in nm:
         part_of[1] = nm
+    elif "MT48LC4M16A2" in nm:
+        part_of[2] = nm
 
-chk(set(part_of) == {0, 1},
-    f"the benchmark knows two parts; the presets name {sorted(part_of)}")
+chk(set(part_of) == {0, 1, 2},
+    f"the benchmark knows three parts; the presets name {sorted(part_of)}")
 
 for idx, nm in sorted(part_of.items()):
     pv = presets[nm]
-    got = bench_part(idx, "COL_BITS")
-    chk(got is not None, "could not read COL_BITS from the benchmark's part table")
-    if got is not None:
-        chk(str(got) == pv.get("COL_BITS"),
-            f'"{nm}": preset COL_BITS is {pv.get("COL_BITS")}, '
-            f"the benchmark uses {got}")
+    # ROW_BITS as well as COL_BITS: it was the same for the first two parts
+    # and so was never compared, which is precisely how a third part with a
+    # different row count would have slipped through unchecked.
+    for geo in ("COL_BITS", "ROW_BITS", "SA_BITS"):
+        got = bench_part(idx, geo)
+        chk(got is not None,
+            f"could not read {geo} from the benchmark's part table")
+        if got is not None:
+            chk(str(got) == pv.get(geo),
+                f'"{nm}": preset {geo} is {pv.get(geo)}, '
+                f"the benchmark uses {got}")
     for ps_key, ns_key in (("T_RC_PS", "T_RC_NS"), ("T_RAS_PS", "T_RAS_NS"),
                            ("T_RP_PS", "T_RP_NS"), ("T_RCD_PS", "T_RCD_NS"),
                            ("T_RRD_PS", "T_RRD_NS"), ("T_WR_PS", "T_WR_NS"),

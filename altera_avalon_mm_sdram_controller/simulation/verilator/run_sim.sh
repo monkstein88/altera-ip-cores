@@ -168,6 +168,12 @@ SWEEP=(
     # the DE10-Lite part. A preset is only worth shipping if the configuration
     # it names has actually been simulated.
     "-GCOL_BITS=9 -GT_RC_PS=67500 -GT_RAS_PS=45000 -GT_RP_PS=20000 -GT_RCD_PS=20000 -GT_MRD_PS=15000 -GT_RFC_PS=67500"
+    # The Micron MT48LC4M16A2-75 preset: 12 row bits, 8 column bits, and - the
+    # point of it - 4,096 rows rather than 8,192, so tREFI is 15.625 us rather
+    # than 7.8125. Both parts with presets before it had 8,192 rows, so the
+    # refresh interval was only ever derived one way and a whole class of
+    # arithmetic went unexercised.
+    "-GROW_BITS=12 -GCOL_BITS=8 -GSA_BITS=12 -GREF_ROWS=4096 -GT_RC_PS=66000 -GT_RAS_PS=44000 -GT_RP_PS=20000 -GT_RCD_PS=20000 -GT_RRD_PS=15000 -GT_WR_PS=15000 -GT_MRD_PS=20000 -GT_RFC_PS=66000"
 )
 for cfg in "${SWEEP[@]}"; do
     label="${cfg:-defaults}"

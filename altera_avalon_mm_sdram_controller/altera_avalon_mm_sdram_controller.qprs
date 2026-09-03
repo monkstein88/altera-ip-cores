@@ -121,5 +121,48 @@
       <parameter name="RD_EXTRA_LAT"  value="0" />
     </preset>
 
+    <!-- A part on no board here. Its numbers come from the Micron datasheet
+         (64Mb: x4, x8, x16 SDRAM, rev. H, 12/04), table AC CHARACTERISTICS,
+         -75 column, and it has never been exercised on silicon.
+
+         It is supplied because it is the only geometry of the three that
+         differs in ROW count and refresh period: 4,096 rows in 64 ms rather
+         than 8,192, so tREFI is 15.625 us rather than 7.8125. Two presets
+         that happen to share a row count cannot show whether the refresh
+         accounting follows the part or the default. -->
+    <preset
+       name="Micron MT48LC4M16A2-75 - 8 MByte simulated only"
+       kind="altera_avalon_mm_sdram_controller"
+       version="all"
+       description="Micron MT48LC4M16A2-75. 4M x 16, 4 banks x 4096 rows x 256 columns, CAS 3. Datasheet-derived and simulated only - this part is on neither board here. The 4096-row refresh gives a 15.625 us tREFI, twice the interval of the two ISSI parts.">
+      <parameter name="DATA_BITS"     value="16" />
+      <parameter name="ROW_BITS"      value="12" />
+      <parameter name="COL_BITS"      value="8" />
+      <parameter name="BANK_BITS"     value="2" />
+      <parameter name="SA_BITS"       value="12" />
+
+      <parameter name="T_RC_NS"       value="66.0" />
+      <parameter name="T_RAS_NS"      value="44.0" />
+      <parameter name="T_RP_NS"       value="20.0" />
+      <parameter name="T_RCD_NS"      value="20.0" />
+      <parameter name="T_RRD_NS"      value="15.0" />
+      <parameter name="T_WR_NS"       value="15.0" />
+      <parameter name="T_MRD_NS"      value="20.0" />
+      <parameter name="T_RFC_NS"      value="66.0" />
+      <parameter name="CAS_LAT"       value="3" />
+
+      <parameter name="T_INIT_US"     value="100" />
+      <parameter name="INIT_REFS"     value="8" />
+
+      <parameter name="REF_ROWS"      value="4096" />
+      <parameter name="REF_PERIOD_MS" value="64" />
+      <parameter name="REF_MAX_PEND"  value="8" />
+
+      <parameter name="ADDR_MAP"      value="0" />
+      <parameter name="FIFO_DEPTH"    value="8" />
+      <parameter name="LOOKAHEAD"     value="1" />
+      <parameter name="RD_EXTRA_LAT"  value="0" />
+    </preset>
+
   </presets>
 </ip>

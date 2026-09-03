@@ -41,6 +41,13 @@ module avalon_mm_sdram_controller_tb #(
     // expectation below silently assumed 100 MHz - and the cycle counts the
     // controller derives from nanoseconds are exactly what changes with it.
     parameter int CLK_KHZ    = 100_000,
+    // Refresh geometry, swept as well. Both parts this project ships presets
+    // for have 8,192 rows, so leaving these fixed meant the refresh interval
+    // was only ever derived one way - and the benchmark's checker, which was
+    // never given them at all, silently held a 4,096-row part to twice the
+    // rate it needs.
+    parameter int REF_ROWS      = 8192,
+    parameter int REF_PERIOD_MS = 64,
     // Geometry. Swept so that the address encoding is EXERCISED at more than
     // one shape, not merely elaborated: at COL_BITS 11 the column's top bit
     // has to step over A10, the auto-precharge flag, and that branch of
@@ -78,8 +85,16 @@ module avalon_mm_sdram_controller_tb #(
 
     // The refresh interval in cycles, derived here rather than quoted, so the
     // expectations below follow the clock. Same floor as the RTL: tREFI is a
-    // MAXIMUM, so it rounds down. 64 ms / 8192 rows = 7.8125 us.
-    localparam longint unsigned REFI_PS = (64 * 64'd1_000_000_000) / 8192;
+    // MAXIMUM, so it rounds down.
+    //
+    // It follows REF_ROWS and REF_PERIOD_MS as well as the clock. The 64 and
+    // the 8192 used to be written in, on the reasoning that "64 ms / 8192 rows
+    // = 7.8125 us" is what both parts with presets do - and it is, which is
+    // why nothing caught it. Point the sweep at a 4,096-row part and the
+    // scenario demands refreshes at twice the rate the controller owes,
+    // reporting a fault the design has not committed.
+    localparam longint unsigned REFI_PS =
+        (longint'(REF_PERIOD_MS) * 64'd1_000_000_000) / longint'(REF_ROWS);
     localparam int CYC_REFI = int'((REFI_PS * longint'(CLK_KHZ)) / 64'd1_000_000_000);
 
     logic clk = 0, reset_n = 0;
@@ -104,6 +119,7 @@ module avalon_mm_sdram_controller_tb #(
         .DATA_BITS(DATA_BITS), .ROW_BITS(ROW_BITS), .COL_BITS(COL_BITS),
         .BANK_BITS(BANK_BITS), .SA_BITS(SA_BITS), .CAS_LAT(CAS_LAT),
         .FIFO_DEPTH(FIFO_DEPTH), .CLK_KHZ(CLK_KHZ), .T_INIT_US(2),
+        .REF_ROWS(REF_ROWS), .REF_PERIOD_MS(REF_PERIOD_MS),
         .LOOKAHEAD(LOOKAHEAD), .ADDR_MAP(ADDR_MAP),
         .T_RC_PS(T_RC_PS), .T_RAS_PS(T_RAS_PS), .T_RP_PS(T_RP_PS),
         .T_RCD_PS(T_RCD_PS), .T_RRD_PS(T_RRD_PS), .T_WR_PS(T_WR_PS),
@@ -135,7 +151,8 @@ module avalon_mm_sdram_controller_tb #(
         .T_RC_NS (real'(T_RC_PS ) / 1000.0), .T_RAS_NS(real'(T_RAS_PS) / 1000.0),
         .T_RP_NS (real'(T_RP_PS ) / 1000.0), .T_RCD_NS(real'(T_RCD_PS) / 1000.0),
         .T_RRD_NS(real'(T_RRD_PS) / 1000.0), .T_WR_NS (real'(T_WR_PS ) / 1000.0),
-        .T_MRD_NS(real'(T_MRD_PS) / 1000.0), .T_RFC_NS(real'(T_RFC_PS) / 1000.0)
+        .T_MRD_NS(real'(T_MRD_PS) / 1000.0), .T_RFC_NS(real'(T_RFC_PS) / 1000.0),
+        .REF_ROWS(REF_ROWS), .REF_PERIOD_MS(real'(REF_PERIOD_MS))
     ) tchk (
         .clk(clk), .reset_n(reset_n), .cke(zs_cke), .cs_n(zs_cs_n),
         .ras_n(zs_ras_n), .cas_n(zs_cas_n), .we_n(zs_we_n),
@@ -715,10 +732,17 @@ module avalon_mm_sdram_controller_tb #(
             // version of this test asserted the opposite and was simply wrong
             // about the design. What must hold is that postponement is bounded:
             // once REF_MAX_PEND have piled up, refresh is forced through even
-            // though the bus is still busy. At 100 MHz tREFI is 781 cycles, so
-            // 8 of them is about 6250 cycles of solid traffic.
-            for (i = 0; i < 9000; i++) avm_write(mk_addr(i % BANKS, 500, i % 512),
-                                                 16'hA5A5);
+            // though the bus is still busy. Eight of them is 8 x tREFI cycles
+            // of solid traffic, and one access is about one cycle, so the
+            // burst has to be longer than that with margin.
+            //
+            // It was written as a flat 9000, which is 8 x 781 plus margin and
+            // therefore correct only for a part with 8,192 rows. On a
+            // 4,096-row part tREFI doubles, the backlog needs twice as long to
+            // build, and the test failed the controller for not doing
+            // something it was not yet due to do.
+            for (i = 0; i < 12 * CYC_REFI; i++)
+                avm_write(mk_addr(i % BANKS, 500, i % 512), 16'hA5A5);
             refs = n_ref;
             chk(refs >= 1, $sformatf("forced refreshes during 9000 loaded accesses: got %0d, expected >= 1", refs));
 
@@ -797,8 +821,21 @@ module avalon_mm_sdram_controller_tb #(
                 while (za_waitrequest) tick();
             end
 
-            // Whatever it was interrupted doing, it must initialise properly
-            // and serve traffic afterwards.
+            // Reset must EMPTY THE COMMAND BUFFER, not merely re-initialise
+            // the device.
+            //
+            // Nothing tested that. Injecting a reset that clears the read
+            // pointer and leaves the write pointer standing - one line of the
+            // reset branch - passed all 23 configurations here AND all eight
+            // scenarios on a DE0-Nano, the only fault out of twenty-two tried
+            // that no layer caught. The buffer then looks non-empty out of
+            // reset and the scheduler serves entries no master ever issued.
+            //
+            // Building a backlog takes accesses the controller cannot retire
+            // at one per cycle, so these deliberately miss the row every time.
+            quiesce();
+            for (int k = 0; k < FIFO_DEPTH; k++)
+                avm_write(mk_addr(0, 100 + k, 0), 16'hBEEF);
             zero_counts();
             reset_n = 1'b0; avm_idle(); settle(4);
             reset_n = 1'b1;
@@ -806,6 +843,15 @@ module avalon_mm_sdram_controller_tb #(
             while (za_waitrequest) tick();
             chk_eq(n_pre_all, 1, "PRECHARGE ALL after the final reset");
             chk_eq(n_mrs,     1, "LOAD MODE REGISTER after the final reset");
+            chk_eq(n_rd + n_wr, 0,
+                   "column commands after a reset with a loaded command buffer");
+            // And the property directly, because the symptom above turned out
+            // not to be reliably observable from the port: a stale write
+            // pointer can leave the buffer looking FULL rather than merely
+            // non-empty, in which case the controller stalls on waitrequest
+            // instead of serving anything, and no column command is ever
+            // issued to notice.
+            chk(dut.f_empty, "the command buffer is empty after reset");
             avm_write(a, pat(a));
             avm_read(a, d);
             chk(d == pat(a),

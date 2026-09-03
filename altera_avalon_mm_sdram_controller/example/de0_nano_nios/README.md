@@ -139,7 +139,7 @@ the old test was 20x too short to see.
 What this does *not* do is police the refresh **interval**. No retention test
 can: an interval that is merely wrong rather than absent leaves every cell
 comfortably inside its retention time. That is the job of the `tREFI` check in
-the core testbench, which fails all thirteen configurations immediately.
+the core testbench, which fails every configuration immediately.
 
 ## Two things the system does on purpose
 

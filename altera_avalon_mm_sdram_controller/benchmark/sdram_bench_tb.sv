@@ -54,24 +54,39 @@ module sdram_bench_tb #(
     localparam int  N_OPS    = 4096;             // per pattern
 
     // ---- the part ----------------------------------------------------------
-    localparam int  ROW_BITS  = 13;              // both parts
-    localparam int  BANK_BITS = 2;               // both parts
-    localparam int  SA_BITS   = 13;              // both parts
-    localparam int  COL_BITS  = (PART == 1) ? 9 : 10;
+    //   PART 0  ISSI IS42S16320D-7      DE10-Lite, 64 MByte, 10-bit column
+    //   PART 1  ISSI IS42S16160B-7      DE0-Nano,  32 MByte,  9-bit column
+    //   PART 2  Micron MT48LC4M16A2-75  no board,   8 MByte,  8-bit column
+    //
+    // Part 2 is on no board here. It is in the table because it is the only
+    // one of the three with a different ROW count and a different refresh
+    // period - 4,096 rows in 64 ms rather than 8,192 - so it is what stops
+    // the geometry handling from being fitted to two parts that happen to
+    // share it. Its figures come from the Micron datasheet, not from a board.
+    localparam int  ROW_BITS  = (PART == 2) ? 12 : 13;
+    localparam int  BANK_BITS = 2;               // all three parts
+    localparam int  SA_BITS   = (PART == 2) ? 12 : 13;
+    localparam int  COL_BITS  = (PART == 1) ? 9 : (PART == 2) ? 8 : 10;
     localparam int  ADDR_W    = ROW_BITS + COL_BITS + BANK_BITS;
 
-    // Timings, picoseconds, from each part's datasheet at CAS 3.
-    localparam int  T_RC_PS   = (PART == 1) ? 67_500 : 60_000;
-    localparam int  T_RAS_PS  = (PART == 1) ? 45_000 : 37_000;
-    localparam int  T_RP_PS   = (PART == 1) ? 20_000 : 15_000;
-    localparam int  T_RCD_PS  = (PART == 1) ? 20_000 : 15_000;
-    localparam int  T_RRD_PS  = (PART == 1) ? 14_000 : 14_000;
-    localparam int  T_WR_PS   = (PART == 1) ? 14_000 : 14_000;
-    localparam int  T_MRD_PS  = (PART == 1) ? 15_000 : 14_000;
-    localparam int  T_RFC_PS  = (PART == 1) ? 67_500 : 60_000;
+    // Rows to refresh, and the period they must all be refreshed within.
+    localparam int  REF_ROWS_P      = (PART == 2) ? 4096 : 8192;
+    localparam int  REF_PERIOD_MS_P = 64;        // all three parts
 
-    localparam string PART_NAME = (PART == 1) ? "ISSI IS42S16160B-7  DE0-Nano 32 MByte"
-                                              : "ISSI IS42S16320D-7  DE10-Lite 64 MByte";
+    // Timings, picoseconds, from each part's datasheet at CAS 3.
+    localparam int  T_RC_PS   = (PART == 1) ? 67_500 : (PART == 2) ? 66_000 : 60_000;
+    localparam int  T_RAS_PS  = (PART == 1) ? 45_000 : (PART == 2) ? 44_000 : 37_000;
+    localparam int  T_RP_PS   = (PART == 1) ? 20_000 : (PART == 2) ? 20_000 : 15_000;
+    localparam int  T_RCD_PS  = (PART == 1) ? 20_000 : (PART == 2) ? 20_000 : 15_000;
+    localparam int  T_RRD_PS  = (PART == 1) ? 14_000 : (PART == 2) ? 15_000 : 14_000;
+    localparam int  T_WR_PS   = (PART == 1) ? 14_000 : (PART == 2) ? 15_000 : 14_000;
+    localparam int  T_MRD_PS  = (PART == 1) ? 15_000 : (PART == 2) ? 20_000 : 14_000;
+    localparam int  T_RFC_PS  = (PART == 1) ? 67_500 : (PART == 2) ? 66_000 : 60_000;
+
+    localparam string PART_NAME =
+        (PART == 1) ? "ISSI IS42S16160B-7  DE0-Nano 32 MByte" :
+        (PART == 2) ? "Micron MT48LC4M16A2-75  no board, 8 MByte" :
+                      "ISSI IS42S16320D-7  DE10-Lite 64 MByte";
 
     // Theoretical ceiling: one 16-bit word per clock.
     localparam real PEAK_MBPS = (real'(CLK_KHZ) * 1000.0 * real'(DATA_W) / 8.0)
@@ -151,6 +166,11 @@ module sdram_bench_tb #(
     defparam dut.T_WR_PS   = T_WR_PS;
     defparam dut.T_MRD_PS  = T_MRD_PS;
     defparam dut.T_RFC_PS  = T_RFC_PS;
+    // A 4,096-row part must be refreshed half as often as an 8,192-row one.
+    // Left at the default this was merely conservative rather than wrong,
+    // which is exactly the kind of thing that never gets noticed.
+    defparam dut.REF_ROWS      = REF_ROWS_P;
+    defparam dut.REF_PERIOD_MS = REF_PERIOD_MS_P;
 `endif
 
     sdram_device_model #(
@@ -167,7 +187,13 @@ module sdram_bench_tb #(
         .T_RC_NS (real'(T_RC_PS ) / 1000.0), .T_RAS_NS(real'(T_RAS_PS) / 1000.0),
         .T_RP_NS (real'(T_RP_PS ) / 1000.0), .T_RCD_NS(real'(T_RCD_PS) / 1000.0),
         .T_RRD_NS(real'(T_RRD_PS) / 1000.0), .T_WR_NS (real'(T_WR_PS ) / 1000.0),
-        .T_MRD_NS(real'(T_MRD_PS) / 1000.0), .T_RFC_NS(real'(T_RFC_PS) / 1000.0)
+        .T_MRD_NS(real'(T_MRD_PS) / 1000.0), .T_RFC_NS(real'(T_RFC_PS) / 1000.0),
+        // The refresh geometry has to follow the part too. Left at the
+        // checker's 8192-row default, a 4,096-row part is held to twice the
+        // refresh rate it actually needs and the checker reports a violation
+        // the controller did not commit. Both ISSI parts here have 8,192
+        // rows, so nothing exposed that until a part with 4,096 was added.
+        .REF_ROWS(REF_ROWS_P), .REF_PERIOD_MS(real'(REF_PERIOD_MS_P))
     ) tchk (
         .clk(clk), .reset_n(reset_n), .cke(zs_cke), .cs_n(zs_cs_n),
         .ras_n(zs_ras_n), .cas_n(zs_cas_n), .we_n(zs_we_n),
