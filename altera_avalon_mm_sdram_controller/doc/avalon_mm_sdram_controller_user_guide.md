@@ -364,7 +364,7 @@ priority chain shared one cycle, and f_MAX was 83 MHz.
 | `example/de10_lite_rtl` | Board-level demonstration, 9 phases | 61 checks passing in simulation |
 | `simulation/questa/run_sim.tcl` | Coverage and assertion non-vacuity, same 13 configurations | 22 assertion instances, **none vacuous**, 100% FSM state and transition |
 | Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met with 1.011 ns slack (DE0-Nano), 0.208 ns (DE10-Lite) |
-| Hardware | Retention and refresh on silicon | **Not run — no board** |
+| Hardware | Retention, refresh and full-device marches on silicon | **Both boards: 8/8 RTL and 10/10 Nios II each** |
 
 ## 8.1 The testbench checks the mechanism, not only the data
 
@@ -393,9 +393,8 @@ meant to catch it:
 
 | Limitation | Detail |
 |---|---|
-| **Never run on hardware** | The design synthesises, fits, meets timing and produces a bitstream, but has not been programmed into a part. Retention and refresh on silicon are unproven |
-| **No bursting** | The slave is non-bursting; every transfer is one word. Bursts would amortise the read/write turnaround and are the main remaining performance work |
-| **No reordering** | Transfers are served in order. A reorder buffer grouping same-direction accesses is the other half of that work |
+| **No bursting** | The slave is non-bursting; every transfer is one word. Bursts would amortise the read/write turnaround, and would also end the drop-in guarantee - see the decision recorded in the [README](../README.md#what-is-left) |
+| **No reordering** | Transfers are served in order. A write buffer grouping same-direction accesses would collect the same 1.7-2x on alternating traffic without changing the interface; it was costed and deliberately not built, because no workload measured on either board reaches the turnaround |
 | **One chip select** | Multi-device configurations are not supported |
 | **Single clock domain** | No clock-crossing on the slave port |
 | **Two device presets** | The DE10-Lite's IS42S16320D-7 and the DE0-Nano's IS42S16160B-7. Others need datasheet figures |

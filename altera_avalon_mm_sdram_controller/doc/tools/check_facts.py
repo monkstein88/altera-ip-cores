@@ -287,9 +287,14 @@ for doc_name, doc in (("user guide", UG), ("core README", RM)):
     # understated claim is as wrong as an overstated one. "Never been
     # programmed into a part" was true of the whole project, then true only of
     # the DE10-Lite, and is now true of neither. Nothing may say it.
-    for m in re.finditer(r"[^.\n]*\b(never been programmed|has never run|"
-                         r"never been on a board|not yet run on hardware)\b[^.\n]*",
-                         doc, re.I):
+    # "has NOT been programmed" is a different spelling from "has NEVER been
+    # programmed", and the first one sat in the user guide's limitations table
+    # for a whole commit after both boards had run, because only the second was
+    # listed here. Match the negation, not one phrasing of it.
+    for m in re.finditer(r"[^.\n]*\b(?:never|not)\s+(?:been\s+)?"
+                         r"(?:programmed|run)\b[^.\n]*|"
+                         r"[^.\n]*\b(?:never been on a board|"
+                         r"not yet run on hardware)\b[^.\n]*", doc, re.I):
         sent = m.group(0)
         chk(False,
             f"the {doc_name} says a design has never been on a board; both "

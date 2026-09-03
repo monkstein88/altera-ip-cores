@@ -219,6 +219,19 @@ module sdram_bench_tb #(
         $display(" SDRAM controller benchmark   %0d ops/pattern   %0d MHz   %0d-bit bus",
                  N_OPS, CLK_KHZ/1000, DATA_W);
         $display(" part: %s", PART_NAME);
+        // Name the DUT in the RESULTS BANNER, not only in run_bench.sh's
+        // startup line. The two cores produce tables of the same shape, and a
+        // table read without its surrounding output is unattributable - which
+        // is how Intel's 21.9 MB/s got mistaken for this core's 78.9 while
+        // checking that a change had not altered any cycle count. The default
+        // DUT is Intel's, so the bare `./run_bench.sh` measures the core being
+        // replaced, exactly as benchmark/README.md says and exactly contrary
+        // to what someone in a hurry assumes.
+`ifdef DUT_PART
+        $display(" DUT : %s  (this project's core)", `"`DUT_MODULE`");
+`else
+        $display(" DUT : %s  (the core being replaced)", `"`DUT_MODULE`");
+`endif
         $display(" theoretical peak: %.1f MB/s", PEAK_MBPS);
         $display("=========================================================================");
         $display("  pattern            cycles     bytes      MB/s   of peak   integrity");

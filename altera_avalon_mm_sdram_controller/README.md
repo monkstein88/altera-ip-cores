@@ -140,12 +140,55 @@ confirm the layer that was supposed to catch them did.
 
 ## What is left
 
-`same-row rd/wr` at 78.9 MB/s is now limited by the device, not the scheduler:
-a length-1 read→write turnaround costs CAS+1 = 4 cycles, so a write/read pair
-takes five cycles and two accesses per five cycles is 80 MB/s. Going further
-needs **bursts** to amortise the turnaround over more words, or a **reorder
-buffer** to group same-direction accesses. Both are real work, and both should
-be measured on this same ruler before being believed.
+### The read/write turnaround: measured, costed, and deliberately not fixed
+
+`seq read/write` runs at 78.9 MB/s, 39% of the bus, and that is the device
+rather than the scheduler. A length-1 read→write turnaround costs CAS+1 = 4
+cycles: a read at cycle 0 lets a write go at 4, the next read at 5, the next
+write at 9. Two accesses per five cycles is 80 MB/s, and the benchmark
+measures 10,387 cycles for 4,096 operations — 2.54 cycles each. The model and
+the measurement agree to within a rounding error, so there is no mystery left
+in the number.
+
+Grouping same-direction accesses into runs of N would cost `(2N+4)/2N` cycles
+per operation: about 133 MB/s at N=4 and 160 at N=8, so the prize is roughly
+**1.7-2x on alternating traffic and nothing at all elsewhere** — the
+sequential patterns already run at 97-99% of the bus.
+
+Two designs would collect it, and both were costed rather than attempted:
+
+* **Bursts** amortise the turnaround over a whole SDRAM burst, and a CPU's
+  cache-line fills would benefit with no software change. They also change the
+  Avalon slave, which ends the drop-in guarantee this core is built around, and
+  force burst length out of the mode register into the device model, the timing
+  checker, the assertions and the read-return path.
+* **A write buffer** keeps the interface identical and targets exactly the
+  measured defect. It needs an address CAM so a read never bypasses a pending
+  write to the same address — and that comparison lands in the scheduler loop,
+  which is what sets f_MAX here. It also turns the command buffer from a
+  strict FIFO into a window with per-entry validity, which is the most heavily
+  verified part of the design.
+
+**The decision is to do neither.** Nothing measured on either board - the
+DE0-Nano or the DE10-Lite - reaches this limit:
+
+| Workload | Measured | Turnaround-limited |
+|---|---|---|
+| RTL demo, row hits | 199.8 MB/s | no - 99.9% of the bus |
+| RTL demo, four-bank walk | 194.7 MB/s | no |
+| Full 64 MByte march | 196.5 MB/s | no |
+| Nios II full march | 18 MB/s | no - CPU-bound, four times below the floor |
+| Benchmark, alternating read/write | 78.9 MB/s | **yes** |
+
+The pattern that exposes it is a synthetic alternation that neither master
+here generates: the hardware sequencer walks runs of one direction, and the
+Nios II is CPU-bound well below the turnaround floor. Spending the f_MAX
+margin and the accumulated verification evidence on a bottleneck no measured
+workload reaches is a bad trade.
+
+**What would change the decision:** a master that genuinely alternates -
+read-modify-write traffic, a video scaler, a packet buffer. Then the write
+buffer earns its risk, and the benchmark above is the ruler to prove it on.
 
 Also outstanding:
 
@@ -313,7 +356,7 @@ altera_avalon_mm_sdram_controller/
 | Hardware, DE0-Nano | Every scenario on a real board | **8/8 passing on silicon** |
 | Hardware, DE10-Lite | The same, on the other part: 10-bit column, 64 MByte | **8/8 RTL and 10/10 Nios II on silicon** |
 | Hardware, DE0-Nano, Nios II | Byte enables, 32-bit width adaptation, from a CPU | **10/10 passing on silicon** |
-| Hardware, DE10-Lite | — | **Not run — no board here** |
+| Hardware, DE10-Lite | Every scenario on the other part: 10-bit column, 64 MByte | **8/8 RTL and 10/10 Nios II on silicon** |
 
 Questa reports every one of the 22 assertion instances passing **non-vacuously**,
 which is the number that matters: an assertion that only ever passes because
