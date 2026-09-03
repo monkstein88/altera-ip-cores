@@ -35,12 +35,18 @@ bank is revisited at the row the other one just opened, which is the access
 per-bank tracking exists for and costs a row miss most of the time. The lower
 number is the test doing its job.
 
-Scenario 6 idles 250 ms and then re-reads 4,096 words. That is *not* proof
-that refresh works: with refresh disabled outright this scenario still passed
-on this board, because a cell at room temperature holds its charge for tens of
-seconds. What enforces the refresh interval is the `tREFI` check in the core
-testbench. See the [DE0-Nano Nios notes](../de0_nano_nios/README.md) for the
-measurement.
+Scenario 6 writes 8 MByte, touches nothing for 12 s, and reads it back. Those
+numbers are measured rather than chosen: at the 250 ms over 4,096 words it
+used to use, this scenario passed a part receiving **no refresh at all**. A
+cell at room temperature holds its charge for tens of seconds, so the old test
+was some 20x too short to notice. Rebuilt with refresh disabled, the current
+one fails - and fails alone, every other scenario still passing. The
+[DE0-Nano Nios notes](../de0_nano_nios/README.md) carry the sweep the numbers
+came from.
+
+It still does not police the refresh *interval*: no retention test can, since
+an interval that is merely wrong leaves every cell inside its retention time.
+That is the `tREFI` check in the core testbench.
 
 ## What it is, and what it is a copy of
 

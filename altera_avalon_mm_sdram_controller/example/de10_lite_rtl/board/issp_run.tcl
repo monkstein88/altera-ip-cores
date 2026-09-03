@@ -295,11 +295,11 @@ puts "  is what a row miss costs on this controller."
 # Refresh retention, on its own, because it is the one scenario whose result
 # depends on the controller doing something while nobody is asking it to.
 # ---------------------------------------------------------------------------
-puts "\n--- scenario 6 on its own: refresh retention ---"
+puts "\n--- scenario 6 on its own: refresh retention (12 s idle) ---"
 if {[run_scenario 6 400]} {
     set d [probe]
     if {[f_pass $d] == 1} {
-        puts "  PASS: 4096 words survived 250 ms of no access at all"
+        puts "  PASS: 8 MByte survived 12 s of no access at all"
     } else {
         puts [format "  FAIL: addr=0x%07X expected=0x%04X actual=0x%04X" \
               [f_faddr $d] [f_fexp $d] [f_fact $d]]

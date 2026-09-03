@@ -387,18 +387,39 @@ static void test_four_banks(void)
 /* ===========================================================================
  * Test 8 - refresh retention.
  *
- * Write a block, sit idle far longer than the refresh interval, then read it
- * back. tREFI is 7.8125 us and the whole device must be refreshed every 64 ms,
- * so a second of idling is more than 120 full refresh cycles. If auto-refresh
- * were not happening, the data would be long gone.
+ * Write a block, sit idle, read it back. This is the one test here that a
+ * simulation cannot do: no functional model forgets.
  *
- * This is the one test here that a simulation cannot do: no functional model
- * forgets. It is the reason to run this on hardware.
+ * "Far longer than the refresh interval" is NOT the sizing rule, though it is
+ * the one this test used to follow. tREFI is 7.8125 us and the device must be
+ * fully refreshed every 64 ms, so one second looks like an enormous margin -
+ * over 120 full refresh periods - and it caught nothing at all. The 64 ms
+ * figure is a worst-case guarantee across temperature and process, not a
+ * description of how long a cell on a desk actually holds. The sizing rule is
+ * the measurement below.
  * ========================================================================= */
 static void test_refresh(void)
 {
+    /* 4 M words = 8 MByte, idled for 12 s.
+     *
+     * This used to be 4096 words idled for 1 s, on the reasoning that 1 s is
+     * over 120 full refresh periods. Measured on this board with refresh
+     * disabled outright, that test still passed - as did 2 s, 5 s and 10 s.
+     * A DRAM cell at room temperature holds its charge for tens of seconds;
+     * the 64 ms in the datasheet is a worst-case guarantee across the full
+     * temperature and process range.
+     *
+     * First loss, with no refresh at all:
+     *
+     *     4096 words   (8 KByte)   20 s
+     *     4 M words    (8 MByte)    8 s
+     *
+     * More cells is a better lever than more time, because the retention
+     * distribution has a long tail. 8 MByte at 12 s has margin over the 8 s
+     * where loss first appeared, and the whole test still runs in under half
+     * a minute. */
     volatile uint16_t *p = SDRAM_BASE_C + 0x10000;
-    const uint32_t n = 4096;
+    const uint32_t n = 4194304u;
     uint32_t i;
     uint64_t t0;
     int ok = 1;
@@ -406,9 +427,9 @@ static void test_refresh(void)
     for (i = 0; i < n; i++) p[i] = patt(0x10000u + i);
     alt_dcache_flush_all();
 
-    printf("        idling ~1 s (over 120 full refresh periods)...\n");
+    printf("        idling 12 s over 8 MByte...\n");
     t0 = now_us();
-    while ((now_us() - t0) < 1000000ull) {
+    while ((now_us() - t0) < 12000000ull) {
         /* nothing: the controller must refresh on its own */
     }
 
@@ -421,7 +442,7 @@ static void test_refresh(void)
             break;
         }
     }
-    check("refresh retention: data survives a second of idle", ok);
+    check("refresh retention: 8 MByte survives 12 s of idle", ok);
 }
 
 /* ===========================================================================

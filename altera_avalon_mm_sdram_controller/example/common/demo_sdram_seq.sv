@@ -66,14 +66,36 @@ module demo_sdram_seq #(
     // IS42S16160B a 9-bit one, and the scenarios mean the same thing on both
     // only if these follow the part.
     parameter int COL_BITS     = 10,
-    // 250 ms at 100 MHz. Scenario 6 sits idle for this long, which is ~32000
-    // refresh intervals - if auto-refresh were not happening the data would
-    // be long gone.
-    parameter int unsigned REFRESH_IDLE_CYCLES = 32'd25_000_000,
-    // 15 s at 100 MHz. Generous on purpose: it is a wedge detector, not a
-    // performance limit. The full-memory march is the only scenario that
-    // takes a meaningful fraction of it.
-    parameter int unsigned WATCHDOG_CYCLES     = 32'd1_500_000_000,
+    // 12 s at 100 MHz, and it has to be seconds.
+    //
+    // This was 250 ms, on the reasoning that it is ~32000 refresh intervals
+    // and the data would "be long gone" without auto-refresh. That reasoning
+    // is wrong, and it was measured to be wrong: the controller was rebuilt
+    // with refresh disabled outright and this scenario still passed on a
+    // DE0-Nano. A DRAM cell at room temperature holds its charge for tens of
+    // seconds; the 64 ms in the datasheet is a worst-case guarantee across
+    // the full temperature and process range, not a description of a part
+    // sitting on a desk.
+    //
+    // Measured on that board with no refresh at all, first loss came at:
+    //
+    //     8 KByte checked   20 s
+    //     8 MByte checked    8 s
+    //
+    // More cells is a better lever than more time - the retention
+    // distribution has a long tail - so this pairs 12 s with a region of
+    // REFRESH_WORDS below rather than idling for 20.
+    parameter int unsigned REFRESH_IDLE_CYCLES = 32'd1_200_000_000,
+    // How many words scenario 6 leaves sitting. 4 M words is 8 MByte, the
+    // size that first showed loss at 8 s; a small region needs a much longer
+    // idle to catch the same fault. A testbench overrides this - in
+    // simulation the point is the sequencing, and no functional model
+    // forgets.
+    parameter int unsigned REFRESH_WORDS       = 32'd4_194_304,
+    // 30 s at 100 MHz. It is a wedge detector, not a performance limit, and
+    // it has to clear the retention idle above with room to spare - at 15 s
+    // it would have fired during the wait it is meant to be watching.
+    parameter int unsigned WATCHDOG_CYCLES     = 32'd3_000_000_000,
     // ~328 us at 100 MHz, covering the controller's 100 us power-up delay
     // plus its precharge / refresh / mode-register init before the first
     // access is offered.
@@ -334,14 +356,18 @@ module demo_sdram_seq #(
                 default: t_kind = PH_END;
               endcase
 
-        // 6 - refresh retention. Write a block, then touch nothing at all for
-        //     a quarter of a second, then read it back. The controller's
-        //     auto-refresh is the only thing keeping those cells alive across
-        //     the gap; without it the read-back is garbage.
+        // 6 - refresh retention. Write a block, touch nothing at all for
+        //     REFRESH_IDLE_CYCLES, then read it back. Auto-refresh is the only
+        //     thing keeping those cells alive across the gap. See the
+        //     parameter for why the gap is seconds and the block is megabytes:
+        //     at 250 ms over 8 KByte this scenario passed a part that was
+        //     receiving no refresh at all.
         4'd6: case (phase)
-                3'd0: begin t_kind = PH_WBLK; t_base = REFR_BASE; t_count = 32'd4096; end
+                3'd0: begin t_kind = PH_WBLK; t_base = REFR_BASE;
+                            t_count = REFRESH_WORDS; end
                 3'd1: begin t_kind = PH_WAIT; t_wait = REFRESH_IDLE_CYCLES; end
-                3'd2: begin t_kind = PH_RBLK; t_base = REFR_BASE; t_count = 32'd4096; end
+                3'd2: begin t_kind = PH_RBLK; t_base = REFR_BASE;
+                            t_count = REFRESH_WORDS; end
                 default: t_kind = PH_END;
               endcase
 

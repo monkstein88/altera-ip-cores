@@ -103,6 +103,39 @@ command buffer cost. It is worth it at and below 100 MHz, where the throughput
 table above applies; it is not a free substitution, and a design already at
 115 MHz with Intel's core cannot simply swap this one in.
 
+## What each layer of verification actually catches
+
+Faults were injected into the controller one at a time, rebuilt, and run
+through both the simulation regression and a real DE0-Nano. This is the
+evidence for what the word "verified" means here, and in particular for what
+the board does and does not settle.
+
+| Injected fault | Core simulation | Timing checker | DE0-Nano |
+|---|---|---|---|
+| Bank decode: bank bit taken from a row bit | 11 of 22 configs fail | - | **fails** 1, 4, 6, 7 |
+| CAS latency: read data captured a cycle early | 13 fail | - | **fails** 1-7 |
+| tRCD ignored: column command straight after ACTIVATE | 11 fail | **violation** | **fails** 1, 4, 7 |
+| tRAS/tWR ignored: PRECHARGE straight after ACTIVATE | 13 fail | **violation** | passes |
+| tRP/tRC ignored: ACTIVATE straight after PRECHARGE | 11 fail | **violation** | passes |
+| Write-to-read turnaround ignored | 13 fail | SVA fires first | passes |
+| One shared open-row register, not one per bank | fails | - | **fails** 4, 6, 7 |
+| Refresh disabled outright | fails | **violation** | **fails** 6 |
+| A scenario that verifies nothing | - | - | **fails** that scenario |
+
+**Simulation caught every one. The board caught six of nine.**
+
+The three it misses are all pure timing: violating tRAS, tWR, tRP and tRC
+returns correct data on this part at 100 MHz, because a -7 device has real
+margin over its own datasheet minimums. A board can only observe the data that
+survives the command stream; it cannot observe the command stream. That is
+what `sdram_timing_check.sv` is for, and on those three faults it is the only
+thing that reports a problem at all.
+
+Two of these entries are fixes rather than reassurance: the shared-row-register
+and refresh faults were both *missed* by the board tests as they originally
+stood, and the scenarios were rewritten until they caught them. The others
+confirm the layer that was supposed to catch them did.
+
 ## What is left
 
 `same-row rd/wr` at 78.9 MB/s is now limited by the device, not the scheduler:
@@ -114,13 +147,11 @@ be measured on this same ruler before being believed.
 
 Also outstanding:
 
-- **A retention test with teeth.** The scenario-6 and Nios idle periods are
-  far too short to detect a refresh failure at room temperature - measured on
-  a DE0-Nano with refresh disabled outright, first loss came at 8 s, and both
-  tests idle for 1 s or less. The numbers are in the
-  [DE0-Nano Nios notes](example/de0_nano_nios/README.md). The refresh interval
-  itself is enforced by the timing checker in simulation, which fails all
-  thirteen configurations on `tREFI`.
+- ~~A retention test with teeth.~~ **Done.** Both retention tests now write
+  8 MByte and idle 12 s, sized from a measured sweep, and both were proven to
+  fail a build with refresh disabled - where at 250 ms and 1 s they had
+  passed one. The numbers are in the
+  [DE0-Nano Nios notes](example/de0_nano_nios/README.md).
 - ~~Asserting that work happened.~~ **Done.** The sequencer counts the words
   it actually compared and refuses to pass a scenario that verified none, with
   a distinct error code; the board script cross-checks that count against the
@@ -132,16 +163,21 @@ Also outstanding:
   closes timing, and has never been programmed into a part - so its preset,
   its 10-bit column geometry and its 64 MByte part are still unproven on
   silicon.
-- **f_MAX headroom.** 104.8 MHz against a 100 MHz target is 5% of margin,
-  up from 1% now that the row-match comparison is resolved a cycle ahead
-  rather than inside the scheduler loop. The critical path has moved with it:
-  it now starts at the tRC counter, runs through `act_ok_v` and the S_RUN
-  priority chain, and ends in the row bookkeeping. The same trick applies -
-  a counter's "reaches zero next cycle" is a function of registers and need
-  not be evaluated inside the loop that uses it - and it has not been done.
-  Beyond that, shortening the chain means splitting it across two cycles,
-  which costs a cycle on every row change and should be measured before being
-  believed.
+- **f_MAX headroom.** 104.8 MHz against a 100 MHz target is 5% of margin, up
+  from 1% now that the row-match comparison is resolved a cycle ahead rather
+  than inside the scheduler loop. The critical path has moved with it: it
+  starts at the tRC counter, runs through `act_ok_v` and the S_RUN priority
+  chain, and ends in the row bookkeeping.
+
+  Applying the same trick to the counters - a registered "reaches zero next
+  cycle" flag, so the loop never evaluates a comparison - **was tried and does
+  not help.** It measured 103.8 MHz standalone against 104.8, and took the
+  DE10-Lite demo from +0.208 ns to +0.011 for 208 more logic elements. The
+  counters do leave the critical path, but the path simply terminates one
+  register earlier at the same length: the comparison was never the expensive
+  part, the routed priority-chain loop is. Shortening it for real means
+  splitting that chain across two cycles, which costs a cycle on every row
+  change and should be measured before being believed.
 - **More device presets.** Two are supplied - the DE10-Lite's IS42S16320D-7 and
   the DE0-Nano's IS42S16160B-7 - because those are the parts whose timing has
   been checked against a datasheet and exercised through the benchmark and the

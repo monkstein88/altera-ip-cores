@@ -95,6 +95,9 @@ module de10_lite_sdram_demo_tb;
     demo_sdram_seq #(
         .INIT_WAIT_CYCLES    (TB_INIT_WAIT),
         .REFRESH_IDLE_CYCLES (TB_REFRESH_IDLE),
+        // 4096, not the 4 M words the boards use: in simulation the point
+        // is the sequencing, and no functional model forgets.
+        .REFRESH_WORDS       (32'd4096),
         .WATCHDOG_CYCLES     (TB_WATCHDOG),
         .MARCH_WORDS         (TB_MARCH_WORDS)
     ) u_seq (

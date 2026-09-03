@@ -32,8 +32,8 @@ below.
   PASS  a row miss costs more per word than a row hit
   PASS  four banks at staggered rows: per-bank row tracking
         1024 words in 500 us
-        idling ~1 s (over 120 full refresh periods)...
-  PASS  refresh retention: data survives a second of idle
+        idling 12 s over 8 MByte...
+  PASS  refresh retention: 8 MByte survives 12 s of idle
         marching 16777216 words (32 MByte)...
   PASS  full march: every word in the device written and verified
         write 18 MB/s, read 13 MB/s
@@ -88,19 +88,23 @@ plus three that only a CPU can do:
 | One row | the fastest case — column moves, row and bank do not |
 | Row thrash | the worst case — a row miss on every access, compared against the row-hit cost |
 | Four banks, staggered rows | the access this controller exists for - and, since it revisits a bank at the row another bank just opened, one a shared open-row register fails |
-| **Refresh retention** | *see the caveat below - this one does not currently bite* |
+| **Refresh retention** | 8 MByte idled 12 s - proven to catch a disabled refresh, see below |
 | Full march | every word in the 32 MB device written and verified |
 
 The three in bold are not in the RTL example. Byte enables and 32-bit access
 need a CPU to generate them; refresh retention needs *real time* and real
-silicon. That was the intent, at least - measurement says the idle is far too
-short to detect anything, and the section below says so with numbers.
+silicon - and, since the idle was measured and lengthened, it does. The
+section below has the numbers.
 
-## What the board does not prove: the retention test is too short
+## The retention test, and why it idles for twelve seconds
 
 Measured, not assumed. The controller was rebuilt with **refresh disabled
 outright** - the refresh timer never fires, so no AUTO REFRESH command is ever
-issued - and programmed into the DE0-Nano:
+issued - and programmed into the DE0-Nano. With the test as it originally
+stood, 4096 words idled for one second, **every scenario still passed**,
+including retention.
+
+Sweeping the idle and the region size gave the shape of it:
 
 | Idle | 4096 words (8 KB) | 4 M words (8 MB) |
 |---|---|---|
@@ -112,23 +116,30 @@ issued - and programmed into the DE0-Nano:
 | 10 s | 0 wrong | - |
 | 20 s | **2 wrong** | - |
 
-Every other scenario still passed, and so did this one. A DRAM cell at room
-temperature holds its charge for tens of seconds; the 64 ms refresh period in
-the datasheet is a worst-case guarantee over the full temperature and process
-range, not a description of a part sitting on a desk. So the 250 ms idle in
-the RTL demo and the 1 s idle here are 20-80x too short to notice that refresh
-has stopped entirely, and neither would ever notice an interval that is merely
-*wrong*.
+A DRAM cell at room temperature holds its charge for tens of seconds. The
+64 ms refresh period in the datasheet is a worst-case guarantee over the full
+temperature and process range, not a description of a part sitting on a desk.
 
-**What actually enforces the refresh interval is the command-stream timing
-checker in simulation**, which fails all thirteen configurations immediately
-with `tREFI (refresh overdue)` and has a self-test pinning its threshold. The
-board test is an end-to-end smoke check, and at its present length it is a
-weak one.
+More cells is a better lever than more time, because the retention
+distribution has a long tail: 8 MByte fails at 8 s where 8 KByte survives to
+20. So the test now writes **8 MByte and idles 12 s**, which has margin over
+the point where loss first appears and still leaves the whole run under half a
+minute.
 
-To make it bite, the idle has to be around 15-20 s over a large region - which
-is a real cost in test time, and is why the numbers above are recorded here
-rather than silently applied.
+**It now bites.** With refresh disabled the same build reports:
+
+```
+        word 1556 lost after idle: 0xa372, expected 0xa332
+  FAIL  refresh retention: 8 MByte survives 12 s of idle
+```
+
+One flipped bit in one word - which is what charge loss looks like, and what
+the old test was 20x too short to see.
+
+What this does *not* do is police the refresh **interval**. No retention test
+can: an interval that is merely wrong rather than absent leaves every cell
+comfortably inside its retention time. That is the job of the `tREFI` check in
+the core testbench, which fails all thirteen configurations immediately.
 
 ## Two things the system does on purpose
 
