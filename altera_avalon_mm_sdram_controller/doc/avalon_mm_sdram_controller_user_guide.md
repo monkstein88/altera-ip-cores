@@ -48,10 +48,13 @@ not where the headroom was. See section 7.
 
 ## 1.3 Status
 
-**Verified in simulation, synthesised, and closing timing — but never run on a
-board.** The core compiles through Quartus 18.1.1 Standard for the DE10-Lite's
-MAX 10, fits, meets a 100 MHz constraint with 0.208 ns of setup slack, and
-produces a bitstream. It has not been programmed into a part. Resource and
+**Verified in simulation, synthesised, closing timing, and run on two
+boards.** The core compiles through Quartus 18.1.1 Standard for the
+DE10-Lite's MAX 10 and the DE0-Nano's Cyclone IV E, meets a 100 MHz constraint
+on both, and has been programmed into both: eight of eight RTL scenarios and
+ten of ten Nios II checks on each. The two parts differ in column width and
+capacity — 9 bits and 32 MByte against 10 bits and 64 — so the address decode
+and the preset mechanism are exercised, not just one geometry. Resource and
 f_MAX figures are in section 7.4 and are reproducible.
 
 ---

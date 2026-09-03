@@ -3,9 +3,48 @@
 A Nios II system with this project's SDRAM controller in it, running a memory
 test out of on-chip RAM and reporting over the JTAG UART.
 
-**Status: built — not yet run on hardware.** The Platform Designer system
-generates, the software compiles, and Quartus 18.1.1 produces a bitstream that
-closes 100 MHz. It has never been programmed into a part.
+**Status: verified on hardware.** Programmed into a Terasic DE10-Lite and run
+over USB: **10 checks, 10 passed**, including the two paths the RTL example
+cannot reach — byte enables and 32-bit access through the width adapter — and
+refresh retention over 8 MByte idled 12 s.
+
+## What it printed on the board
+
+```
+ Avalon-MM SDRAM Controller - Nios II memory test
+ 64 MByte at 0x08000000, 33554432 16-bit words
+=============================================================
+
+  PASS  data bus: walking ones and zeros
+        26 power-of-two addresses checked
+  PASS  address bus: no aliasing across the whole device
+  PASS  byte enables reach DQM: a byte write spares its neighbour
+  PASS  32-bit access through the width adapter is coherent
+  PASS  one row: write and read back a full row of columns
+        1024 words written in 141 us
+  PASS  row thrash: every access a row miss, data still correct
+        row hit ~137 ns/word, row miss ~511 ns/word
+  PASS  a row miss costs more per word than a row hit
+  PASS  four banks at staggered rows: per-bank row tracking
+        1024 words in 604 us
+        idling 12 s over 8 MByte...
+  PASS  refresh retention: 8 MByte survives 12 s of idle
+        marching 33554432 words (64 MByte)...
+  PASS  full march: every word in the device written and verified
+        write 18 MB/s, read 13 MB/s
+-------------------------------------------------------------
+  checks passed : 10
+  checks failed : 0
+  *** ALL TESTS PASSED ***
+```
+
+**The application is built `-Os`, and that is not cosmetic.** It was not, at
+first, while the DE0-Nano's was — the two examples share this source and are
+compared against each other, so a different optimisation level makes the
+comparison meaningless. At `-O0` this board reported 646 ns per row-hit word
+against the DE0-Nano's 130, and 3 MB/s on the full march against 18. Same
+controller, same clock, same Nios II/f with larger caches: the whole gap was
+the compiler. With `-Os` it reports 137 ns/word, and the two boards agree.
 
 ## Why this exists alongside the RTL example
 
@@ -71,7 +110,7 @@ export QUARTUS_ROOT=/opt/intelFPGA/18.1
 ./build.sh qsys       # just the Platform Designer system
 ./build.sh sw         # just the BSP and the application
 ./build.sh fpga       # just the Quartus compile
-./run_on_board.sh     # program, download, run, report   (NOT DONE HERE)
+./run_on_board.sh     # program, download, run, report
 ```
 
 **Quartus 18.1 is required**, for one specific reason: newer Quartus Standard
@@ -84,12 +123,12 @@ Results:
 
 | | |
 |---|---|
-| Logic elements | 5,091 / 49,760 (10%) |
+| Logic elements | 5,101 / 49,760 (10%) |
 | Registers | 3,003 |
 | Memory bits | 1,113,152 / 1,677,312 (66%) |
-| Program | 75 KB, in 128 KB of on-chip RAM |
-| Setup slack, 100 MHz system clock | **+0.742 ns** |
-| Setup slack, SDRAM interface | +2.423 ns |
+| Program | 74 KB, in 128 KB of on-chip RAM |
+| Setup slack, 100 MHz system clock | **+0.163 ns** |
+| Setup slack, SDRAM interface | +2.165 ns |
 
 This used to close with 0.135 ns, which was thin enough to warn about: the CPU
 and its caches share a clock with the controller, and the controller was the

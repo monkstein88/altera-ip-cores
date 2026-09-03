@@ -75,7 +75,8 @@ step_sw() {
     cd "$HERE/software"
     rm -rf obj Makefile sdram_memtest.elf
     "$N2/nios2-app-generate-makefile" --bsp-dir bsp --elf-name sdram_memtest.elf \
-        --src-files main.c --set APP_CFLAGS_WARNINGS "-Wall -Wextra"
+        --src-files main.c --set APP_CFLAGS_WARNINGS "-Wall -Wextra" \
+        --set APP_CFLAGS_OPTIMIZATION "-Os"
     make
 }
 

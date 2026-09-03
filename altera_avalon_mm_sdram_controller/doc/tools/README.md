@@ -31,7 +31,7 @@ to a parameter default and two documents that quietly lie about it.
 It re-derives every parameter default and allowed range, the port count, every
 port name, the address-map bit positions, the preset's values, the assertion
 and cover counts, and the figure numbering. It asserts that no document claims
-a hardware result for this core, which has never been on a board.
+a hardware result for this core before it had been on a board.
 
 And it **runs the benchmark** and compares the throughput table against what
 the benchmark actually prints. Cross-checking the three copies of that table

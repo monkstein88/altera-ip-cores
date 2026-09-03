@@ -247,21 +247,22 @@ chk(len(nums) == len(built),
     f"{len(built)} figures are generated but {len(nums)} are captioned")
 
 # --------------------------------------------------------- 9. status
-# The core has been synthesised, fitted and timed, but never programmed into a
-# part. Every document must say so, and none may claim otherwise - this is the
-# single most misleading thing the documentation could get wrong.
+# Both boards have now run. This rule has been rewritten twice as that changed,
+# which is the point of having it: it pins the claim that is easiest to get
+# wrong and most misleading when it is.
 #
-# f_MAX and resource figures used to be forbidden here, because there was no
-# Quartus result to quote, and hardware results were forbidden because there
-# was no board. Both now exist - for ONE board. So the boundary that is
-# checked is the one that is still real: the DE0-Nano has run, the DE10-Lite
-# has not, and no document may blur the two.
-# A claimed hardware RESULT - something passing, running or measured on a
-# board - must name the board it happened on, and it must be the DE0-Nano,
-# because that is the only one that has run. Warnings, negations and the
-# other core's measurements are not results and are not matched here: the
-# check is deliberately narrow, because a rule with false positives is a rule
-# someone deletes.
+# It began as "nothing may claim a hardware result, there is no board", became
+# "a hardware result must name the DE0-Nano, because that is the only one that
+# has run", and is now "a hardware result must name the board it happened on".
+# Both parts are exercised: the DE0-Nano's IS42S16160B-7 with a 9-bit column
+# and 32 MByte, the DE10-Lite's IS42S16320D-7 with a 10-bit column and 64.
+#
+# What is still worth checking is that a result is ATTRIBUTED. "Passes on
+# hardware" with no board named is the sentence that silently becomes false
+# when a third part is added. Warnings, negations and the other core's
+# measurements are not results and are not matched: the check is deliberately
+# narrow, because a rule with false positives is a rule someone deletes.
+BOARDS = ("DE0-Nano", "DE10-Lite")
 RESULT_ON_HW = re.compile(
     r"[^.\n]*\b(pass(?:ed|es)?|ran|run|measured|verified)\b[^.\n]{0,60}"
     r"\b(on hardware|on a board|on silicon|on the board)\b[^.\n]*", re.I)
@@ -277,33 +278,22 @@ for doc_name, doc in (("user guide", UG), ("core README", RM)):
         # deletes.
         if re.search(r"SDRAM example|Intel", sent, re.I):
             continue
-        chk("DE0-Nano" in sent or "DE0-Nano" in doc[max(0, m.start()-400):m.start()],
-            f"the {doc_name} claims a hardware result without naming the "
-            f"DE0-Nano: \"{sent.strip()[:70]}\"")
-    # ...and the mirror image, which is how this rule first went stale: the
-    # DE0-Nano HAS run, so a blanket "never been programmed into a part" is
-    # now false. It survived the check above because that one skips any
-    # sentence carrying a negation - it is built to catch overclaiming, and an
-    # understated claim is just as wrong. A sentence may only say the design
-    # has never been on a board if it is scoped to the DE10-Lite.
-    for m in re.finditer(r"[^.\n]*\b(never been programmed|has never run|"
-                         r"never been on a board)\b[^.\n]*", doc, re.I):
-        sent = m.group(0)
-        # The lookbehind is the same allowance the rule above makes: these
-        # documents are hard-wrapped, and a sentence that names its subject on
-        # the previous line is scoped perfectly well.
-        chk("DE10-Lite" in sent or "DE10-Lite" in doc[max(0, m.start()-300):m.start()],
-            f"the {doc_name} says the design has never been on a board, which "
-            f"stopped being true when the DE0-Nano ran; scope it to the "
-            f"DE10-Lite: \"{sent.strip()[:70]}\"")
+        near = doc[max(0, m.start()-400):m.start()]
+        chk(any(b in sent or b in near for b in BOARDS),
+            f"the {doc_name} claims a hardware result without naming the board "
+            f"it happened on: \"{sent.strip()[:70]}\"")
 
-    # The DE10-Lite has not been on a board. Nothing may say it passed on one.
-    for m in re.finditer(r"[^.\n]*DE10-Lite[^.\n]*", doc):
+    # The mirror image, and the reason this rule exists in both directions: an
+    # understated claim is as wrong as an overstated one. "Never been
+    # programmed into a part" was true of the whole project, then true only of
+    # the DE10-Lite, and is now true of neither. Nothing may say it.
+    for m in re.finditer(r"[^.\n]*\b(never been programmed|has never run|"
+                         r"never been on a board|not yet run on hardware)\b[^.\n]*",
+                         doc, re.I):
         sent = m.group(0)
-        chk(not re.search(r"pass(ed|es)?\s+on\s+(hardware|a board|silicon)",
-                          sent, re.I),
-            f"the {doc_name} says the DE10-Lite passed on hardware, which it "
-            f"has not: \"{sent.strip()[:70]}\"")
+        chk(False,
+            f"the {doc_name} says a design has never been on a board; both "
+            f"have now run: \"{sent.strip()[:70]}\"")
 
 # ------------------------------- 9b. the presets and the testbenches agree
 # Every preset must name a part the benchmark and the testbench can actually

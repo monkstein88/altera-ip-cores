@@ -2,13 +2,15 @@
 
 **Status: working controller, packaged for Platform Designer, documented,
 verified in simulation, synthesised, closing timing at 100 MHz — and RUN ON
-HARDWARE.** All eight demonstration scenarios pass on a real Terasic DE0-Nano
-driving an ISSI IS42S16160B. On silicon it reaches **199.6 MB/s** where every access is a row
+TWO BOARDS.** All eight demonstration scenarios pass on a real Terasic
+DE0-Nano driving an ISSI IS42S16160B, and on a Terasic DE10-Lite driving an
+IS42S16320D. On silicon it reaches **199.6 MB/s** where every access is a row
 hit — 99.8% of a 16-bit bus at 100 MHz — and 29.5 MB/s where every access is a
 row miss.
 
-The DE10-Lite build is complete and closes timing but has not been run: no such
-board was available here.
+The two parts are not the same shape: 9 column bits and 32 MByte against 10
+and 64. The address decode, the preset mechanism and the timing parameters are
+therefore exercised across two geometries rather than fitted to one.
 
 A from-scratch SDR SDRAM controller for Avalon-MM, intended to replace
 [`altera_avalon_new_sdram_controller`](../altera_avalon_new_sdram_controller)
@@ -158,11 +160,11 @@ Also outstanding:
   words the scenario covers. Proved by giving a scenario an empty phase table
   and running it on the board: it now reports "scenario verified nothing"
   where it used to report a pass.
-- **A second board.** The DE0-Nano runs: eight of eight RTL scenarios and ten
-  of ten Nios II checks. The DE10-Lite builds, fits and
-  closes timing, and has never been programmed into a part - so its preset,
-  its 10-bit column geometry and its 64 MByte part are still unproven on
-  silicon.
+- ~~A second board.~~ **Done.** Both boards run every test: eight of eight RTL
+  scenarios and ten of ten Nios II checks on each. They are different parts -
+  9 column bits and 32 MByte against 10 and 64 - so the address decode, the
+  preset mechanism and the timing parameters are exercised across two
+  geometries rather than fitted to one.
 - **f_MAX headroom.** 104.8 MHz against a 100 MHz target is 5% of margin, up
   from 1% now that the row-match comparison is resolved a cycle ahead rather
   than inside the scheduler loop. The critical path has moved with it: it
@@ -291,13 +293,14 @@ altera_avalon_mm_sdram_controller/
 | [`tb/`](tb) | 166 checks per configuration, on the command stream as well as the data | Passing |
 | [`simulation/questa/run_sim.tcl`](simulation/questa/run_sim.tcl) | The same 13 configurations, plus code coverage and assertion non-vacuity | 22 assertion instances, **none vacuous** |
 | [`benchmark/`](benchmark/README.md) | Throughput against the core being replaced | Passing |
-| [`example/de10_lite_rtl`](example/de10_lite_rtl/README.md) | DE10-Lite board demonstration, 9 phases | 61 checks in simulation; no DE10-Lite here to run it on |
+| [`example/de10_lite_rtl`](example/de10_lite_rtl/README.md) | DE10-Lite board demonstration, 9 phases | 61 checks in simulation, **8/8 scenarios on the board** |
 | [`example/de0_nano_rtl`](example/de0_nano_rtl/README.md) | DE0-Nano board demonstration, same nine phases at the other part's geometry | 61 checks in simulation, **8/8 scenarios on the board** |
-| [`example/de10_lite_nios`](example/de10_lite_nios/README.md) | Nios II memory test through cache, interconnect and a width adapter | Builds; byte enables and 32-bit access are only reachable here |
+| [`example/de10_lite_nios`](example/de10_lite_nios/README.md) | Nios II memory test through cache, interconnect and a width adapter | **10/10 checks on the board**; byte enables and 32-bit access are only reachable here |
 | [`example/de0_nano_nios`](example/de0_nano_nios/README.md) | The same, on the DE0-Nano | **10/10 checks on the board** |
 | Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met, +1.011 ns DE0-Nano, +0.208 ns DE10-Lite |
 | [`doc/tools/check_facts.py`](doc/tools/check_facts.py) | Every number in the documents, re-derived from the RTL — and the throughput table re-measured by running the benchmark | 261 claims |
 | Hardware, DE0-Nano | Every scenario on a real board | **8/8 passing on silicon** |
+| Hardware, DE10-Lite | The same, on the other part: 10-bit column, 64 MByte | **8/8 RTL and 10/10 Nios II on silicon** |
 | Hardware, DE0-Nano, Nios II | Byte enables, 32-bit width adaptation, from a CPU | **10/10 passing on silicon** |
 | Hardware, DE10-Lite | — | **Not run — no board here** |
 

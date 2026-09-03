@@ -5,13 +5,41 @@ project's SDRAM controller, driven by plain RTL. No CPU, no software: a
 sequencer walks a set of memory-test scenarios, checks every word it reads back,
 and reports over JTAG and on the seven-segment displays.
 
-**Status: simulated, compiled, and closing timing — not yet run on hardware.**
-The design builds through Quartus 18.1.1 Standard for the DE10-Lite's MAX 10,
-fits in 6% of the device, meets its 100 MHz constraint with 0.208 ns of setup
-slack, and produces a `.sof`. It has never been programmed into a part, so
-everything below that describes a *running board* is describing what the design
-is for, not what has been observed. The simulation and compilation results are
-real and reproducible.
+**Status: verified on hardware.** Programmed into a Terasic DE10-Lite and run
+over USB: **all eight scenarios pass**, including refresh retention and a full
+64 MByte march over every one of 33,554,432 words. On silicon it reaches
+**199.8 MB/s** where every access is a row hit — 99.9% of a 16-bit bus at
+100 MHz — and 34.4 MB/s where every access is a row miss.
+
+## What it printed on the board
+
+```
+--- auto sweep: all 8 scenarios ---
+  after sweep            bitmap=FF scen=7 pass=1 valid=1 run=0 done=8 err=0
+
+  per-scenario result:
+    0 data bus walk        PASS      4 bank toggle          PASS
+    1 address bus walk     PASS      5 row thrash           PASS
+    2 byte enables         PASS      6 refresh retention    PASS
+    3 column sweep         PASS      7 full 64 MB march     PASS
+
+--- throughput, measured on silicon ---
+  scenario                    words     wr cyc   write MB/s    read MB/s
+  3 column sweep               1024       1025        199.8        198.6
+  4 bank toggle                2048       6135         66.8         65.3
+  5 row thrash                  256       1487         34.4         32.2
+  7 full 64 MB march       33554432   34144600        196.5        196.5
+
+--- scenario 6 on its own: refresh retention (12 s idle) ---
+  PASS: 8 MByte survived 12 s of no access at all
+
+PASS: all 8 scenarios passed in the sweep (bitmap = FF)
+```
+
+The row-miss cost is lower here than on the DE0-Nano — 1,487 cycles for 256
+words against 1,734 — because the parts are not the same. The IS42S16320D-7
+has the shorter tRC of the two, and the preset follows the datasheet rather
+than being copied across.
 
 ## What it is, and what it is a copy of
 
@@ -98,22 +126,24 @@ values at CAS 3.
 export QUARTUS_ROOT=/opt/intelFPGA/18.1
 ./build.sh qsys        # generate the Platform Designer system
 ./build.sh fpga        # synthesise, fit, time and assemble
-./run_on_board.sh      # program and read the result over JTAG  (NOT DONE HERE)
+./run_on_board.sh      # program and read the result over JTAG
 ```
 
 `build.sh fpga` completes with 0 errors and produces a bitstream:
 
 | | |
 |---|---|
-| Logic elements | 3,099 / 49,760 (6%) |
-| Registers | 1,778 |
+| Logic elements | 3,333 / 49,760 (7%) |
+| Registers | 1,875 |
 | Pins | 110 / 360 |
-| Setup slack, 100 MHz system clock | **+0.208 ns** |
-| Setup slack, SDRAM interface | +1.763 ns |
-| f_MAX | 102.1 MHz |
+| Setup slack, 100 MHz system clock | **+0.249 ns** |
+| Setup slack, SDRAM interface | +2.150 ns |
+| f_MAX | 102.6 MHz |
 
-**+0.208 ns is inside the fitter's own run-to-run spread, so treat this as
-"closes, barely" rather than as margin.** Two clean builds of the unchanged
+**+0.249 ns is inside the fitter's own run-to-run spread, so treat this as
+"closes, barely" rather than as margin.** It has now been run on a real part
+and works, which the slow 85 °C corner does not promise: a device on a desk is
+faster than that corner, so closing it there is the claim, not "it worked once". Two clean builds of the unchanged
 DE0-Nano Nios system differed by 0.24 ns, and this design has less than that in
 hand. The MAX 10 -7 is the slower of the two parts here and the controller is
 its critical path: the DE0-Nano closes the same 100 MHz with 1.011 ns. If a
@@ -122,8 +152,10 @@ described in the core [README](../../README.md#what-is-left) - the tRC counter
 feeding `act_ok_v` is the current critical path, and its reaches-zero test
 could be registered the way the row match already is.
 
-`run_on_board.sh` is the step that has never been run. Until someone programs a
-board there is no hardware result for this core.
+`run_on_board.sh` is what produced the transcript above. It needs no one
+looking at the board: it programs the part, drives every scenario over JTAG,
+checks that the design ran the scenario it was asked for, and exits non-zero if
+anything failed.
 
 ## Files
 
