@@ -266,7 +266,15 @@ set_parameter_property RD_EXTRA_LAT UNITS cycles
 set_parameter_property RD_EXTRA_LAT ALLOWED_RANGES {0:3}
 set_parameter_property RD_EXTRA_LAT HDL_PARAMETER true
 set_parameter_property RD_EXTRA_LAT GROUP "Controller"
-set_parameter_property RD_EXTRA_LAT DESCRIPTION {Added to the CAS latency when capturing read data. Zero is correct for a direct connection. Increase only if the DQ return path is registered - an input register in the pin, or a resynchroniser - and read data lands a cycle late.}
+set_parameter_property RD_EXTRA_LAT DESCRIPTION {Added to the CAS latency when capturing read data. Zero is correct for a direct connection. Increase only if the DQ return path is registered - an input register in the pin, or a resynchroniser - and read data lands a cycle late. It lengthens the read-to-write turnaround by the same amount, because the controller must not drive DQ before it has latched the read.}
+
+add_parameter WR_TURNAROUND_EXTRA INTEGER 0
+set_parameter_property WR_TURNAROUND_EXTRA DISPLAY_NAME "Extra read-to-write turnaround"
+set_parameter_property WR_TURNAROUND_EXTRA UNITS cycles
+set_parameter_property WR_TURNAROUND_EXTRA ALLOWED_RANGES {0:3}
+set_parameter_property WR_TURNAROUND_EXTRA HDL_PARAMETER true
+set_parameter_property WR_TURNAROUND_EXTRA GROUP "Controller"
+set_parameter_property WR_TURNAROUND_EXTRA DESCRIPTION {Dead cycles added between a READ and the next WRITE, beyond the datasheet minimum of CAS+1. The minimum is exactly that - the part says a WRITE may follow the last read data element "provided that I/O contention can be avoided", and warns that the FPGA may go Low-Z before the SDRAM DQs go High-Z (tLZ is 0 ns minimum, tHZ up to 5.4 ns). Zero is what both supplied boards run and what every published measurement was taken at. Raise it if the DQ flight time on your board makes that overlap real; each cycle costs roughly 15% of alternating read/write throughput and nothing at all on same-direction streaming.}
 
 
 # ---- picoseconds to the HDL, derived from the nanoseconds above ----
@@ -578,6 +586,17 @@ proc validate {} {
     if {$col > 11} {
         send_message error "COL_BITS=$col is beyond what the column encoding supports. Column bit 10 steps over A10; there is nowhere for a twelfth to go."
     }
+    # The row check above and the A10 check are not enough on their own. An
+    # 11-bit column puts its top bit on A11, because A10 is the precharge-all
+    # flag and column bit 10 has to step over it - so an 11-bit column needs a
+    # twelfth address pin whatever the row width is. Checking COL_BITS and
+    # SA_BITS separately let COL_BITS=11 with SA_BITS=11 through: the top
+    # column bit was written to a pin that does not exist, vanished, and every
+    # address aliased onto its neighbour 1024 columns away. Silent in the HDL
+    # and silent under lint.
+    if {$col > 10 && $sa < [expr {$col + 1}]} {
+        send_message error "COL_BITS=$col needs SA_BITS >= [expr {$col + 1}], not $sa. Column bit 10 steps over A10 onto A11, so an 11-bit column needs a twelfth address pin - otherwise the top column bit is dropped and every address aliases."
+    }
     if {$fifo < 2} {
         send_message error "FIFO_DEPTH must be at least 2."
     }
@@ -594,7 +613,10 @@ proc validate {} {
 
     send_message info "At [format %.3f [expr {double($khz)/1000.0}]] MHz the HDL will use: tRC=$c_rc tRAS=$c_ras tRP=$c_rp tRCD=$c_rcd tRRD=$c_rrd tWR=$c_wr tRFC=$c_rfc cycles, CAS=$cas, one refresh every $c_refi cycles. Minimum timings round UP from nanoseconds, so a cycle count one higher than the datasheet minimum is expected and correct; the refresh interval rounds DOWN, because it is a maximum."
 
-    send_message info "$banks rows can be open at once, one per bank. A read/write turnaround inside an open row costs 0 cycles write-to-read and [expr {$cas + 1}] read-to-write, with no row command either way."
+    set rdx  [get_parameter_value RD_EXTRA_LAT]
+    set wrx  [get_parameter_value WR_TURNAROUND_EXTRA]
+    set turn [expr {$cas + $rdx + 1 + $wrx}]
+    send_message info "$banks rows can be open at once, one per bank. A read/write turnaround inside an open row costs 0 cycles write-to-read and $turn read-to-write, with no row command either way."
 
     if {!$look} {
         send_message info "Look-ahead is off. Correct, but scattered and bank-crossing traffic will be roughly 1.7x slower than it needs to be, because each row is opened only once the access needing it reaches the head of the buffer."
@@ -605,7 +627,10 @@ proc validate {} {
     if {[get_parameter_value ADDR_MAP] != 0} {
         send_message warning "The conventional address map is selected. This is NOT the map the SDRAM Controller Intel FPGA IP uses, so replacing that core with this one in an existing system will move every address in memory. Use the compatible map unless this is a new design."
     }
-    if {[get_parameter_value RD_EXTRA_LAT] != 0} {
-        send_message warning "RD_EXTRA_LAT is [get_parameter_value RD_EXTRA_LAT]. This is only correct if the DQ return path is registered outside the controller. If read data is simply wrong, this is the wrong knob - check CAS latency first."
+    if {$rdx != 0} {
+        send_message warning "RD_EXTRA_LAT is $rdx. This is only correct if the DQ return path is registered outside the controller. If read data is simply wrong, this is the wrong knob - check CAS latency first. Note that it also lengthens the read-to-write turnaround to $turn cycles, because the controller must not drive DQ before it has latched the read."
+    }
+    if {$wrx != 0} {
+        send_message info "WR_TURNAROUND_EXTRA is $wrx, so a read is followed by a write after $turn cycles rather than the datasheet minimum of [expr {$cas + 1}]. That buys margin against DQ bus contention and costs roughly [format %.0f [expr {100.0 * $wrx / ($cas + 2.0)}]]% of alternating read/write throughput; same-direction streaming is unaffected."
     }
 }

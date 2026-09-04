@@ -388,16 +388,16 @@ altera_avalon_mm_sdram_controller/
 
 | Flow | Covers | Result |
 |---|---|---|
-| [`simulation/verilator/run_sim.sh`](simulation/verilator/run_sim.sh) | Lint of RTL, checker and model; timing-checker self-test; testbench across 14 configurations including three clock rates and all three supplied parts; lint in 4 geometries; Quartus Analysis & Synthesis | 23 checks, 167 checks per configuration |
-| [`tb/`](tb) | 167 checks per configuration, on the command stream as well as the data | Passing |
-| [`simulation/questa/run_sim.tcl`](simulation/questa/run_sim.tcl) | The same 14 configurations, plus code coverage and assertion non-vacuity | 22 assertion instances, **none vacuous** |
+| [`simulation/verilator/run_sim.sh`](simulation/verilator/run_sim.sh) | Lint of RTL, checker and model; timing-checker self-test; testbench across 18 configurations including three clock rates and all three supplied parts; lint in 4 geometries; Quartus Analysis & Synthesis | 27 checks, 168 checks per configuration |
+| [`tb/`](tb) | 168 checks per configuration, on the command stream as well as the data | Passing |
+| [`simulation/questa/run_sim.tcl`](simulation/questa/run_sim.tcl) | The same 18 configurations, plus code coverage and assertion non-vacuity | 22 assertion instances, **none vacuous** |
 | [`benchmark/`](benchmark/README.md) | Throughput against the core being replaced | Passing |
 | [`example/de10_lite_rtl`](example/de10_lite_rtl/README.md) | DE10-Lite board demonstration, 9 phases | 61 checks in simulation, **8/8 scenarios on the board** |
 | [`example/de0_nano_rtl`](example/de0_nano_rtl/README.md) | DE0-Nano board demonstration, same nine phases at the other part's geometry | 61 checks in simulation, **8/8 scenarios on the board** |
 | [`example/de10_lite_nios`](example/de10_lite_nios/README.md) | Nios II memory test through cache, interconnect and a width adapter | **10/10 checks on the board**; byte enables and 32-bit access are only reachable here |
 | [`example/de0_nano_nios`](example/de0_nano_nios/README.md) | The same, on the DE0-Nano | **10/10 checks on the board** |
 | Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met, +1.011 ns DE0-Nano, +0.208 ns DE10-Lite |
-| [`doc/tools/check_facts.py`](doc/tools/check_facts.py) | Every number in the documents, re-derived from the RTL — and the throughput table re-measured by running the benchmark | 261 claims |
+| [`doc/tools/check_facts.py`](doc/tools/check_facts.py) | Every number in the documents, re-derived from the RTL — and the throughput table re-measured by running the benchmark | 280 claims |
 | Hardware, DE0-Nano | Every scenario on a real board | **8/8 passing on silicon** |
 | Hardware, DE10-Lite | The same, on the other part: 10-bit column, 64 MByte | **8/8 RTL and 10/10 Nios II on silicon** |
 | Hardware, DE0-Nano, Nios II | Byte enables, 32-bit width adaptation, from a CPU | **10/10 passing on silicon** |

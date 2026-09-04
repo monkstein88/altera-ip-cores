@@ -41,6 +41,15 @@ module avalon_mm_sdram_controller_sva #(
     parameter int SA_BITS   = 13,
     parameter int ADDR_W    = 25,
     parameter int CAS_LAT   = 3,
+    // The controller's turnaround is CAS_LAT + RD_EXTRA_LAT + 1 +
+    // WR_TURNAROUND_EXTRA. The DEVICE's minimum is CAS_LAT + 1 and nothing
+    // more, so the two properties below are deliberately different bounds:
+    // a_no_write_into_read_data holds the command stream to what the part
+    // permits, and a_capture_before_drive holds the controller to what its own
+    // read pipeline needs. Collapsing them into one number is how the second
+    // one came to be missing.
+    parameter int RD_EXTRA_LAT = 0,
+    parameter int WR_TURNAROUND_EXTRA = 0,
     parameter int FIFO_DEPTH = 8,
     // The JEDEC postponement allowance, so the bound below tracks the
     // controller's configuration instead of a magic number that happens to
@@ -69,6 +78,9 @@ module avalon_mm_sdram_controller_sva #(
 
     // controller internals, for the bookkeeping properties
     input logic                    dq_oe,
+    // rd_pipe[0]: this cycle's DQ value is the one the read-return path will
+    // latch at the end of it.
+    input logic                    rd_capture,
     input logic [3:0]              ref_pend,
     input logic                    init_done,
 
@@ -222,8 +234,26 @@ module avalon_mm_sdram_controller_sva #(
     // A write may not be issued while the device could still be driving read
     // data. CAS_LAT+1 is the datasheet's read-to-write turnaround for a
     // length-1 burst; anything shorter is bus contention on silicon.
+    //
+    // This is the DEVICE's bound, so it stays at CAS_LAT whatever the
+    // controller's own turnaround is set to. A controller that waits longer
+    // than the part requires is slow, not illegal, and this property should
+    // not be the thing that notices.
     a_no_write_into_read_data: assert property
         (c_rd |=> !c_wr [* CAS_LAT]);
+
+    // The controller may not drive DQ on a cycle whose value it is about to
+    // latch as read data. Nothing else says this: a_no_write_into_read_data
+    // holds the WIRE to the part's minimum, and is satisfied by a controller
+    // that nevertheless clobbers its own read.
+    //
+    // That is not hypothetical. CYC_WTR was CAS_LAT+1 while the capture point
+    // was CAS_LAT+RD_EXTRA_LAT, so with RD_EXTRA_LAT non-zero the DQ drivers
+    // came on one cycle before the latch and every read returned the next
+    // word, or Hi-Z. The command stream was legal throughout, the timing
+    // checker saw nothing, and this property is the one that fires.
+    a_capture_before_drive: assert property
+        (rd_capture |-> !dq_oe);
 
     // CKE is held high once the controller is running - this design never
     // uses clock suspend or power-down.

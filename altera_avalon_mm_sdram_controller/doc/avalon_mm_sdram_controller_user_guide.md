@@ -228,7 +228,28 @@ Designer, which scales them. See section 4.5 for why.
 | `ADDR_MAP` | 0 | 0, 1 | 0 = compatible with the Intel core, 1 = conventional `{row, bank, column}` |
 | `FIFO_DEPTH` | 8 | 2, 4, 8, 16, 32 | Buffered commands. Also what look-ahead looks into |
 | `LOOKAHEAD` | 1 | 0, 1 | Open or close the next access's row early |
-| `RD_EXTRA_LAT` | 0 | 0:3 | Extra read-capture delay. Zero is correct for a direct connection |
+| `RD_EXTRA_LAT` | 0 | 0:3 | Extra read-capture delay. Zero is correct for a direct connection. Also lengthens the read-to-write turnaround by the same amount |
+| `WR_TURNAROUND_EXTRA` | 0 | 0:3 | Dead cycles added between a READ and the next WRITE, beyond the datasheet minimum of CAS+1. See below |
+
+The read-to-write turnaround is `CAS_LAT + RD_EXTRA_LAT + 1 + WR_TURNAROUND_EXTRA`
+cycles, and the default of `CAS_LAT + 1` is the datasheet **minimum**, not a
+comfortable figure. Both supplied parts permit a WRITE on the clock edge
+immediately following the last read data element only *"provided that I/O
+contention can be avoided"*, and warn that the device driving the input data may
+go Low-Z before the SDRAM DQs go High-Z — `tLZ` is 0 ns minimum and `tHZ` is up
+to 5.4 ns at the -7 grade.
+
+The datasheets offer two remedies. One is DQM, asserted two to three clocks
+ahead to force the device's outputs to High-Z; that one is **unavailable here**,
+because the mode register programs burst length 1, so the only data element in
+flight is the one being read and blanking it destroys the transfer. The other is
+a cycle of dead time, which is what `WR_TURNAROUND_EXTRA` buys.
+
+Zero is what both supplied boards run and what every published measurement was
+taken at. Each added cycle costs roughly 15% of alternating read/write
+throughput and nothing at all on same-direction streaming, which is already at
+97–99% of the bus. Raise it if your board's DQ flight time makes that overlap
+real, and measure the result on `benchmark/` rather than assuming.
 
 ## 4.5 Why picoseconds, and why not cycles
 
@@ -365,7 +386,7 @@ priority chain shared one cycle, and f_MAX was 83 MHz.
 | Flow | What it covers | Status |
 |---|---|---|
 | `simulation/verilator/run_sim.sh` | Lint of RTL, checker and model; timing-checker self-test; testbench across 14 configurations including three clock rates and all three supplied parts; lint in 4 geometries; Quartus Analysis & Synthesis | **23 checks, passing** |
-| `tb/avalon_mm_sdram_controller_tb.sv` | 167 checks per configuration, asserting on the command stream as well as the data | Passing |
+| `tb/avalon_mm_sdram_controller_tb.sv` | 168 checks per configuration, asserting on the command stream as well as the data | Passing |
 | `tb/avalon_mm_sdram_controller_sva.sv` | Avalon protocol, command legality, DQ contention, row bookkeeping | Passing |
 | `tb/sdram_timing_check.sv` | tRC, tRAS, tRP, tRCD, tRRD, tWR, tMRD, tRFC, read-to-write turnaround, refresh interval | Passing, with a 23-check threshold self-test |
 | `benchmark/` | Throughput against the core being replaced | Passing |

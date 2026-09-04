@@ -48,10 +48,17 @@
 //
 // COMMAND TIMING CONVENTION
 // -------------------------
-// All SDRAM outputs are registered, so a command decided in cycle k is sampled
-// by the device on edge k+1. The timing counters are therefore loaded with
+// All SDRAM outputs are registered, so a command decided in cycle k reaches
+// the pins at edge k+1. The timing counters are therefore loaded with
 // (cycles - 1): see `gate()`. Getting this off by one is not academic - it is
 // either a wasted cycle on every row change, or a violation.
+//
+// Every gate in this file counts from the cycle the command was DECIDED, and
+// every command is decided and registered the same way, so the counters are
+// self-consistent and the device's own sampling edge cancels out. It does NOT
+// cancel out in the read-return path, where the device's latency is counted
+// from the edge the device samples on rather than the edge the controller
+// launches from - see the read-return block, which spells the edges out.
 // =============================================================================
 
 module avalon_mm_sdram_controller #(
@@ -116,7 +123,20 @@ module avalon_mm_sdram_controller #(
     // Extra read-capture delay beyond CAS latency, for a board whose DQ return
     // path is registered (an input register in the pin, a resynchroniser).
     // Zero is correct for a direct connection: see the read-return block.
-    parameter int  RD_EXTRA_LAT = 0
+    //
+    // This MUST also lengthen the read->write turnaround, and for a while it
+    // did not: CYC_WTR was CAS_LAT+1 while the capture moved out to
+    // CAS_LAT+RD_EXTRA_LAT, so the controller turned its DQ drivers on before
+    // it had latched the word it was reading. Every non-zero value returned
+    // either the next word or Hi-Z. See CYC_WTR below - the two are one
+    // number and must be derived together.
+    parameter int  RD_EXTRA_LAT = 0,
+
+    // Extra cycles of read->write bus turnaround, beyond the datasheet
+    // minimum. Zero reproduces the measured behaviour of this core and is what
+    // both supplied boards run; see CYC_WTR for what the minimum actually
+    // buys you and when you would want more.
+    parameter int  WR_TURNAROUND_EXTRA = 0
 ) (
     input  logic                    clk,
     input  logic                    reset_n,
@@ -237,7 +257,46 @@ module avalon_mm_sdram_controller #(
     // A WRITE drives DQ in its own cycle, so the earliest safe write is
     // T+CAS+1. The other direction is free - the datasheet allows write data
     // to be immediately followed by a READ command.
-    localparam int unsigned CYC_WTR = CAS_LAT + 1;
+    //
+    // RD_EXTRA_LAT BELONGS IN THIS NUMBER. It moves the cycle on which the
+    // controller latches DQ; the turnaround is the cycle on which it starts
+    // DRIVING DQ. Leave the second behind the first and the write data
+    // overwrites the read before it has been captured - which is exactly what
+    // used to happen, silently, for every non-zero RD_EXTRA_LAT.
+    //
+    // WHAT THE DEFAULT COSTS, AND WHY IT IS STILL THE DEFAULT
+    // ------------------------------------------------------
+    // CAS_LAT+1 is the datasheet MINIMUM, not a comfortable figure. Both
+    // supplied parts say the same thing: "The WRITE burst may be initiated on
+    // the clock edge immediately following the last data element from the READ
+    // burst, PROVIDED THAT I/O CONTENTION CAN BE AVOIDED. In a given system
+    // design, there may be a possibility that the device driving the input
+    // data will go Low-Z before the SDRAM DQs go High-Z."
+    //
+    // That possibility is real here and the numbers are in the AC table: the
+    // part's tLZ is 0 ns minimum and its tHZ is 5.4 ns maximum at -7, so the
+    // device may still be driving DQ for several nanoseconds after the edge on
+    // which this controller turns its own drivers on. Both boards run it, and
+    // an SDRAM DQ bus tolerates a few nanoseconds of overlap - but there is no
+    // margin in it whatsoever.
+    //
+    // The datasheets offer two remedies. One is DQM, asserted two to three
+    // clocks ahead to force the device's outputs to High-Z before the write.
+    // THAT ONE IS UNAVAILABLE TO THIS CORE: the mode register programs burst
+    // length 1, so the only data element in flight is the one being read, and
+    // blanking it destroys the transfer. The other is a cycle of dead time,
+    // which is what WR_TURNAROUND_EXTRA buys.
+    //
+    // It defaults to 0 because every measurement in this project was taken
+    // there, and because the cost is not small: a length-1 read->write
+    // turnaround is two accesses per (CAS+2) cycles, so a cycle added here
+    // takes alternating traffic from about 79 MB/s to about 67. It buys
+    // nothing on same-direction streaming, which is already at 97-99% of the
+    // bus. Raise it if a board's DQ flight time is long enough that the
+    // overlap above stops being theoretical - and measure it on benchmark/
+    // rather than assuming.
+    localparam int unsigned CYC_WTR = CAS_LAT + RD_EXTRA_LAT
+                                    + 1 + WR_TURNAROUND_EXTRA;
     // READ -> PRECHARGE of the same bank needs no counter.
     //
     // The datasheet puts the earliest non-truncating PRECHARGE at (CAS-1)
@@ -261,17 +320,62 @@ module avalon_mm_sdram_controller #(
     localparam logic [SA_BITS-1:0] MODE_REG =
         SA_BITS'({3'b000, 1'b0, 2'b00, 3'(CAS_LAT), 1'b0, 3'b000});
 
+    // These run in simulation only - Quartus ignores an initial block - but
+    // the regression simulates every swept configuration, so a parameter
+    // combination that reaches a board has passed through here first. The
+    // Platform Designer component checks the same things at generation time;
+    // this list exists because the RTL is also instantiated directly, by the
+    // testbench and by anyone who takes the file, and then hw.tcl never runs.
     initial begin
         if (SA_BITS < 11)
             $fatal(1, "SA_BITS must be >= 11: A10 is the precharge-all bit");
+        if (SA_BITS < ROW_BITS)
+            $fatal(1, "SA_BITS (%0d) cannot carry a %0d-bit row address",
+                   SA_BITS, ROW_BITS);
         if (COL_BITS > 11)
             $fatal(1, "COL_BITS > 11 is not supported by this address encoding");
-        if (CAS_LAT < 1 || CAS_LAT > 7)
-            $fatal(1, "CAS_LAT out of range");
+        // Column bit 10 steps over A10 - the precharge-all flag - onto A11, so
+        // an 11-bit column needs a twelfth address pin to land on. Without
+        // this check the top column bit is written to a bit that is not there,
+        // it silently disappears, and every address aliases onto its neighbour
+        // 1024 columns away. Nothing else catches it: the RTL lints clean and
+        // the generator's own rules test COL_BITS and SA_BITS separately.
+        if (COL_BITS > 10 && SA_BITS < COL_BITS + 1)
+            $fatal(1, "COL_BITS=%0d needs SA_BITS >= %0d: column bit 10 steps over A10",
+                   COL_BITS, COL_BITS + 1);
+        // 2 and 3 are the CAS latencies SDR parts implement. The mode register
+        // field is three bits wide and will happily carry 4..7, which the
+        // device does not implement and which would then disagree with the
+        // read pipeline and the turnaround this core derives from it.
+        if (CAS_LAT < 2 || CAS_LAT > 3)
+            $fatal(1, "CAS_LAT must be 2 or 3 for SDR SDRAM (got %0d)", CAS_LAT);
+        if (DATA_BITS % 8 != 0)
+            $fatal(1, "DATA_BITS must be a whole number of bytes: DQM is per byte");
         if (FIFO_DEPTH < 2 || (FIFO_DEPTH & (FIFO_DEPTH-1)) != 0)
             $fatal(1, "FIFO_DEPTH must be a power of two, >= 2");
         if (ADDR_W != ROW_BITS + COL_BITS + BANK_BITS)
             $fatal(1, "ADDR_W is derived; do not override it");
+        // ref_pend and init_ref_cnt are four bits, and both are compared
+        // against a 4'() cast of these. Above 15 the cast truncates and the
+        // comparison silently means something else - INIT_REFS=16 would issue
+        // one initialisation refresh, not sixteen.
+        if (INIT_REFS < 2 || INIT_REFS > 15)
+            $fatal(1, "INIT_REFS must be 2..15 (4-bit counter)");
+        if (REF_MAX_PEND < 1 || REF_MAX_PEND > 8)
+            $fatal(1, "REF_MAX_PEND must be 1..8 (JEDEC allows 8 postponed)");
+        // The timing counters are TW bits wide and are loaded with gate(),
+        // which truncates without complaint. Unreachable at any sane clock -
+        // it takes about 1.3 GHz to make tRC 256 cycles - but truncating a
+        // minimum delay is silent corruption, which is the one failure mode
+        // this file is organised around.
+        if (gate(CYC_RC)  >= (1 << TW) || gate(CYC_RAS) >= (1 << TW)
+         || gate(CYC_RP)  >= (1 << TW) || gate(CYC_RCD) >= (1 << TW)
+         || gate(CYC_RRD) >= (1 << TW) || gate(CYC_WR)  >= (1 << TW)
+         || gate(CYC_RFC) >= (1 << TW) || gate(CYC_WTR) >= (1 << TW))
+            $fatal(1, "a timing exceeds the %0d-bit counters at %0d kHz", TW, CLK_KHZ);
+        if (CYC_REFI - 1 >= (1 << 16))
+            $fatal(1, "the refresh interval (%0d cycles) exceeds the 16-bit timer",
+                   CYC_REFI);
         $display("[sdram] @%0d kHz: tRC=%0d tRAS=%0d tRP=%0d tRCD=%0d tRRD=%0d tWR=%0d tRFC=%0d CAS=%0d tREFI=%0d",
                  CLK_KHZ, CYC_RC, CYC_RAS, CYC_RP, CYC_RCD, CYC_RRD, CYC_WR,
                  CYC_RFC, CAS_LAT, CYC_REFI);
@@ -389,6 +493,13 @@ module avalon_mm_sdram_controller #(
     // multiplexer back downstream of the scheduler and buys nothing.
     // =========================================================================
     localparam logic [FAW-1:0] IDX1 = FAW'(1);
+    // At FIFO_DEPTH=2, FAW is 1 and this cast is 0, so r2 aliases r0. That is
+    // harmless rather than merely unnoticed, and the argument is worth writing
+    // down because the cast hides it from lint: ent2_* is consumed only
+    // through nxt_bank/nxt_row, every use of which is gated by f_two, and
+    // f_two means the buffer holds at least two entries. At depth 2 that is
+    // the full buffer, so the cycle after a pop leaves one entry and f_two is
+    // false again before the aliased value could ever be looked at.
     localparam logic [FAW-1:0] IDX2 = FAW'(2);
 
     logic [FAW-1:0] r0, r1, r2;
@@ -514,6 +625,24 @@ module avalon_mm_sdram_controller #(
     // into the refresh sequence instead of being interrupted part-way.
     assign ref_hold = (ref_pend != '0)
                       && ((ref_pend >= 4'(REF_MAX_PEND)) || f_empty);
+
+    // The cycle the interval timer expires and a credit is owed.
+    //
+    // This is a separate signal because the credit is spent in the sequencer's
+    // case statement, LATER IN THE SAME always_ff, and a second nonblocking
+    // assignment to ref_pend simply wins. When a refresh happened to issue on
+    // the very cycle the timer wrapped, the decrement overwrote the increment
+    // and the credit was not deferred, it was LOST - permanently, because
+    // ref_pend is a debt counter and nothing ever reconstructs it.
+    //
+    // It needs the buffer to stay non-empty across a whole tREFI while
+    // ref_pend is still below REF_MAX_PEND, so a master that lets the buffer
+    // drain never sees it: measured 0 in 9,885 intervals with bursty traffic,
+    // and 31 in 72,153 with a master that holds az_cs high through the run.
+    // The effect is small and one-directional - 64.034 ms of refresh period
+    // where the part allows 64 - which is the direction that loses data.
+    logic ref_tick;
+    assign ref_tick = (ref_timer >= 16'(CYC_REFI - 1)) && (ref_pend != 4'hF);
 
     // =========================================================================
     // Sequencer
@@ -765,7 +894,22 @@ module avalon_mm_sdram_controller #(
             // DQM masks write bytes and enables the read output. Held low
             // except where a write's byte enables say otherwise; SDR enables
             // the read output two cycles ahead, which low-always satisfies.
-            zs_dqm  <= do_wdata ? head.be_n : '0;
+            //
+            // HIGH UNTIL INITIALISATION IS OVER. The parts this core ships
+            // presets for say so in as many words - "the SDRAM is initialized
+            // after the power is applied to Vdd and Vddq (simultaneously) and
+            // the clock is stable WITH DQM HIGH AND CKE HIGH" - and it used to
+            // be low from the first clock after reset, all the way through the
+            // 100 us wait, the PRECHARGE ALL, the initialisation refreshes and
+            // the mode register write. Nothing observable goes wrong, because
+            // no READ is outstanding for DQM to gate, which is precisely why
+            // no board and no model ever reported it.
+            //
+            // Dropping it on entry to S_RUN is early enough: DQM leads the
+            // read output by two clocks, and the first column command cannot
+            // issue until an ACTIVATE and tRCD have gone by.
+            zs_dqm  <= !init_done ? '1
+                     : (do_wdata  ? head.be_n : '0);
             dq_out  <= head.wdata;
             dq_oe   <= do_wdata;
 
@@ -834,7 +978,7 @@ module avalon_mm_sdram_controller #(
             // loses data. Measured 783 cycles where the part allows 781.25.
             if (ref_timer >= 16'(CYC_REFI - 1)) begin
                 ref_timer <= '0;
-                if (ref_pend != 4'hF) ref_pend <= ref_pend + 1'b1;
+                if (ref_tick) ref_pend <= ref_pend + 1'b1;
             end else begin
                 ref_timer <= ref_timer + 1'b1;
             end
@@ -900,7 +1044,13 @@ module avalon_mm_sdram_controller #(
                 S_REF_PRE: if (issue_pre || !any_open) state <= S_REF_TRP;
                 S_REF_TRP: if (all_rp_done)             state <= S_REF_CMD;
                 S_REF_CMD: if (issue_ref) begin
-                    if (ref_pend != '0) ref_pend <= ref_pend - 1'b1;
+                    // Spend a credit, and fold in the one the timer is
+                    // earning on this same cycle. This assignment is later in
+                    // the block than the interval timer's, so it overrides it;
+                    // adding ref_tick back is what stops the credit from being
+                    // dropped rather than deferred. See ref_tick.
+                    if (ref_pend != '0)
+                        ref_pend <= ref_pend - 1'b1 + (ref_tick ? 4'd1 : 4'd0);
                     state <= S_RUN;
                 end
 
@@ -915,11 +1065,26 @@ module avalon_mm_sdram_controller #(
     // =========================================================================
     // Read return
     //
-    // A READ decided in cycle k reaches the device on edge k+1, and the device
-    // drives DQ for one cycle ending on edge k+1+CAS_LAT - so that is the edge
-    // to capture on. Seeding the shift register at bit CAS_LAT does exactly
-    // that: the marker reaches bit 0 during the interval the device is driving,
-    // and the capture happens on the edge that closes it.
+    // Count the edges carefully - this paragraph had them off by one for a
+    // while, and it is the paragraph anyone reaches for when read data comes
+    // back wrong.
+    //
+    // A READ decided in cycle k is REGISTERED onto the pins at edge k+1, and
+    // the device therefore SAMPLES it at edge k+2 - arriving at the pins and
+    // being clocked in are one cycle apart, which is the whole point of the
+    // registered outputs. Call that edge R. With CAS latency L the device
+    // drives DQ for the one cycle ending at edge R+L, so R+L = k+2+CAS_LAT is
+    // the edge to capture on.
+    //
+    // The shift register is RD_PIPE_D+1 bits and is seeded at its top bit, so
+    // the marker reaches bit 0 during cycle k+1+RD_PIPE_D and the capture -
+    // which reads bit 0 and is therefore one edge later still - lands on edge
+    // k+2+RD_PIPE_D. With RD_EXTRA_LAT at its default of zero that is exactly
+    // R+CAS_LAT.
+    //
+    // RD_EXTRA_LAT moves that capture later. CYC_WTR is derived from the same
+    // sum for exactly this reason: the cycle the controller starts DRIVING DQ
+    // has to stay behind the cycle it LATCHES it.
     //
     // The shift register carries only a "data is coming back" marker and stores
     // no address: SDRAM returns read data strictly in order, so the master's

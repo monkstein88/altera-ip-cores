@@ -34,6 +34,13 @@ module avalon_mm_sdram_controller_tb #(
     // Overridable from the command line (-G) so the regression can sweep
     // configurations. Everything else is fixed to the DE10-Lite part.
     parameter int CAS_LAT    = 3,
+    // Swept like everything else. RD_EXTRA_LAT models a board that registers
+    // the DQ return path (see the dq_ctrl wiring below); WR_TURNAROUND_EXTRA
+    // buys margin on the read-to-write bus turnaround. Both feed CYC_WTR in
+    // the controller, and a configuration nobody simulates is a configuration
+    // nobody has checked.
+    parameter int RD_EXTRA_LAT = 0,
+    parameter int WR_TURNAROUND_EXTRA = 0,
     parameter int FIFO_DEPTH = 8,
     parameter int LOOKAHEAD  = 1,
     parameter int ADDR_MAP   = 0,
@@ -113,9 +120,35 @@ module avalon_mm_sdram_controller_tb #(
     logic [BANK_BITS-1:0]   zs_ba;
     logic                   zs_cas_n, zs_cke, zs_cs_n, zs_ras_n, zs_we_n;
     logic [DATA_BITS/8-1:0] zs_dqm;
-    wire  [DATA_BITS-1:0]   zs_dq;
+    wire  [DATA_BITS-1:0]   zs_dq;      // the SDRAM bus: device, and writes
+
+    // ---- model of a registered DQ return path -------------------------------
+    //
+    // RD_EXTRA_LAT exists for a board that puts registers between the DQ pins
+    // and this controller, so read data lands a cycle or more late. That is a
+    // property of the BOARD, not of the part, so the device model must not be
+    // asked to fake it - the delay belongs between the two.
+    //
+    // The controller's port therefore hangs off dq_ctrl rather than the bus:
+    // its writes drive straight through undelayed, and what comes back is the
+    // bus delayed by RD_EXTRA_LAT cycles. At the default of zero this is a
+    // plain wire and the two nets are the same net in every respect.
+    //
+    // Without this the parameter could not be swept at all, which is how it
+    // came to be shipped with a GUI range of 0:3 while every non-zero value
+    // returned the wrong word: CYC_WTR did not track it, so the controller
+    // turned its DQ drivers on before it had latched the read.
+    wire  [DATA_BITS-1:0]   dq_ctrl;
+    logic [DATA_BITS-1:0]   dq_del [RD_EXTRA_LAT > 0 ? RD_EXTRA_LAT : 1];
+
+    always_ff @(posedge clk) begin
+        dq_del[0] <= zs_dq;
+        for (int i = 1; i < RD_EXTRA_LAT; i++) dq_del[i] <= dq_del[i-1];
+    end
 
     avalon_mm_sdram_controller #(
+        .RD_EXTRA_LAT(RD_EXTRA_LAT),
+        .WR_TURNAROUND_EXTRA(WR_TURNAROUND_EXTRA),
         .DATA_BITS(DATA_BITS), .ROW_BITS(ROW_BITS), .COL_BITS(COL_BITS),
         .BANK_BITS(BANK_BITS), .SA_BITS(SA_BITS), .CAS_LAT(CAS_LAT),
         .FIFO_DEPTH(FIFO_DEPTH), .CLK_KHZ(CLK_KHZ), .T_INIT_US(2),
@@ -130,17 +163,45 @@ module avalon_mm_sdram_controller_tb #(
         .az_rd_n(az_rd_n), .az_wr_n(az_wr_n),
         .za_data(za_data), .za_valid(za_valid), .za_waitrequest(za_waitrequest),
         .zs_addr(zs_addr), .zs_ba(zs_ba), .zs_cas_n(zs_cas_n), .zs_cke(zs_cke),
-        .zs_cs_n(zs_cs_n), .zs_dq(zs_dq), .zs_dqm(zs_dqm),
+        .zs_cs_n(zs_cs_n), .zs_dq(dq_ctrl), .zs_dqm(zs_dqm),
         .zs_ras_n(zs_ras_n), .zs_we_n(zs_we_n));
 
-    sdram_device_model #(
-        .DATA_BITS(DATA_BITS), .ROW_BITS(ROW_BITS), .COL_BITS(COL_BITS),
-        .BANK_BITS(BANK_BITS), .SA_BITS(SA_BITS)
-    ) mem (
-        .clk(clk),
-        .zs_addr(zs_addr), .zs_ba(zs_ba), .zs_cas_n(zs_cas_n), .zs_cke(zs_cke),
-        .zs_cs_n(zs_cs_n), .zs_dq(zs_dq), .zs_dqm(zs_dqm),
-        .zs_ras_n(zs_ras_n), .zs_we_n(zs_we_n));
+    // With no added delay the controller and the device share ONE net, exactly
+    // as they always did. Bridging two nets with a pair of tristate drivers
+    // instead is a real combinational cycle - dq_ctrl -> zs_dq -> dq_ctrl -
+    // and a bidirectional one, which no scheduler resolves and no UNOPTFLAT
+    // waiver makes sound. Only the register in the delayed arm breaks it.
+    // Hence the generate; and hence the SAME block name on both arms, so
+    // g_dq.mem names the device model whichever arm was built.
+    generate
+        if (RD_EXTRA_LAT == 0) begin : g_dq
+            sdram_device_model #(
+                .DATA_BITS(DATA_BITS), .ROW_BITS(ROW_BITS), .COL_BITS(COL_BITS),
+                .BANK_BITS(BANK_BITS), .SA_BITS(SA_BITS)
+            ) mem (
+                .clk(clk),
+                .zs_addr(zs_addr), .zs_ba(zs_ba), .zs_cas_n(zs_cas_n),
+                .zs_cke(zs_cke), .zs_cs_n(zs_cs_n), .zs_dq(dq_ctrl),
+                .zs_dqm(zs_dqm), .zs_ras_n(zs_ras_n), .zs_we_n(zs_we_n));
+        end else begin : g_dq
+            sdram_device_model #(
+                .DATA_BITS(DATA_BITS), .ROW_BITS(ROW_BITS), .COL_BITS(COL_BITS),
+                .BANK_BITS(BANK_BITS), .SA_BITS(SA_BITS)
+            ) mem (
+                .clk(clk),
+                .zs_addr(zs_addr), .zs_ba(zs_ba), .zs_cas_n(zs_cas_n),
+                .zs_cke(zs_cke), .zs_cs_n(zs_cs_n), .zs_dq(zs_dq),
+                .zs_dqm(zs_dqm), .zs_ras_n(zs_ras_n), .zs_we_n(zs_we_n));
+            // Writes drive the bus undelayed; reads come back RD_EXTRA_LAT late.
+            assign zs_dq   = dut.dq_oe ? dq_ctrl : {DATA_BITS{1'bz}};
+            assign dq_ctrl = dut.dq_oe ? {DATA_BITS{1'bz}}
+                                       : dq_del[RD_EXTRA_LAT-1];
+        end
+    endgenerate
+
+    // The model's error tally, hoisted out of the generate so the summary at
+    // the end does not have to know which arm was built.
+    wire [31:0] mem_bad_access = 32'(g_dq.mem.bad_access);
 
     // CAS_LAT matters here: the read-to-write turnaround the checker
     // enforces is CAS_LAT+1, so leaving it at the default checked every
@@ -162,6 +223,7 @@ module avalon_mm_sdram_controller_tb #(
     bind avalon_mm_sdram_controller avalon_mm_sdram_controller_sva #(
         .DATA_BITS(DATA_BITS), .ROW_BITS(ROW_BITS), .BANK_BITS(BANK_BITS),
         .SA_BITS(SA_BITS), .ADDR_W(ADDR_W), .CAS_LAT(CAS_LAT),
+        .RD_EXTRA_LAT(RD_EXTRA_LAT), .WR_TURNAROUND_EXTRA(WR_TURNAROUND_EXTRA),
         .FIFO_DEPTH(FIFO_DEPTH), .REF_MAX_PEND(8)
     ) sva_i (
         .clk(clk), .reset_n(reset_n),
@@ -169,7 +231,8 @@ module avalon_mm_sdram_controller_tb #(
         .za_valid(za_valid), .za_waitrequest(za_waitrequest),
         .zs_addr(zs_addr), .zs_ba(zs_ba), .zs_cas_n(zs_cas_n), .zs_cke(zs_cke),
         .zs_cs_n(zs_cs_n), .zs_ras_n(zs_ras_n), .zs_we_n(zs_we_n),
-        .dq_oe(dq_oe), .ref_pend(ref_pend), .init_done(init_done),
+        .dq_oe(dq_oe), .rd_capture(rd_pipe[0]),
+        .ref_pend(ref_pend), .init_done(init_done),
         .row_open(row_open), .open_row(open_row));
 `endif
 
@@ -921,11 +984,11 @@ module avalon_mm_sdram_controller_tb #(
         $display("-------------------------------------------------------------------------");
         $display("  %0d checks passed, %0d failed", pass_n, fail_n);
         $display("  timing violations: %0d      illegal device accesses: %0d",
-                 tchk.errs, mem.bad_access);
+                 tchk.errs, mem_bad_access);
         $display("=========================================================================");
         $display("");
 
-        if (fail_n != 0 || tchk.errs != 0 || mem.bad_access != 0) begin
+        if (fail_n != 0 || tchk.errs != 0 || mem_bad_access != 0) begin
             $display(" *** TESTBENCH FAILED ***");
             $fatal(1);
         end

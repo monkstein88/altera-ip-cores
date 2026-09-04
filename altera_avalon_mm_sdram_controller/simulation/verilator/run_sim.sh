@@ -159,6 +159,16 @@ SWEEP=(
     "-GCLK_KHZ=143000"
     "-GCLK_KHZ=50000"
     "-GCLK_KHZ=50000 -GCAS_LAT=2 -GLOOKAHEAD=0"
+    # The two knobs that move CYC_WTR. Neither was ever simulated: the
+    # testbench did not pass RD_EXTRA_LAT to the DUT at all, so -G could not
+    # reach it, and it shipped with a GUI range of 0:3 while every non-zero
+    # value returned the wrong word - CYC_WTR did not track it, so the
+    # controller turned its DQ drivers on a cycle before it latched the read.
+    # A parameter the sweep cannot express is a parameter nobody has run.
+    "-GRD_EXTRA_LAT=1"
+    "-GRD_EXTRA_LAT=3"
+    "-GWR_TURNAROUND_EXTRA=1"
+    "-GRD_EXTRA_LAT=1 -GWR_TURNAROUND_EXTRA=1 -GCAS_LAT=2"
     # An eleven-bit column, where the column's top bit has to step over A10 -
     # the auto-precharge flag - onto A11. That branch of col_addr() had never
     # executed in simulation: the geometry sweep below only LINTS, and lint
