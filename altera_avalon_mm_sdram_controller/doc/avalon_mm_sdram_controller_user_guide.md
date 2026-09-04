@@ -391,7 +391,7 @@ priority chain shared one cycle, and f_MAX was 83 MHz.
 | `tb/sdram_timing_check.sv` | tRC, tRAS, tRP, tRCD, tRRD, tWR, tMRD, tRFC, read-to-write turnaround, refresh interval | Passing, with a 23-check threshold self-test |
 | `benchmark/` | Throughput against the core being replaced | Passing |
 | `example/de10_lite_rtl` | Board-level demonstration, 9 phases | 61 checks passing in simulation |
-| `simulation/questa/run_sim.tcl` | Coverage and assertion non-vacuity, same 14 configurations | 22 assertion instances, **none vacuous**, 100% FSM state and transition |
+| `simulation/questa/run_sim.tcl` | Coverage and assertion non-vacuity, same 14 configurations | 23 assertion instances, **none vacuous**, 100% FSM state and transition |
 | Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met with 1.011 ns slack (DE0-Nano), 0.208 ns (DE10-Lite) |
 | Hardware | Retention, refresh and full-device marches on silicon | **Both boards: 8/8 RTL and 10/10 Nios II each** |
 

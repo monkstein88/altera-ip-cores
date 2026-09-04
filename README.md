@@ -8,9 +8,9 @@ Quartus release that no longer ships it.
 All four originals carry documentation, self-checking testbenches and a
 Platform Designer component. What differs is how far each has been taken
 towards hardware: the two firewalls have been **programmed onto a board**, the
-SDRAM controller has a board demonstration that has only been **simulated**,
-and the SD card controller has **no board demonstration at all** — the DE10-Lite
-these examples target has no microSD socket.
+SDRAM controller has been **run on two different boards driving two different
+parts**, and the SD card controller has **no board demonstration at all** — the
+DE10-Lite these examples target has no microSD socket.
 
 The four original cores are **MIT licensed**; the vendor core keeps Intel's
 own terms — see [Licence](#licence).
@@ -23,7 +23,7 @@ own terms — see [Licence](#licence).
 |---|---|---|---|
 | [`altera_avalon_mm_firewall`](altera_avalon_mm_firewall/README.md) | **Avalon-MM Firewall** · v1.0 · *Bridges and Adapters / Custom* | Burst-capable access-control and fault-isolation firewall for Avalon-MM. Default-deny address windows with per-window read/write/burst permission, whole-burst range checking, downstream timeout detection and an explicit software recovery sequence | **Verified on hardware.** 632 checks, 22 assertions, 11 cover points |
 | [`altera_axi4_lite_firewall`](altera_axi4_lite_firewall/README.md) | **AXI4-Lite Firewall** · v2.0 · *Bridges and Adapters / Custom* | The same idea on AXI4-Lite: single transactions, capture-and-redrive rather than pass-through | **Verified on hardware.** 103 checks, 14 assertions, 6 cover points |
-| [`altera_avalon_mm_sdram_controller`](altera_avalon_mm_sdram_controller/README.md) | **Avalon-MM SDRAM Controller (per-bank rows)** · v1.0 · *Memory Interfaces and Controllers / Custom* | SDR SDRAM controller that keeps one open row *per bank* and treats a read/write turnaround as the datasheet does, rather than as a full row cycle. Drop-in replacement for the vendor core below | **Run on hardware — 8/8 scenarios pass on a Terasic DE0-Nano, including refresh retention.** 199.6 MB/s on row hits, 99.8% of the bus. 3.6–8.9× the vendor core on mixed and scattered traffic, for 3.4× the logic. 2158 testbench assertions across 13 configurations, four board demonstrations on two boards, 259 documentation claims checked |
+| [`altera_avalon_mm_sdram_controller`](altera_avalon_mm_sdram_controller/README.md) | **Avalon-MM SDRAM Controller (per-bank rows)** · v1.0 · *Memory Interfaces and Controllers / Custom* | SDR SDRAM controller that keeps one open row *per bank* and treats a read/write turnaround as the datasheet does, rather than as a full row cycle. Drop-in replacement for the vendor core below | **Run on two boards — 8/8 RTL scenarios and 10/10 Nios II checks pass on a Terasic DE0-Nano and on a DE10-Lite, including refresh retention.** 199.6 MB/s on row hits, 99.8% of the bus. 3.6–8.9× the vendor core on mixed and scattered traffic, for 3.8× the logic. 3,024 testbench checks across 18 configurations, four board demonstrations on two parts, 295 documentation claims checked |
 | [`altera_avalon_mm_sdcard_controller`](altera_avalon_mm_sdcard_controller/README.md) | **Avalon-MM SD Card Controller (SPI)** · v1.0 · *Memory Interfaces and Controllers / Custom* | SD card controller in SPI mode. Hardware does the link layer — framing, CRC7/CRC16, tokens, multi-block streaming, pre-emptive busy polling, optional DMA — and a Nios II HAL driver does the card protocol | **Simulation only — never on a board.** 48 testbench checks against a specification-derived card model, 22 on the Platform Designer component. **98.1% of SPI line rate**, measured |
 | [`altera_avalon_new_sdram_controller`](altera_avalon_new_sdram_controller/README.md) | **SDRAM Controller Intel FPGA IP** · v20.1 · *Memory Interfaces and Controllers / SDRAM* | Intel's own SDRAM controller, kept here because current Quartus releases no longer ship it | Vendor IP, unhidden so it is usable — see *Provenance*. **Demo verified on hardware:** all 64 MB written and read back at 194 MB/s |
 
@@ -34,16 +34,19 @@ Interfaces and Controllers** — the SDRAM and SD cores in *Custom*, Intel's in
 
 ### Verified on hardware means verified on hardware
 
-Three of the demonstrations here were built, programmed and run on a
-physical DE10-Lite (Intel MAX 10, `10M50DAF484C7G`), and each reports its own
-pass/fail over JTAG rather than asking you to read LEDs:
+Every demonstration here except the SD card controller's was built, programmed
+and run on physical hardware, and each reports its own pass/fail over JTAG
+rather than asking you to read LEDs. Most target a DE10-Lite (Intel MAX 10,
+`10M50DAF484C7G`); the SDRAM controller additionally targets a DE0-Nano
+(Cyclone IV E, `EP4CE22F17C6`), because a second part is the only way to tell a
+controller that is correct from one that is fitted to a single geometry:
 
-| | Avalon-MM Firewall | AXI4-Lite Firewall | SDRAM Controller Intel FPGA IP |
-|---|---|---|---|
-| RTL demo — no CPU, no software | 16/16 scenarios at 50 MHz | 16/16 scenarios at 50 MHz | 8/8 scenarios at **100 MHz** |
-| Nios II/f demo — C, in a generated Qsys system | 41/41 checks at **100 MHz** | 33/33 checks at 100 MHz | — |
+| | Avalon-MM Firewall | AXI4-Lite Firewall | Avalon-MM SDRAM Controller | SDRAM Controller Intel FPGA IP |
+|---|---|---|---|---|
+| RTL demo — no CPU, no software | 16/16 scenarios at 50 MHz | 16/16 scenarios at 50 MHz | **8/8 on the DE10-Lite and 8/8 on the DE0-Nano**, both at 100 MHz | 8/8 scenarios at **100 MHz** |
+| Nios II/f demo — C, in a generated Qsys system | 41/41 checks at **100 MHz** | 33/33 checks at 100 MHz | **10/10 on each board**, at 100 MHz | — |
 
-**Two cores are deliberately absent from that table.**
+**One core is deliberately absent from that table.**
 
 `altera_avalon_mm_sdcard_controller` has no board demonstration at all. The
 DE10-Lite has no microSD socket, so one would need a breakout on the 2x20 GPIO
@@ -52,21 +55,22 @@ assertions against a card model written to the SD specification (including every
 failure a card can report), 22 checks on its Platform Designer component, and a
 measured 98.1% of SPI line rate. All of it in simulation.
 
-`altera_avalon_mm_sdram_controller` is absent for a different reason.
-It has never been on a board either, but it does have a board demonstration -
-one that passes 58 checks in simulation, a measurement harness that reproduces the
-hardware-verified 194 MB/s of the core it replaces, and a Platform Designer
-component checked against a real Quartus installation. All of that is
-simulation, and none of it is a substitute for a board.
-
-The Avalon core's demos are the source of its published resource and Fmax
+The Avalon firewall's demos are the source of its published resource and Fmax
 numbers: 60.77 MHz with the combinational rule lookup, 95.85 MHz with
 `REGISTER_LOOKUP` enabled, at the core's default parameters on a `C7` part.
 
-The SDRAM demo writes and verifies **all 33,554,432 words** of the board's
-64 MB chip and times the transfer: **194 MB/s sequential**, 97% of the 200 MB/s
-theoretical peak for a 16-bit bus at 100 MHz, against 22 MB/s when every access
-is forced to miss its row.
+**Intel's** SDRAM demo writes and verifies **all 33,554,432 words** of the
+DE10-Lite's 64 MB chip and times the transfer: **194 MB/s sequential**, 97% of
+the 200 MB/s theoretical peak for a 16-bit bus at 100 MHz, against 22 MB/s when
+every access is forced to miss its row. The replacement core is measured on the
+same board against the same stimulus and reaches **199.6 MB/s** on row hits —
+and 3.6–8.9× Intel's core once the access pattern stops being purely
+sequential, which is the whole reason it exists.
+
+The two boards do not carry the same part: the DE0-Nano's IS42S16160B has 9
+column bits and 32 MByte, the DE10-Lite's IS42S16320D has 10 and 64. The
+address decode, the preset mechanism and every derived timing are therefore
+exercised across two geometries rather than fitted to one.
 
 ---
 
@@ -78,7 +82,7 @@ is forced to miss its row.
 4. Click **Add…** and select the **top level of your clone** — the
    `altera-ip-cores` directory itself.
 5. **File ▸ Refresh System.** All five cores appear in the IP Catalog — the
-   two firewalls under *Bridges and Adapters / Custom*, the new SDRAM
+   two firewalls under *Bridges and Adapters / Custom*, the per-bank SDRAM
    controller and the SD card controller under *Memory Interfaces and
    Controllers / Custom*, and Intel's under *Memory Interfaces and Controllers
    / SDRAM*.
@@ -197,7 +201,7 @@ The cores' own RTL is plain synthesisable SystemVerilog with no device
 primitives, no vendor attributes and no inferred memory, so it is not tied to a
 family or a release. Only the examples are.
 
-For simulation, all three original cores have a **Verilator** regression that
+For simulation, all four original cores have a **Verilator** regression that
 needs no licence — 5.050 or newer, because older releases do not implement the
 SVA the assertions use. What differs is what else each one has been run under:
 
@@ -205,7 +209,7 @@ SVA the assertions use. What differs is what else each one has been run under:
 |---|---|---|---|
 | `altera_avalon_mm_firewall` | yes | yes — coverage, assertions | yes — functional only, `-DICARUS` skips the SVA bind |
 | `altera_axi4_lite_firewall` | yes | yes — coverage, assertions | yes — same |
-| `altera_avalon_mm_sdram_controller` | yes — 13 configurations, plus Quartus Analysis & Synthesis | yes — 13 configurations, coverage, assertion non-vacuity | — |
+| `altera_avalon_mm_sdram_controller` | yes — 18 configurations, plus Quartus Analysis & Synthesis | yes — 14 of those, coverage, assertion non-vacuity | — |
 | `altera_avalon_mm_sdcard_controller` | yes — 3 testbenches | — | — |
 
 The SD card controller additionally carries two checks that need no simulator at
@@ -238,7 +242,10 @@ altera-ip-cores/
 ├── altera_avalon_mm_sdram_controller/  SDRAM controller, per-bank open rows
 │   ├── rtl/ tb/ simulation/ doc/       and the same shape as the firewalls
 │   ├── benchmark/                      the ruler it and Intel's are measured on
-│   └── example/de10_lite_rtl/          board demo, simulated but not yet run
+│   ├── example/de10_lite_rtl/          four board demos, all run on silicon:
+│   ├── example/de10_lite_nios/         two boards x (RTL sequencer, Nios II),
+│   ├── example/de0_nano_rtl/           on two parts of different geometry
+│   └── example/de0_nano_nios/
 ├── altera_avalon_mm_sdcard_controller/ SD card controller, SPI mode
 │   ├── rtl/ tb/ simulation/ doc/       card model, three testbenches
 │   ├── HAL/ inc/ *_sw.tcl              HAL driver the BSP picks up itself
@@ -248,11 +255,16 @@ altera-ip-cores/
 ```
 
 Each core's own `README.md` is the real documentation: design rationale,
-register map, parameters, verification status and known limitations. All three
+register map, parameters, verification status and known limitations. All four
 original cores additionally carry a full user guide and an architecture or
 block-diagram document, in Markdown and PDF, under `doc/` — each with a
 `check_facts.py` that re-derives every number in them from the RTL and fails if
 any has drifted.
+
+Those scripts check their own core and nothing above it. This file is the one
+document in the repository that no tool polices, which is exactly how it came
+to describe the SDRAM controller as never having reached a board, two
+paragraphs after a table saying it had.
 
 ---
 
@@ -318,7 +330,7 @@ which also records the modification made to it here.
 If you take everything except `altera_avalon_new_sdram_controller/`, only the
 MIT licence applies.
 
-One caveat for the new SDRAM controller: its benchmark can *generate* Intel's
+One caveat for `altera_avalon_mm_sdram_controller`: its benchmark can *generate* Intel's
 controller and memory model from your own Quartus installation, to measure
 against. That generated output is Intel's, under Intel's terms, and is
 gitignored rather than committed. Nothing Intel-derived ships in this

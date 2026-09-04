@@ -390,7 +390,7 @@ altera_avalon_mm_sdram_controller/
 |---|---|---|
 | [`simulation/verilator/run_sim.sh`](simulation/verilator/run_sim.sh) | Lint of RTL, checker and model; timing-checker self-test; testbench across 18 configurations including three clock rates and all three supplied parts; lint in 4 geometries; Quartus Analysis & Synthesis | 27 checks, 168 checks per configuration |
 | [`tb/`](tb) | 168 checks per configuration, on the command stream as well as the data | Passing |
-| [`simulation/questa/run_sim.tcl`](simulation/questa/run_sim.tcl) | The same 18 configurations, plus code coverage and assertion non-vacuity | 22 assertion instances, **none vacuous** |
+| [`simulation/questa/run_sim.tcl`](simulation/questa/run_sim.tcl) | Fourteen of those configurations — its `run_one` has no argument for the read-capture or turnaround knobs, so the four that exercise those run under Verilator only — plus code coverage and assertion non-vacuity | 23 assertion instances, **none vacuous** |
 | [`benchmark/`](benchmark/README.md) | Throughput against the core being replaced | Passing |
 | [`example/de10_lite_rtl`](example/de10_lite_rtl/README.md) | DE10-Lite board demonstration, 9 phases | 61 checks in simulation, **8/8 scenarios on the board** |
 | [`example/de0_nano_rtl`](example/de0_nano_rtl/README.md) | DE0-Nano board demonstration, same nine phases at the other part's geometry | 61 checks in simulation, **8/8 scenarios on the board** |
@@ -398,12 +398,11 @@ altera_avalon_mm_sdram_controller/
 | [`example/de0_nano_nios`](example/de0_nano_nios/README.md) | The same, on the DE0-Nano | **10/10 checks on the board** |
 | Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met, +1.011 ns DE0-Nano, +0.208 ns DE10-Lite |
 | [`doc/tools/check_facts.py`](doc/tools/check_facts.py) | Every number in the documents, re-derived from the RTL — and the throughput table re-measured by running the benchmark | 295 claims |
-| Hardware, DE0-Nano | Every scenario on a real board | **8/8 passing on silicon** |
-| Hardware, DE10-Lite | The same, on the other part: 10-bit column, 64 MByte | **8/8 RTL and 10/10 Nios II on silicon** |
+| Hardware, DE0-Nano | Every scenario on a real board: 9-bit column, 32 MByte | **8/8 RTL passing on silicon** |
 | Hardware, DE0-Nano, Nios II | Byte enables, 32-bit width adaptation, from a CPU | **10/10 passing on silicon** |
-| Hardware, DE10-Lite | Every scenario on the other part: 10-bit column, 64 MByte | **8/8 RTL and 10/10 Nios II on silicon** |
+| Hardware, DE10-Lite | The same two, on the other part: 10-bit column, 64 MByte | **8/8 RTL and 10/10 Nios II on silicon** |
 
-Questa reports every one of the 22 assertion instances passing **non-vacuously**,
+Questa reports every one of the 23 assertion instances passing **non-vacuously**,
 which is the number that matters: an assertion that only ever passes because
 its antecedent never held has verified nothing while reporting green.
 
