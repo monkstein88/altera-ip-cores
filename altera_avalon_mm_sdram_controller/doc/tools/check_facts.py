@@ -389,18 +389,48 @@ for idx, nm in sorted(part_of.items()):
 #
 # So run it. The custom core needs no Quartus, so this costs a Verilator build
 # and about a second of simulation. Skipped, loudly, if Verilator is missing.
+def cxx_extra():
+    """The flags --timing needs from a compiler older than GCC 12.
+
+    `--timing` compiles to C++20 coroutines. GCC before 12 has them behind
+    -fcoroutines and defaults to a standard that predates them, so a stock
+    Ubuntu 22.04 host fails to build the runtime with "the coroutine header
+    requires -fcoroutines".
+
+    run_sim.sh and benchmark/run_bench.sh have both carried this for a while.
+    This function did not, and the consequence was quiet in exactly the way
+    this whole file exists to prevent: the build failed, bench_rows() returned
+    __build_failed__, and the throughput table - the headline measurement of
+    the project - was reported as UNVERIFIED rather than checked, on the very
+    host the other two scripts are written to accommodate.
+    """
+    import shutil, subprocess
+    if not shutil.which("g++"):
+        return None
+    try:
+        ver = subprocess.run(["g++", "-dumpversion"],
+                             capture_output=True, text=True).stdout.strip()
+        if int(ver.split(".")[0]) < 12:
+            return "-std=gnu++20 -fcoroutines"
+    except (ValueError, IndexError, OSError):
+        pass
+    return None
+
+
 def bench_rows():
     """Run benchmark/ for the custom core and return {pattern: MB/s string}."""
     import shutil, subprocess, tempfile
     if not shutil.which("verilator"):
         return None
+    cflags = cxx_extra()
     with tempfile.TemporaryDirectory() as td:
         build = subprocess.run(
             ["verilator", "--binary", "--timing", "--assert",
              "-Wno-WIDTHEXPAND", "-Wno-WIDTHTRUNC", "-Wno-DECLFILENAME",
              "-Wno-INITIALDLY", "-Wno-BLKSEQ", "-Wno-PROCASSINIT",
-             "-MAKEFLAGS", "VK_PCH_I_FAST= VK_PCH_I_SLOW=",
-             "-DDUT_MODULE=avalon_mm_sdram_controller",
+             "-MAKEFLAGS", "VK_PCH_I_FAST= VK_PCH_I_SLOW="]
+            + (["-CFLAGS", cflags] if cflags else [])
+            + ["-DDUT_MODULE=avalon_mm_sdram_controller",
              "--top-module", "sdram_bench_tb", "-o", "bench", "-Mdir", td,
              os.path.join(ROOT, "rtl/avalon_mm_sdram_controller.sv"),
              os.path.join(ROOT, "tb/sdram_device_model.sv"),

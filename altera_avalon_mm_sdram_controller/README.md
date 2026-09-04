@@ -397,7 +397,7 @@ altera_avalon_mm_sdram_controller/
 | [`example/de10_lite_nios`](example/de10_lite_nios/README.md) | Nios II memory test through cache, interconnect and a width adapter | **10/10 checks on the board**; byte enables and 32-bit access are only reachable here |
 | [`example/de0_nano_nios`](example/de0_nano_nios/README.md) | The same, on the DE0-Nano | **10/10 checks on the board** |
 | Quartus | Synthesis, fit, timing closure, bitstream | 100 MHz met, +1.011 ns DE0-Nano, +0.208 ns DE10-Lite |
-| [`doc/tools/check_facts.py`](doc/tools/check_facts.py) | Every number in the documents, re-derived from the RTL — and the throughput table re-measured by running the benchmark | 280 claims |
+| [`doc/tools/check_facts.py`](doc/tools/check_facts.py) | Every number in the documents, re-derived from the RTL — and the throughput table re-measured by running the benchmark | 295 claims |
 | Hardware, DE0-Nano | Every scenario on a real board | **8/8 passing on silicon** |
 | Hardware, DE10-Lite | The same, on the other part: 10-bit column, 64 MByte | **8/8 RTL and 10/10 Nios II on silicon** |
 | Hardware, DE0-Nano, Nios II | Byte enables, 32-bit width adaptation, from a CPU | **10/10 passing on silicon** |
