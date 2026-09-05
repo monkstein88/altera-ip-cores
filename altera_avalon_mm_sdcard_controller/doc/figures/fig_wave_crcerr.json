@@ -1,0 +1,50 @@
+{
+ "signal": [
+  {
+   "name": "MOSI",
+   "wave": "2222222",
+   "data": [
+    "FF",
+    "FF",
+    "FF",
+    "FF",
+    "FF",
+    "FF",
+    "FF"
+   ]
+  },
+  {
+   "name": "MISO",
+   "wave": "3333333",
+   "data": [
+    "9C",
+    "9D",
+    "9E",
+    "9F",
+    "8E",
+    "C6",
+    "FF"
+   ]
+  },
+  {},
+  {
+   "name": "state",
+   "wave": "4...5.4",
+   "data": [
+    "RD_DATA",
+    "RD_CRC",
+    "DONE"
+   ]
+  },
+  {
+   "name": "ABORT entered",
+   "wave": "0.....1"
+  }
+ ],
+ "head": {
+  "text": "A corrupted CRC16, caught at the end of the last CRC byte"
+ },
+ "config": {
+  "hscale": 2
+ }
+}

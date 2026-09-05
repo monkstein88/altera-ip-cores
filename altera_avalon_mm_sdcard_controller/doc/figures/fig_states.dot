@@ -1,0 +1,68 @@
+digraph fig_states {
+  bgcolor="white";
+  fontname="DejaVu Sans"; fontsize=11;
+  node [fontname="DejaVu Sans", fontsize=10.5, shape=box,
+        style="filled,rounded", penwidth=1.4, margin="0.18,0.09"];
+  edge [fontname="DejaVu Sans", fontsize=9, fontcolor="#555555",
+        penwidth=1.3, arrowsize=0.75];
+  rankdir=TB;
+  ranksep=0.42;
+  nodesep=0.35;
+
+  // States are drawn without the RTL's S_ prefix: it is repeated twenty times,
+  // carries nothing, and in the timing figures a prefixed name does not fit a
+  // one-column box. The prose names them in full.
+  node [fillcolor="#E2EFDA", color="#375623", fontname="DejaVu Sans Mono", fontsize=10];
+  edge [color="#375623"];
+
+  IDLE  [label="IDLE", fillcolor="#F2F2F2", color="#595959"];
+  PRE   [label="PRE_BUSY"];
+  CMD   [label="CMD"];
+  RESP  [label="RESP_WAIT"];
+  TRAIL [label="RESP_TRAIL"];
+  R1B   [label="R1B_BUSY"];
+  DAT   [label="DAT_START"];
+
+  RDT [label="RD_TOKEN"]; RDD [label="RD_DATA"]; RDC [label="RD_CRC"];
+  WRT [label="WR_TOKEN"]; WRD [label="WR_DATA"]; WRC [label="WR_CRC"];
+  WRR [label="WR_RESP"];  WRL [label="WR_TAIL"];
+
+  BEND [label="BLOCK_END"];
+  PREW [label="PRE_BUSY_W"];
+  STOP [label="STOP_TRAN"];
+  DONE [label="DONE",  fillcolor="#E8F5E9", color="#2E7D32", penwidth=2];
+  ABRT [label="ABORT", fillcolor="#FDECEC", color="#C00000", penwidth=2];
+
+  IDLE -> PRE  [label="  CMD written"];
+  PRE  -> CMD  [label="  MISO high"];
+  CMD  -> RESP;
+  RESP -> TRAIL [label="  R2/R3/R7"];
+  RESP -> R1B   [label="  R1b"];
+  TRAIL -> DAT;
+  R1B  -> DAT;
+  RESP -> DAT  [label="  R1"];
+  RESP -> DONE [label="  no data phase  ", constraint=false];
+
+  DAT -> RDT [label="  read"];
+  DAT -> WRT [label="  write"];
+  RDT -> RDD [label="  0xFE"];
+  RDD -> RDC; RDC -> BEND;
+  WRT -> WRD; WRD -> WRC; WRC -> WRR; WRR -> WRL; WRL -> BEND;
+
+  BEND -> PREW [label="  more blocks"];
+  PREW -> WRT  [constraint=false, style=dashed];
+  BEND -> STOP [label="  multi-block\l  write ends\l"];
+  BEND -> DONE [label="  finished  "];
+  STOP -> DONE;
+  ABRT -> DONE [color="#C00000", fontcolor="#C00000", label="  abort the DMA,\l  then drain it\l"];
+  DONE -> IDLE [style=dotted, color="#595959", constraint=false];
+
+  any [label="any state", shape=plaintext, style="", fontsize=9,
+       fontcolor="#C00000"];
+  any -> ABRT [color="#C00000", style=dashed,
+               label="  error or timeout  ", fontcolor="#C00000"];
+
+  { rank=same; RDT; WRT; }
+  { rank=same; DONE; ABRT; any; }
+
+}

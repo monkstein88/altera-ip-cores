@@ -277,8 +277,6 @@ stall timeouts can be reached at all.
 
 All registers are 32 bits, word-addressed on `csr`. Read latency is 1.
 
-![Register map](figures/fig_regmap.svg)
-
 | Offset | Word | Name | Access | Purpose |
 |---|---|---|---|---|
 | 0x00 | 0 | `CTRL` | RW | Enable, CS control, CRC, DMA, soft resets |
@@ -540,21 +538,21 @@ why it survived until the PIO configuration was run.
 ## 9.2 Assertions, and proving they are alive
 
 24 bound SVA assertions and 5 cover points, in
-`tb/avalon_mm_sdcard_controller_sva.sv`. They check invariants rather than
-results, which is what this core needed: most of its defects were
-protocol-invisible — a byte queued twice, a CRC fed seven of eight bits, a
-transfer declared complete with a byte still in the shifter — and each violates
-an invariant statable in one line.
+`tb/avalon_mm_sdcard_controller_sva.sv`.
 
-A passing assertion proves nothing on its own, so
+They check invariants rather than results. That suits this core: most of its
+bugs were invisible on the wire — a byte queued twice, a CRC fed seven of eight
+bits, a transfer declared complete with a byte still in the shifter — and each
+one breaks an invariant you can state in a line.
+
+A passing assertion proves nothing by itself, so
 `verification/check_assertions_fire.sh` injects three faults into scratch copies
-and requires each to be caught by the assertion meant to catch it.
+of the RTL and requires each to be caught by the assertion meant to catch it.
 
-That check earned its place immediately. The first fault chosen for the shifter
-turned out to be **unreachable**: the sequencer always enters a sending state
-with the shifter already running, because `S_PRE_BUSY` free-runs `0xFF` first, so
-the `!hold_v` term in its idle output is defensive rather than load-bearing. The
-script says so rather than quietly substituting a fault that worked.
+The first fault it tried turned out to be **unreachable**. `S_PRE_BUSY` clocks
+`0xFF` before every command, so the shifter is always already running when a
+sending state begins, and the `!hold_v` term in its idle output can never fire.
+The script records that rather than swapping in a fault that worked.
 
 ## 9.3 Questa
 

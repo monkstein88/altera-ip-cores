@@ -312,8 +312,8 @@ full Quartus toolchain tries to build a project.
 | `check_hw_tcl.tcl` | 22 | The component executes; parameters and ports exist; validation rejects exactly the bad configurations |
 | `check_driver_builds.sh` | 3 | The driver compiles clean under `-Wall -Wextra`; CSD capacity arithmetic for both structure versions; the register header stands alone |
 | `check_assertions_fire.sh` | 3 faults | Each injected into a scratch copy and required to be caught by the assertion meant to catch it |
-| `check_figures.sh` | 10 figures | Each re-rendered from its generator and compared byte for byte, because a stale picture is worse than a missing one |
-| `check_facts.py` | 174 | Every register offset, parameter default, line count and measured figure in these documents, re-derived from the RTL |
+| `check_figures.sh` | 9 figures | Each re-rendered from its generator and compared byte for byte, because a stale picture is worse than a missing one |
+| `check_facts.py` | 193 | Every register offset, parameter default, line count and measured figure in these documents, re-derived from the RTL |
 | lint | 10 configs | `-Wall` clean across every parameter that changes what is built |
 
 **The full-core suite runs five times**, and the exit status is the AND across
@@ -428,12 +428,14 @@ doc/          user guide, block diagrams, design specification, figures
 
 The design record is the *why*: each decision, what the specification requires,
 and what is still open. The user guide is the *how*. The block-diagram document
-carries the pictures — and every one of them is generated rather than drawn:
+carries the pictures — Graphviz for the block diagrams, WaveDrom for the
+timing figures, and every one generated rather than drawn:
 
 ```bash
-python3 doc/tools/diagrams/build_figures.py   # the block diagrams
+python3 doc/tools/diagrams/build_figures.py   # block diagrams, via Graphviz
 ./verification/capture.sh                     # record verification/wave.vcd
-python3 doc/tools/waveforms/mkwaves.py        # the timing figures, cut from it
+cd doc/tools/waveforms && npm install         # once, for WaveDrom
+python3 doc/tools/waveforms/mkwaves.py        # timing figures, cut from the VCD
 python3 doc/tools/build_pdf.py all            # typeset both documents
 ```
 

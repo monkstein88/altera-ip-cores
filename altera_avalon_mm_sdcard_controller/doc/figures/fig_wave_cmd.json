@@ -1,0 +1,54 @@
+{
+ "signal": [
+  {
+   "name": "MOSI",
+   "wave": "22222222222",
+   "data": [
+    "FF",
+    "40",
+    "00",
+    "00",
+    "00",
+    "00",
+    "95",
+    "FF",
+    "FF",
+    "FF",
+    "FF"
+   ]
+  },
+  {
+   "name": "MISO",
+   "wave": "33333333333",
+   "data": [
+    "FF",
+    "FF",
+    "FF",
+    "FF",
+    "FF",
+    "FF",
+    "FF",
+    "FF",
+    "FF",
+    "01",
+    "FF"
+   ]
+  },
+  {},
+  {
+   "name": "state",
+   "wave": "4.....5...4",
+   "data": [
+    "CMD",
+    "RESP_WAIT",
+    "DONE"
+   ]
+  }
+ ],
+ "head": {
+  "text": "CMD0 \u2014 six bytes out, then the card answers"
+ },
+ "config": {
+  "hscale": 2
+ }
+}

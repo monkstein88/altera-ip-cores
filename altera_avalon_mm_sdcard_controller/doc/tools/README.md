@@ -1,85 +1,94 @@
 # doc/tools
 
-Everything under `doc/` that is a picture or a PDF is generated. Nothing here is
-hand-drawn or hand-typeset, and that is the point.
+Every picture and every PDF under `doc/` is generated. Nothing is hand-drawn or
+hand-typeset.
 
-| Tool | Produces |
-|---|---|
-| `diagrams/build_figures.py` | The five block diagrams, as SVG in `doc/figures/` |
-| `diagrams/svg_lib.py` | The drawing library the other cores' diagrams use, so the figures across this repository look like one set |
-| `waveforms/mkwaves.py` | The five timing figures, cut out of a recorded simulation |
-| `waveforms/wavedraw.py` | VCD reader and waveform renderer |
-| `build_pdf.py` | Markdown → HTML → PDF, with title page, TOC, running heads |
-| `check_facts.py` | Re-derives every number in the documentation from source and fails if any has drifted |
+| Tool | Produces | Needs |
+|---|---|---|
+| `diagrams/build_figures.py` | Four block diagrams, as `.dot` + `.svg` | Graphviz |
+| `waveforms/mkwaves.py` | Five timing figures, as `.json` + `.svg` | a recorded VCD; Node for the SVG |
+| `waveforms/vcd.py` | VCD reader used by the above | — |
+| `waveforms/render.js` | WaveDrom JSON → SVG | Node, `npm install` |
+| `build_pdf.py` | Markdown → HTML → PDF | `weasyprint`, `markdown` |
+| `check_facts.py` | Nothing — verifies every number in the documents | — |
 
 ## Regenerating everything
 
 ```bash
 python3 doc/tools/diagrams/build_figures.py   # block diagrams
 ./verification/capture.sh                     # record verification/wave.vcd
-python3 doc/tools/waveforms/mkwaves.py        # timing figures, cut from the VCD
+cd doc/tools/waveforms && npm install         # once
+python3 doc/tools/waveforms/mkwaves.py        # timing figures
 python3 doc/tools/build_pdf.py all            # typeset both documents
-python3 doc/tools/check_facts.py              # verify every number
+./verification/check_figures.sh               # confirm the tracked SVGs match
+python3 doc/tools/check_facts.py              # confirm every number
 ```
 
-`build_pdf.py` needs `weasyprint` and `markdown`; the rest need only Python 3.
-`capture.sh` needs Verilator.
+The SVGs are tracked, so **reading** the documents needs none of these tools.
+They are only needed to change a figure.
 
-## Why SVG rather than a drawing program
+## Why Graphviz for the block diagrams
 
-A drawing program's file is a zip of XML. It cannot be reviewed in a diff,
-cannot be grepped for a stale claim, and cannot be checked by a script. Every
-number that appears in these figures also appears in the RTL, and
-`check_facts.py` compares them — including the register map, which the
-block-diagram document carries as a figure rather than a table, so the claim
-being checked lives in `build_figures.py`.
+The first version placed every box and every line by hand, in centimetres.
+For a row of boxes that is fine. For the sequencer's twenty states it was not:
+two convergence lines ran right to left across the whole figure at nearly the
+same height, crossed the arrow they were converging with, and clipped a label on
+the way past. `S_ABORT` sat at the far right pointing backwards into `S_DONE`.
+The diagram could not be followed.
 
-## Why the timing figures come from a VCD
+Edge routing is a solved problem. Graphviz does the layout; `build_figures.py`
+only says what connects to what, so moving a node reroutes every line.
 
-Because a hand-drawn timing diagram cannot be checked against anything, and
-quietly becomes fiction the first time the RTL changes.
+Two things learned the hard way, both recorded in comments at the point they
+matter:
 
-SPI-mode SD is exactly the protocol where that does damage. It is full of
-details a plausible-looking drawing gets wrong: `N_CR` is a **range** and not a
-fixed latency, the data-response token carries **five bits of meaning in eight**,
-and CRC16 is seeded with **zero** rather than the 0xFFFF that "CCITT" implies
-everywhere else. A drawing that gets any of those wrong looks entirely
-convincing, and a reader has no way to tell.
+- A `rank=same` group that mixes nodes inside a cluster with nodes outside it
+  does not just fail to constrain them — it collapses the cluster's bounding box
+  down to whatever is left inside.
+- Clusters stack in **reverse** declaration order, so listing read, write and
+  PIO in that order prints them upside down.
 
-So `verification/wave_capture_tb.sv` drives four scenarios and dumps a VCD, and
+## Why WaveDrom for the timing figures
+
+Because it is what the notation is for, and the previous hand-rolled renderer
+kept meeting problems WaveDrom had already solved — labels wider than their box
+painted over their neighbours, notes that ran off the edge of the SVG.
+
+The figures are still generated from a real simulation.
+`verification/wave_capture_tb.sv` drives four scenarios and dumps a VCD;
 `mkwaves.py` reconstructs the byte stream from `sd_mosi` and `sd_miso` sampled on
-`sd_clk` rising edges — which is where the receiver samples — and cuts figures
-out of it. Change the design and either the figure changes with it, or
-`mkwaves.py` exits with an error naming the token or state it could no longer
-find.
+`sd_clk` rising edges — where the receiver samples — and emits WaveDrom JSON.
+Change the RTL and either the figure changes with it, or `mkwaves.py` stops
+finding the token or state it is looking for and exits saying which.
+
+That matters here more than for most cores. SPI-mode SD is full of details a
+plausible drawing gets wrong: `N_CR` is a range and not a fixed latency, the
+data-response token carries five bits of meaning in eight, and CRC16 is seeded
+with zero rather than the `0xFFFF` that "CCITT" implies everywhere else. A
+drawing that gets any of those wrong still looks convincing.
+
+One WaveDrom trap, in case you edit the JSON by hand: repeating a character in a
+`wave` string does **not** mean "unchanged". Every character is a fresh
+transition, so `"0000001"` draws six glitches. Only `.` continues the previous
+level.
 
 ## Byte-level, with one exception
 
-A bit-level view of a 512-byte block is 4,096 columns wide, and the structure
-worth seeing in this protocol is not in the bits but in the **sequence of
-bytes**: which token arrived, how many idle bytes passed before the response,
-what the card answered. So the figures are one column per byte-time.
+A bit-level view of a 512-byte block is 4,096 columns wide, and what matters in
+this protocol is the sequence of **bytes**: which token arrived, how many idle
+bytes passed before the response, what the card answered. So one column is one
+byte-time.
 
-`fig_wave_bit` is the exception, and shows a single byte at bit level, because
+`fig_wave_bit` is the exception and shows a single byte at bit level, because
 the sampling edge is the one fact a byte-level view cannot express and the one
-an integrator has to get right when wiring this to a real card.
+to get right against real hardware.
 
-## Notes on `wavedraw.py`
+## Two things that are deliberately not figures
 
-This copy differs from the firewall cores' in two ways, both forced by
-byte-level protocol figures:
+**The register map.** It was a figure once — the same rows the user guide
+carries as a table, drawn as a picture: unselectable, unsearchable, and one more
+thing to keep in step. A table should be a table.
 
-- A **`byte` row kind** that draws one cell per column. The shared `bus` kind
-  merges runs of equal adjacent values, which is right for an address that holds
-  for several cycles and wrong here: a six-byte command frame whose four
-  argument bytes are all zero collapses to three cells, and the reader can no
-  longer count the frame.
-- **Two-pass cell drawing** — every shape first, then every label — because a
-  label wider than its own cell was being painted over by the next cell's fill,
-  so `RD_TOKEN` in a single byte-time rendered as `RD_TOKE` with nothing to say
-  it had been cut. Labels that still do not fit are scaled down rather than
-  allowed to collide.
-
-Notes under a figure are also wrapped to the figure's width. They were being
-emitted as single unwrapped lines, which ran off the right edge of the SVG and
-stopped mid-word.
+**The explanatory notes.** They used to be baked into each figure as a block of
+small text. They are prose in the documents now, where they can be edited,
+searched, and read at a sensible size.

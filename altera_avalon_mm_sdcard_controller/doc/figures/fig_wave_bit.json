@@ -1,0 +1,26 @@
+{
+ "signal": [
+  {
+   "name": "sd_clk",
+   "wave": "00110011001100110011001100110011001"
+  },
+  {
+   "name": "sd_mosi",
+   "wave": "00001111000000000000000000000000000"
+  },
+  {
+   "name": "sd_miso",
+   "wave": "11111111111111111111111111111111111"
+  },
+  {
+   "name": "sd_cs_n",
+   "wave": "00000000000000000000000000000000000"
+  }
+ ],
+ "head": {
+  "text": "One byte on the wire \u2014 MOSI 0x40, MISO 0xFF, MSB first. One column is one host clock."
+ },
+ "config": {
+  "hscale": 1
+ }
+}

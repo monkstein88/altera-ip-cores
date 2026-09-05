@@ -42,8 +42,8 @@ DOCS = {
     "ug": ("avalon_mm_sdcard_controller_user_guide", "User Guide", "1.0",
            "\n# 1. About this core"),
     "diagrams": ("avalon_mm_sdcard_controller_block_diagrams",
-                 "Block Diagrams and Descriptions", "1.0",
-                 "\n# 1. System context"),
+                 "Block Diagrams", "1.1",
+                 "\n# 1. What it connects to"),
 }
 
 TITLE = "Avalon-MM SD Card Controller IP Core"
@@ -161,8 +161,17 @@ def is_wide(img_tag):
     try:
         if path.endswith(".svg"):
             head = open(path, encoding="utf-8").read(400)
-            w = re.search(r'width="(\d+(?:\.\d+)?)"', head)
-            return bool(w) and float(w.group(1)) > WIDE_PX
+            # Graphviz writes width="1029pt", WaveDrom writes width="1240".
+            # Matching only bare numbers silently classified every Graphviz
+            # figure as narrow, which put the widest diagrams in the portrait
+            # column to be squeezed to a third of their size.
+            w = re.search(r'width="(\d+(?:\.\d+)?)(pt|px)?"', head)
+            if not w:
+                return False
+            px = float(w.group(1))
+            if w.group(2) == "pt":
+                px *= 96.0 / 72.0        # points to CSS pixels
+            return px > WIDE_PX
         from PIL import Image
         with Image.open(path) as im:
             # Raster block diagrams are downsampled from 200 dpi renders and

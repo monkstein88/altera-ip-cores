@@ -1,0 +1,52 @@
+digraph fig_datapath {
+  bgcolor="white";
+  fontname="DejaVu Sans"; fontsize=11;
+  node [fontname="DejaVu Sans", fontsize=10.5, shape=box,
+        style="filled,rounded", penwidth=1.4, margin="0.18,0.09"];
+  edge [fontname="DejaVu Sans", fontsize=9, fontcolor="#555555",
+        penwidth=1.3, arrowsize=0.75];
+  rankdir=LR;
+  ranksep=0.5;
+  nodesep=0.35;
+
+  node [fillcolor="#DCE6F1", color="#1F3864"];
+  edge [color="#2E7D32", penwidth=1.8];
+
+  // Declared bottom-first: dot stacks clusters in reverse declaration
+  // order, so listing read, write, PIO in the obvious order prints them
+  // upside down.
+  subgraph cluster_pio {
+    label="Read with USE_DMA = 0 — the CPU moves every word";
+    fontcolor="#C00000"; color="#C00000"; style=rounded; margin=12;
+    p0 [label="SD card", fillcolor="#F2F2F2", color="#595959"];
+    p1 [label="spi_phy"];
+    p2 [label="fifo"];
+    p3 [label="CPU\nreads the DATA\nregister, on a deadline",
+        fillcolor="#FDECEC", color="#C00000"];
+    edge [color="#C00000"];
+    p0 -> p1 -> p2 -> p3;
+  }
+  subgraph cluster_wr {
+    label="Write — memory to card"; fontcolor="#2E7D32"; color="#2E7D32";
+    style=rounded; margin=12;
+    w0 [label="memory", fillcolor="#F2F2F2", color="#595959"];
+    w1 [label="dma\nbursts words"];
+    w2 [label="fifo\nunpacks a word\ninto 4 bytes"];
+    w3 [label="spi_phy\none byte per\n8 SPI clocks"];
+    w4 [label="SD card", fillcolor="#F2F2F2", color="#595959"];
+    w0 -> w1 -> w2 -> w3 -> w4;
+  }
+
+  subgraph cluster_rd {
+    label="Read — card to memory"; fontcolor="#2E7D32"; color="#2E7D32";
+    style=rounded; margin=12;
+    r0 [label="SD card", fillcolor="#F2F2F2", color="#595959"];
+    r1 [label="spi_phy\none byte per\n8 SPI clocks"];
+    r2 [label="fifo\npacks 4 bytes\ninto a word"];
+    r3 [label="dma\nbursts words"];
+    r4 [label="memory", fillcolor="#F2F2F2", color="#595959"];
+    r0 -> r1 -> r2 -> r3 -> r4;
+  }
+
+
+}

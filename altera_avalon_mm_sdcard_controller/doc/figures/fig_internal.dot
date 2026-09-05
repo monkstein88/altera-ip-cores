@@ -1,0 +1,73 @@
+digraph fig_internal {
+  bgcolor="white";
+  fontname="DejaVu Sans"; fontsize=11;
+  node [fontname="DejaVu Sans", fontsize=10.5, shape=box,
+        style="filled,rounded", penwidth=1.4, margin="0.18,0.09"];
+  edge [fontname="DejaVu Sans", fontsize=9, fontcolor="#555555",
+        penwidth=1.3, arrowsize=0.75];
+  rankdir=LR;
+  ranksep=0.75;
+  nodesep=0.45;
+
+  compound=true;
+
+  subgraph cluster_core {
+    label="avalon_mm_sdcard_controller";
+    fontcolor="#843C0C"; fontsize=12; color="#843C0C"; penwidth=2;
+    style=rounded; bgcolor="#FDE9D9"; margin=16;
+
+    node [fillcolor="#DCE6F1", color="#1F3864"];
+    regs [label="regs\nregister file"];
+    fifo [label="fifo\nbytes to words"];
+    phy  [label="spi_phy\ncontinuous shifter"];
+    crc  [label="crc\nCRC7 + CRC16"];
+    ckg  [label="clkgen\nSPI clock"];
+
+    node [fillcolor="#E2EFDA", color="#375623", penwidth=1.8];
+    seq  [label="seq\nprotocol engine"];
+
+    node [fillcolor="#FFFFFF", color="#595959", style="filled,rounded,dashed"];
+    dma  [label="dma\nAvalon master\n(USE_DMA)"];
+
+    edge [color="#1F3864"];
+    regs -> seq  [label="  commands  ", dir=both];
+    seq  -> fifo [label="  block data  ", dir=both];
+    fifo -> dma  [dir=both];
+    seq  -> phy  [label="  a byte at a time  ", dir=both];
+    ckg  -> phy  [label="  strobes  ", color="#595959"];
+    phy  -> crc  [label="  every byte  ", dir=both];
+    regs -> dma  [label="  address  ", color="#375623", style=dashed,
+                  constraint=false];
+
+    // Two lanes, forced - and forced from INSIDE the cluster. Left to right
+    // the core is a chain, but it forks at the sequencer: block data leaves
+    // through the FIFO and the master, single bytes leave through the shifter.
+    // Without these ranks dot interleaves the two and draws the CRC unit past
+    // the memory, as though it were downstream of it.
+    //
+    // A rank group that mixes nodes inside the cluster with nodes outside it
+    // does not merely fail, it collapses the cluster's bounding box down to
+    // whatever is left - so host, ram and pins are deliberately not here.
+    // crc and clkgen are satellites of the shifter, not stages after it, so
+    // they share its column rather than taking a rank of their own. Given a
+    // rank to themselves the CRC unit sits between the shifter and the pins
+    // and the SPI wire has to detour around it.
+    { rank=same; fifo; phy; ckg; crc; }
+  }
+
+  node [fillcolor="#F2F2F2", color="#595959", style=filled];
+  host [label="CPU"];
+  ram  [label="memory"];
+  pins [label="SD card"];
+
+  edge [color="#1F3864"];
+  host -> regs [label="  csr  ", dir=both];
+  dma  -> ram  [label="  m0  ", dir=both];
+  phy  -> pins [label="  sd  ", dir=both];
+
+  // Both of these are outside the cluster, so grouping them is safe - and it
+  // is what stops the SD card being drawn adrift below the core with its wire
+  // running diagonally across the corner of the box.
+  { rank=same; ram; pins; }
+
+}

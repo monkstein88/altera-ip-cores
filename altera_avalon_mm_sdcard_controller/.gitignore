@@ -46,6 +46,13 @@ coverage.dat
 __pycache__/
 *.pyc
 
+# WaveDrom, installed next to the renderer that uses it:
+#   cd doc/tools/waveforms && npm install wavedrom onml
+# The rendered SVGs ARE tracked, so reading the documents needs no Node at all.
+# package.json IS tracked - it is what tells you which two modules to install.
+doc/tools/waveforms/node_modules/
+doc/tools/waveforms/package-lock.json
+
 # Document build intermediates. The .md and the .pdf are tracked; the HTML
 # handed to WeasyPrint is a debugging aid only.
 doc/tools/.render_*.html

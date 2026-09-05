@@ -231,12 +231,8 @@ SEQ = rd("rtl/avalon_mm_sdcard_controller_seq.sv")
 
 # --- 9.1 register map ---
 #
-# The user guide carries the map as a table, so its offsets are checked against
-# the package directly. The block-diagram document carries it as a FIGURE, so
-# the claim to check there is in the script that draws the figure - checking the
-# prose would only confirm that the document does not repeat the offsets, which
-# it deliberately does not.
-FIGSRC = rd("doc/tools/diagrams/build_figures.py")
+# Only the user guide's table now. The block-diagram document used to carry the
+# map as a figure - the same rows drawn as a picture - and that figure is gone.
 for name, word in re.findall(
         r"localparam int unsigned REG_(\w+)\s*=\s*(\d+);", PKG):
     if name == "COUNT":
@@ -247,8 +243,10 @@ for name, word in re.findall(
     check(f"the user guide lists {name} at {off}",
           row is not None and row.group(1) == name,
           f"guide row says {row.group(1) if row else None!r}")
-    check(f"the register-map figure lists {name} at {off}",
-          f'("{off}", "{name}"' in FIGSRC, f"expected ({off}, {name})")
+
+check("the register map is no longer drawn as a figure",
+      not os.path.exists(os.path.join(ROOT, "doc", "figures",
+                                      "fig_regmap.svg")))
 
 # --- 9.2 sequencer state count ---
 m = re.search(r"typedef enum logic \[4:0\] \{(.*?)\} state_e;", SEQ, re.S)
@@ -260,6 +258,31 @@ for doc, label in ((UG, "user guide"), (BD, "block diagrams")):
     check(f"{label} states the sequencer's state count correctly",
           re.search(r"\b20 states\b|\bTwenty states\b|\b20-state\b", doc)
           is not None)
+
+# The figures name states without the RTL's S_ prefix, and the block-diagram
+# document tells the reader so. If that sentence goes, the figures become
+# unmatchable against the RTL by anyone reading them.
+check("the block-diagram document explains the dropped S_ prefix",
+      "S_` prefix" in BD or "S_ prefix" in BD)
+
+# Every state the STATE DIAGRAM draws must exist in the RTL under that name.
+# Read the generated .dot rather than the script that writes it: the script
+# also draws four other figures whose boxes are called things like "CPU" and
+# "memory", and scanning all of its labels asks the RTL for states that were
+# never meant to be states.
+rtl_states = [x.strip() for x in re.sub(r"//[^\n]*", "", m.group(1)).split(",")
+              if x.strip()] if m else []
+DOTPATH = os.path.join(ROOT, "doc", "figures", "fig_states.dot")
+check("the state diagram's Graphviz source is tracked",
+      os.path.exists(DOTPATH))
+if os.path.exists(DOTPATH):
+    dot = open(DOTPATH, encoding="utf-8").read()
+    drawn = sorted(set(re.findall(r'label="([A-Z][A-Z0-9_]*)"', dot)))
+    check("the state diagram draws some states", len(drawn) > 10,
+          f"found {len(drawn)}")
+    for fs in drawn:
+        check(f"the state diagram's {fs} exists in the RTL",
+              ("S_" + fs) in rtl_states, f"no S_{fs} in state_e")
 
 # --- 9.3 assertion and cover counts, counted from the file itself ---
 # This is the check that was missing when the root README drifted to "19
@@ -307,12 +330,19 @@ for doc, label in ((UG, "user guide"), (BD, "block diagrams")):
     check(f"{label} does not claim the 0xFFFF seed",
           "0xFFFF" not in doc or "not" in doc.lower())
 
-# --- 9.7 figures referenced by the documents must exist ---
+# --- 9.7 figures referenced by the documents must exist, with their sources ---
 FIGDIR = os.path.join(ROOT, "doc", "figures")
 for doc, label in ((UG, "user guide"), (BD, "block diagrams")):
     for fig in re.findall(r"!\[[^\]]*\]\(figures/([\w.]+)\)", doc):
         check(f"{label} references a figure that exists: {fig}",
               os.path.exists(os.path.join(FIGDIR, fig)))
+        # Every figure is generated, so every SVG has a tracked source next to
+        # it: .dot for the Graphviz block diagrams, .json for the WaveDrom
+        # timing figures. An SVG with no source is one somebody hand-edited.
+        stem = os.path.splitext(fig)[0]
+        src = ".json" if stem.startswith("fig_wave") else ".dot"
+        check(f"{fig} has its generator source ({src}) beside it",
+              os.path.exists(os.path.join(FIGDIR, stem + src)))
 
 # --- 9.8 honesty, again: neither document may claim hardware verification ---
 for doc, label in ((UG, "user guide"), (BD, "block diagrams")):

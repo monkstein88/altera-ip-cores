@@ -1,0 +1,50 @@
+{
+ "signal": [
+  {
+   "name": "MOSI",
+   "wave": "22222222",
+   "data": [
+    "9D",
+    "9E",
+    "9F",
+    "71",
+    "39",
+    "FF",
+    "FF",
+    "FF"
+   ]
+  },
+  {
+   "name": "MISO",
+   "wave": "33333333",
+   "data": [
+    "FF",
+    "FF",
+    "FF",
+    "FF",
+    "FF",
+    "05",
+    "00",
+    "00"
+   ]
+  },
+  {},
+  {
+   "name": "state",
+   "wave": "4.5.4.54",
+   "data": [
+    "WR_DATA",
+    "WR_CRC",
+    "WR_RESP",
+    "WR_TAIL",
+    "DONE"
+   ]
+  }
+ ],
+ "head": {
+  "text": "CMD24 \u2014 CRC16, the data-response token, then the card is busy"
+ },
+ "config": {
+  "hscale": 2
+ }
+}

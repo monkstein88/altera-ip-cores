@@ -1,0 +1,75 @@
+{
+ "signal": [
+  {
+   "name": "MOSI",
+   "wave": "22222222222222",
+   "data": [
+    "55",
+    "FF",
+    "FF",
+    "FF",
+    "FF",
+    "FF",
+    "FF",
+    "FF",
+    "FF",
+    "FF",
+    "FF",
+    "FF",
+    "FF",
+    "FF"
+   ]
+  },
+  {
+   "name": "MISO",
+   "wave": "33333333333333",
+   "data": [
+    "FF",
+    "FF",
+    "FF",
+    "01",
+    "FE",
+    "A0",
+    "A1",
+    "A2",
+    "A3",
+    "A4",
+    "A5",
+    "A6",
+    "A7",
+    "A8"
+   ]
+  },
+  {},
+  {
+   "name": "state",
+   "wave": "4...54........",
+   "data": [
+    "RESP_WAIT",
+    "RD_TOKEN",
+    "RD_DATA"
+   ]
+  },
+  {
+   "name": "FIFO bytes",
+   "wave": "=.....========",
+   "data": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "0",
+    "1",
+    "2",
+    "3",
+    "0"
+   ]
+  }
+ ],
+ "head": {
+  "text": "CMD17 \u2014 the 0xFE token, then data"
+ },
+ "config": {
+  "hscale": 2
+ }
+}

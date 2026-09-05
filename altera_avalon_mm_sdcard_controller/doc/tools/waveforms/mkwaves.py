@@ -1,52 +1,57 @@
 #!/usr/bin/env python3
 """
-Render the user guide's timing figures from a real simulation.
+Render the documents' timing figures from a recorded simulation.
 
-The figures are generated from a VCD rather than drawn by hand, so they cannot
-drift away from the RTL: change the design and either the figure changes with
-it, or the scenario stops matching and this script fails loudly. A hand-drawn
-timing diagram just quietly becomes fiction - and SPI-mode SD is exactly the
-kind of protocol where that happens, because it is full of details a plausible
-drawing gets wrong: N_CR is a range and not a fixed latency, the data-response
-token carries five bits of meaning in eight, and CRC16 is seeded with zero
-rather than the 0xFFFF that "CCITT" implies everywhere else.
+    ./verification/capture.sh                 # writes verification/wave.vcd
+    python3 doc/tools/waveforms/mkwaves.py    # writes doc/figures/fig_wave_*
 
-The bench lives in verification/wave_capture_tb.sv; this module only renders
-what it captured.
+Writes one .json and one .svg per figure. Both are tracked: the JSON is
+WaveDrom source, readable and diffable; the SVG is what the documents embed,
+so that building this repository does not require Node.
 
-    ./verification/capture.sh                     # writes verification/wave.vcd
-    python3 doc/tools/waveforms/mkwaves.py
+-----------------------------------------------------------------------------
+WHERE THE FIGURES COME FROM
+-----------------------------------------------------------------------------
+Not from a drawing program. verification/wave_capture_tb.sv drives four
+scenarios against the RTL and dumps a VCD; this script reconstructs the SPI byte
+stream from sd_mosi and sd_miso sampled on sd_clk rising edges - which is where
+the receiver samples - and emits WaveDrom.
 
-WHY THESE FIGURES ARE BYTE-LEVEL
---------------------------------
-A bit-level view of a 512-byte block is 4,096 columns wide, and the interesting
-structure of this protocol is not in the bits - it is in the sequence of BYTES:
-which token arrived, how many idle bytes passed before the response, what the
-card answered. So this renderer reconstructs bytes from sd_mosi and sd_miso by
-sampling them on sd_clk rising edges - which is where the receiver samples,
-CPOL=0/CPHA=0 - and draws one column per byte-time.
+Change the design and either the figure changes with it, or this script stops
+finding the token or state it is looking for and exits saying which. A hand
+drawn timing diagram just quietly becomes wrong, and SPI-mode SD punishes that:
+N_CR is a range and not a fixed latency, the data-response token carries five
+bits of meaning in eight, CRC16 is seeded with zero rather than the 0xFFFF that
+"CCITT" implies everywhere else. A drawing that gets any of those wrong still
+looks convincing.
 
-One figure is the exception. fig_wave_bit shows a single byte at bit level,
-because the sampling edge is the one fact a byte-level view cannot express and
-the one an integrator has to get right when they wire this to a real card.
+-----------------------------------------------------------------------------
+WHY BYTE-LEVEL
+-----------------------------------------------------------------------------
+A bit-level view of a 512-byte block is 4,096 columns wide, and what matters in
+this protocol is the sequence of BYTES: which token arrived, how many idle bytes
+passed before the response, what the card answered. So one column is one
+byte-time.
 
-Written figures:
-    fig_wave_bit        one byte at bit level, showing the sampling edge
-    fig_wave_cmd        a command frame and its R1 response, with N_CR
-    fig_wave_read       the start of a block read: R1, wait, 0xFE, data
-    fig_wave_write      the end of a block write: CRC, data-response, busy
-    fig_wave_crcerr     a block whose CRC16 does not match, and the abort
+fig_wave_bit is the exception and shows a single byte at bit level, because the
+sampling edge is the one fact a byte-level view cannot express and the one an
+integrator has to get right against real hardware.
+
+The figures carry a title and nothing else. Explanation belongs in the document
+around them, not baked into the picture where it cannot be edited or read at a
+sensible size.
 """
 
+import json
 import os
+import shutil
+import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from wavedraw import Vcd, val, draw          # noqa: E402
+from vcd import Vcd, val                       # noqa: E402
 
-# Every tool under doc/tools resolves paths from its own location rather than
-# the caller's cwd, so it works the same run from anywhere.
 DOC = os.path.abspath(os.path.join(HERE, "..", ".."))
 CORE = os.path.abspath(os.path.join(DOC, ".."))
 
@@ -62,9 +67,8 @@ TB = "wave_capture_tb"
 V = Vcd(VCD)
 os.makedirs(OUT, exist_ok=True)
 
-# The sequencer's state encoding, from rtl/..._seq.sv. Keeping the list here
-# rather than parsing the RTL would be a place for the two to drift, so
-# check_facts.py compares them.
+# The sequencer's state encoding, from rtl/..._seq.sv. check_facts.py compares
+# this list against the RTL so the two cannot drift apart.
 STATES = [
     "IDLE", "PRE_BUSY", "PRE_BUSY_W", "CMD", "RESP_WAIT", "RESP_TRAIL",
     "R1B_BUSY", "DAT_START", "RD_TOKEN", "RD_DATA", "RD_CRC", "WR_TOKEN",
@@ -72,19 +76,13 @@ STATES = [
     "DONE", "ABORT",
 ]
 
-# -----------------------------------------------------------------------------
-# Sampling
-#
 # The bench runs `always #5 clk = ~clk` on a 1ns/1ps timescale, so a host cycle
-# is 10,000 VCD ticks and the first negedge lands at 5,000. sd_clk is clk/2 at
-# CLKDIV=1, so an SPI bit is 20,000 ticks. Sampling every 5,000 catches every
-# sd_clk edge with a sample to spare, which is what the byte reconstruction
-# below needs.
-# -----------------------------------------------------------------------------
+# is 10,000 VCD ticks. sd_clk is clk/2 at CLKDIV=1, so an SPI bit is 20,000.
+# Sampling every 5,000 catches every sd_clk edge with one to spare.
 STEP = 5_000
 NAMES = [f"{TB}.{n}" for n in (
     "marker", "sd_clk", "sd_cs_n", "sd_mosi", "sd_miso", "irq",
-    "m0_address", "m0_write", "m0_writedata", "m0_burstcount", "m0_waitrequest",
+    "m0_address", "m0_write", "m0_waitrequest",
 )] + [
     f"{TB}.dut.u_seq.state",
     f"{TB}.dut.u_fifo.level_bytes",
@@ -98,29 +96,21 @@ if missing:
 S = V.sample(NAMES, 0, V.times[-1] if V.times else 0, STEP)
 
 
-def g(rec, sig, width=1):
-    return val(rec.get(f"{TB}.{sig}" if "." not in sig or sig.startswith("dut")
-                       else f"{TB}.{sig}", "x"), width)
-
-
 def sig(rec, name, width=1):
     return val(rec.get(name, "x"), width)
 
 
-# -----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 # Byte reconstruction
 #
-# Walk the samples, find sd_clk rising edges, and shift MOSI and MISO into two
-# 8-bit accumulators. A byte is complete on the eighth edge. Bit numbering is
-# MSB first, which is what SD SPI mode uses and what the shifter implements.
-#
-# Bytes are counted only while CS is asserted. The core free-runs 0xFF with CS
-# high before a command (S_PRE_BUSY), and including that in the byte stream
-# would put a run of meaningless 0xFF at the head of every figure.
-# -----------------------------------------------------------------------------
+# Walk the samples, find sd_clk rising edges, shift MOSI and MISO into two 8-bit
+# accumulators, most significant bit first. Bytes are counted only while CS is
+# asserted: the core free-runs 0xFF with CS high before a command, and including
+# that would put meaningless idle at the head of every figure.
+# ----------------------------------------------------------------------------
 class Byte:
     __slots__ = ("t0", "t1", "mosi", "miso", "state", "irq", "level",
-                 "m0_write", "m0_addr", "marker", "aborted")
+                 "m0_write", "marker", "aborted")
 
     def __init__(self, **kw):
         self.marker = 0
@@ -129,37 +119,25 @@ class Byte:
 
 
 def reconstruct():
-    out = []
-    prev_clk = None
-    nbits = 0
-    acc_o = acc_i = 0
-    t0 = None
-    # per-byte aggregates: a byte spans 16 host cycles, so "did the DMA write
-    # during this byte" is more useful in a byte-level figure than the value of
-    # m0_write at one instant.
+    out, prev_clk, nbits, acc_o, acc_i, t0 = [], None, 0, 0, 0, None
     saw_m0w = False
-    m0_addr = None
-    # S_ABORT is transient - the sequencer enters it, raises dma_abort, and
-    # routes on to S_DONE within a cycle or two. Sampling the state once per
-    # byte therefore never lands on it, and a figure drawn from that sample
-    # says the core went straight from RD_CRC to DONE, which would tell the
-    # reader the error path was not taken. So the abort is recorded as "was it
-    # entered at any point during this byte" rather than "is it the state now".
+    # S_ABORT is transient: the sequencer enters it, raises dma_abort and routes
+    # on to S_DONE within a cycle or two. Sampling state once per byte never
+    # lands on it, so a figure drawn from that sample says the error path was
+    # not taken. Record whether it was entered at any point during the byte.
     saw_abort = False
+    abort_code = STATES.index("ABORT")
     for t, rec in S:
         clk = sig(rec, f"{TB}.sd_clk")
-        cs = sig(rec, f"{TB}.sd_cs_n")
-        if cs != 0:
+        if sig(rec, f"{TB}.sd_cs_n") != 0:
             prev_clk, nbits, acc_o, acc_i, t0 = clk, 0, 0, 0, None
-            saw_m0w, m0_addr, saw_abort = False, None, False
+            saw_m0w, saw_abort = False, False
             continue
-        if sig(rec, f"{TB}.dut.u_seq.state", 5) == STATES.index("ABORT"):
+        if sig(rec, f"{TB}.dut.u_seq.state", 5) == abort_code:
             saw_abort = True
         if sig(rec, f"{TB}.m0_write") == 1 and \
                 sig(rec, f"{TB}.m0_waitrequest") == 0:
             saw_m0w = True
-            if m0_addr is None:
-                m0_addr = sig(rec, f"{TB}.m0_address", 32)
         if prev_clk == 0 and clk == 1:
             if nbits == 0:
                 t0 = t
@@ -173,10 +151,9 @@ def reconstruct():
                     irq=sig(rec, f"{TB}.irq"),
                     level=sig(rec, f"{TB}.dut.u_fifo.level_bytes", 16),
                     m0_write=1 if saw_m0w else 0,
-                    m0_addr=m0_addr,
                     aborted=1 if saw_abort else 0))
                 nbits, acc_o, acc_i = 0, 0, 0
-                saw_m0w, m0_addr, saw_abort = False, None, False
+                saw_m0w, saw_abort = False, False
         prev_clk = clk
     return out
 
@@ -185,20 +162,7 @@ BYTES = reconstruct()
 if not BYTES:
     sys.exit("error: no complete SPI bytes found in the VCD")
 
-
-def marker_at(t):
-    """The scenario marker in force at VCD time t."""
-    last = 0
-    for tt, rec in S:
-        if tt > t:
-            break
-        m = sig(rec, f"{TB}.marker", 32)
-        if m is not None:
-            last = m
-    return last
-
-
-# Tag every byte with its scenario, once, rather than rescanning per byte.
+# Tag every byte with the scenario in force when it completed.
 _mk, _i = 0, 0
 for b in BYTES:
     while _i < len(S) and S[_i][0] <= b.t1:
@@ -210,31 +174,19 @@ for b in BYTES:
 
 
 def scenario(n):
-    return [b for b in BYTES if getattr(b, "marker", 0) == n]
+    return [b for b in BYTES if b.marker == n]
 
 
 def st(b):
-    return STATES[b.state] if b.state is not None and b.state < len(STATES) \
-        else "?"
+    """State name without the RTL's S_ prefix.
 
-
-def hx(v):
-    return "--" if v is None else f"{v:02X}"
-
-
-def rows_for(bs, extra=()):
-    """Standard byte-level rows for a run of reconstructed bytes.
-
-    'byte' rather than 'bus' for the two wire rows, so that a run of equal
-    bytes is drawn as a run of cells and the reader can count the frame. The
-    state row uses 'bus', where merging is exactly what is wanted: a state that
-    holds for six byte-times should read as one wide cell.
-    """
-    r = [("MOSI  host to card", "byte", [hx(b.mosi) for b in bs]),
-         ("MISO  card to host", "byte", [hx(b.miso) for b in bs]),
-         ("sequencer state", "bus", [st(b) for b in bs])]
-    r.extend(extra)
-    return r
+    A state that lasts a single byte-time gets a one-column box, and WaveDrom
+    neither clips nor shrinks a label too wide for it - it centres the text and
+    lets it run over the neighbours. "S_RD_TOKEN" does exactly that even at
+    hscale 2. The prefix carries no information inside a figure whose row is
+    already labelled "state", so it goes, here and in the state diagram."""
+    return STATES[b.state] if b.state is not None \
+        and b.state < len(STATES) else "?"
 
 
 def find(bs, pred, start=0):
@@ -244,163 +196,190 @@ def find(bs, pred, start=0):
     return None
 
 
+# ----------------------------------------------------------------------------
+# WaveDrom helpers
+#
+# A wave string is one character per column. A character starts a new box; "."
+# continues the one before it. So a row of bytes, every one of which is its own
+# box, is a run of the same character with a data entry each - and a row that
+# should merge equal neighbours emits "." for the repeats.
+# ----------------------------------------------------------------------------
+def byte_row(name, values, ch="2"):
+    """One box per column, never merged - so a frame can be counted."""
+    return {"name": name, "wave": ch * len(values), "data": list(values)}
+
+
+def merged_row(name, values, chars="45"):
+    """Merge equal neighbours, alternating colour so the joins are visible."""
+    wave, data, prev, ci = "", [], object(), 0
+    for v in values:
+        if v == prev:
+            wave += "."
+        else:
+            wave += chars[ci % len(chars)]
+            ci += 1
+            data.append(v)
+            prev = v
+    return {"name": name, "wave": wave, "data": data}
+
+
+def bit_row(name, values):
+    """A per-sample bit row: every column is genuinely a new sample, so each
+    one gets its own character."""
+    return {"name": name,
+            "wave": "".join("x" if v is None else str(v) for v in values)}
+
+
+def level_row(name, values):
+    """A level that holds until it changes.
+
+    Repeating the same character in a wave string does NOT mean "still low" -
+    WaveDrom reads every character as a fresh transition and draws an edge at
+    each one, so a flat signal comes out as a row of spikes. Only "." continues
+    the level before it."""
+    wave, prev = "", None
+    for v in values:
+        c = "x" if v is None else str(int(v))
+        wave += "." if c == prev else c
+        prev = c
+    return {"name": name, "wave": wave}
+
+
+FIGS = {}
+
+
+def emit(name, signal, title, hscale=2):
+    """hscale 2 by default: a state that lasts one byte-time gets a one-column
+    box, and WaveDrom neither clips nor shrinks a label that does not fit - it
+    just draws it over the neighbours. "S_RD_TOKEN" in a single column at the
+    default scale lands on top of the two states either side of it."""
+    FIGS[name] = {"signal": signal, "head": {"text": title},
+                  "config": {"hscale": hscale}}
+
+
 # =============================================================================
 # 1. One byte at bit level
-#
-# The only figure here that is not byte-level, and the reason it exists: an
-# integrator wiring this to a real card needs to know which edge the data is
-# sampled on, and no byte-level view can say. CPOL=0, CPHA=0 - MOSI changes on
-# the falling edge, both ends sample on the rising edge.
 # =============================================================================
-def fig_bit():
-    # A byte from the command frame, chosen because its bits are not all the
-    # same - an 0xFF or 0x00 would make a figure that demonstrates nothing.
-    bs = scenario(1)
-    i = find(bs, lambda b: b.mosi not in (0x00, 0xFF))
-    if i is None:
-        sys.exit("error: no non-trivial command byte found for fig_wave_bit")
-    b = bs[i]
-    # Re-sample this one byte at host-cycle resolution. t0 is the first rising
-    # edge; back off half an SPI period so the figure opens before it.
-    t_from, t_to = b.t0 - 10_000, b.t1 + 20_000
-    fine = [rec for t, rec in S if t_from <= t <= t_to]
-    n = len(fine)
-    rows = [
-        ("sd_clk", "bit", [sig(r, f"{TB}.sd_clk") for r in fine]),
-        ("sd_mosi", "bit", [sig(r, f"{TB}.sd_mosi") for r in fine]),
-        ("sd_miso", "bit", [sig(r, f"{TB}.sd_miso") for r in fine]),
-        ("sd_cs_n", "bit", [sig(r, f"{TB}.sd_cs_n") for r in fine]),
-    ]
-    return draw(os.path.join(OUT, "fig_wave_bit.svg"), rows, n, notes=[
-        f"One byte on the wire: MOSI = 0x{b.mosi:02X}, MISO = 0x{b.miso:02X}, "
-        "most significant bit first.",
-        "CPOL = 0, CPHA = 0. MOSI changes on the falling edge of sd_clk; both "
-        "ends sample on the rising edge.",
-        "Each column is one host clock. At CLKDIV = 1 the SPI clock is clk/2, "
-        "so one SPI bit is two columns.",
-    ])
-
+bs = scenario(1)
+i = find(bs, lambda b: b.mosi not in (0x00, 0xFF))
+if i is None:
+    sys.exit("error: no non-trivial command byte found for fig_wave_bit")
+b = bs[i]
+fine = [rec for t, rec in S if b.t0 - 10_000 <= t <= b.t1 + 20_000]
+emit("fig_wave_bit", [
+    bit_row("sd_clk", [sig(r, f"{TB}.sd_clk") for r in fine]),
+    bit_row("sd_mosi", [sig(r, f"{TB}.sd_mosi") for r in fine]),
+    bit_row("sd_miso", [sig(r, f"{TB}.sd_miso") for r in fine]),
+    bit_row("sd_cs_n", [sig(r, f"{TB}.sd_cs_n") for r in fine]),
+], f"One byte on the wire — MOSI 0x{b.mosi:02X}, MISO 0x{b.miso:02X}, "
+   f"MSB first. One column is one host clock.", hscale=1)
 
 # =============================================================================
 # 2. A command frame and its R1 response
 # =============================================================================
-def fig_cmd():
-    bs = scenario(1)
-    i = find(bs, lambda b: b.mosi & 0xC0 == 0x40)      # the 01 start bits
-    if i is None:
-        sys.exit("error: no command frame found in scenario 1")
-    j = find(bs, lambda b: b.miso != 0xFF, i)          # the response byte
-    if j is None:
-        sys.exit("error: no R1 response found in scenario 1")
-    w = bs[max(0, i - 1):j + 3]
-    ncr = j - (i + 6)
-    return draw(os.path.join(OUT, "fig_wave_cmd.svg"), rows_for(w), len(w),
-                notes=[
-        "CMD0 GO_IDLE_STATE. Six bytes out: 0x40 | index, four argument bytes, "
-        "then CRC7 shifted up one with the stop bit in bit 0.",
-        f"The card answered {ncr} byte-times after the frame. The "
-        "specification allows N_CR to be anything from 0 to 8, so the core "
-        "polls for a byte with bit 7 clear rather than waiting a fixed time.",
-        "R1 = 0x01 is In Idle State, which is the correct answer to CMD0 and "
-        "not an error.",
-        "MISO reads 0xFF whenever the card is not driving it - the line is "
-        "pulled up, and the host clocks 0xFF out to generate the clock.",
-    ])
-
+bs = scenario(1)
+i = find(bs, lambda b: b.mosi & 0xC0 == 0x40)
+if i is None:
+    sys.exit("error: no command frame found in scenario 1")
+j = find(bs, lambda b: b.miso != 0xFF, i)
+if j is None:
+    sys.exit("error: no R1 response found in scenario 1")
+NCR = j - (i + 6)
+w = bs[max(0, i - 1):j + 3]
+emit("fig_wave_cmd", [
+    byte_row("MOSI", [f"{x.mosi:02X}" for x in w], "2"),
+    byte_row("MISO", [f"{x.miso:02X}" for x in w], "3"),
+    {},
+    merged_row("state", [st(x) for x in w]),
+], "CMD0 — six bytes out, then the card answers")
 
 # =============================================================================
 # 3. The start of a block read
 # =============================================================================
-def fig_read():
-    bs = scenario(2)
-    i = find(bs, lambda b: b.miso == 0xFE)             # the start token
-    if i is None:
-        sys.exit("error: no 0xFE data token found in scenario 2")
-    w = bs[max(0, i - 4):i + 10]
-    return draw(os.path.join(OUT, "fig_wave_read.svg"), rows_for(w, extra=[
-        ("FIFO bytes", "bus", [str(b.level) for b in w]),
-    ]), len(w), notes=[
-        "CMD17 READ_SINGLE_BLOCK, after the R1. The card may take as long as "
-        "it likes before the block arrives, so the core sits in RD_TOKEN "
-        "clocking 0xFF until it sees a token.",
-        "0xFE is the start-of-block token. Anything with the top four bits "
-        "clear is a data error token instead, and the core reports it in "
-        "ERR_INFO rather than treating the byte as data.",
-        "The 512 data bytes follow immediately, then a two-byte CRC16. The "
-        "FIFO count rises as they land; the DMA drains it in parallel, which "
-        "is why the count does not simply climb to 512.",
-    ])
-
+bs = scenario(2)
+i = find(bs, lambda b: b.miso == 0xFE)
+if i is None:
+    sys.exit("error: no 0xFE data token found in scenario 2")
+w = bs[max(0, i - 4):i + 10]
+emit("fig_wave_read", [
+    byte_row("MOSI", [f"{x.mosi:02X}" for x in w], "2"),
+    byte_row("MISO", [f"{x.miso:02X}" for x in w], "3"),
+    {},
+    merged_row("state", [st(x) for x in w]),
+    merged_row("FIFO bytes", [str(x.level) for x in w], "==")
+], "CMD17 — the 0xFE token, then data")
 
 # =============================================================================
 # 4. The end of a block write
 # =============================================================================
-def fig_write():
-    bs = scenario(3)
-    # The data-response token: the first byte after the block whose bit 4 is
-    # clear. Its shape is xxx0sss1 - five bits of meaning in eight.
-    i = find(bs, lambda b: st(b) == "WR_RESP" and b.miso is not None
-             and (b.miso & 0x11) == 0x01)
-    if i is None:
-        sys.exit("error: no data-response token found in scenario 3")
-    w = bs[max(0, i - 5):i + 8]
-    tok = bs[i].miso
-    sss = (tok >> 1) & 0x7
-    meaning = {0b010: "accepted", 0b101: "CRC error",
-               0b110: "write error"}.get(sss, "reserved")
-    nbusy = len([b for b in bs[i + 1:] if b.miso == 0x00])
-    return draw(os.path.join(OUT, "fig_wave_write.svg"), rows_for(w), len(w),
-                notes=[
-        "CMD24 WRITE_BLOCK, at the end of the block: the last data bytes, the "
-        "two CRC16 bytes, then the card's data-response token.",
-        f"The token is 0x{tok:02X}. Only five bits carry meaning - the shape is "
-        f"xxx0sss1, and sss = 0b{sss:03b} is \"{meaning}\". Comparing the whole "
-        "byte against a constant is the classic way to get this wrong.",
-        f"The card then held MISO low for {nbusy} byte-times while it "
-        "programmed the block. The core reports this as CARD_BUSY in STATUS "
-        "and will not start the next command until it lifts.",
-    ])
-
+bs = scenario(3)
+i = find(bs, lambda b: st(b) == "WR_RESP" and b.miso is not None
+         and (b.miso & 0x11) == 0x01)
+if i is None:
+    sys.exit("error: no data-response token found in scenario 3")
+TOKEN = bs[i].miso
+SSS = (TOKEN >> 1) & 0x7
+NBUSY = len([x for x in bs[i + 1:] if x.miso == 0x00])
+w = bs[max(0, i - 5):i + 8]
+emit("fig_wave_write", [
+    byte_row("MOSI", [f"{x.mosi:02X}" for x in w], "2"),
+    byte_row("MISO", [f"{x.miso:02X}" for x in w], "3"),
+    {},
+    merged_row("state", [st(x) for x in w]),
+], "CMD24 — CRC16, the data-response token, then the card is busy")
 
 # =============================================================================
 # 5. A block whose CRC16 does not match
 # =============================================================================
-def fig_crcerr():
-    bs = scenario(4)
-    i = find(bs, lambda b: st(b) == "RD_CRC")
-    if i is None:
-        sys.exit("error: scenario 4 never reached RD_CRC")
-    j = find(bs, lambda b: st(b) in ("ABORT", "DONE"), i)
-    end = (j + 3) if j is not None else (i + 6)
-    w = bs[max(0, i - 4):end]
-    # No irq row here, deliberately. irq is already high through the whole data
-    # phase because DMA_DONE fires each time the DMA drains a burst, so the row
-    # is a flat 1 and shows the reader nothing about the error. That is not a
-    # defect and it is worth knowing: the pin says "something happened", and
-    # only IRQ_STATUS says what. The note below says so instead.
-    return draw(os.path.join(OUT, "fig_wave_crcerr.svg"), rows_for(w, extra=[
-        ("S_ABORT entered", "bit", [b.aborted for b in w]),
-    ]), len(w), notes=[
-        "The same read as the previous figure, with the card corrupting the "
-        "CRC16. The two CRC bytes arrive in RD_CRC exactly as they would if "
-        "they were right - nothing on the wire says otherwise.",
-        "The core folds the final byte into the running CRC16 combinationally "
-        "and checks the result against zero, so the mismatch is known at the "
-        "end of the last CRC byte rather than a byte later. That is why the "
-        "check is written that way.",
-        "S_ABORT is transient - it raises dma_abort and routes on to S_DONE "
-        "within a cycle or two, which is why it never appears in the state row "
-        "and needs a row of its own. IRQ_STATUS bit 12 (ERR_DAT_CRC) is set, "
-        "and any DMA still in flight is drained rather than cut off mid-burst - "
-        "an Avalon master that stops issuing beats mid-burst hangs the "
-        "interconnect.",
-        "There is no irq row because it would be a flat 1: DMA_DONE has already "
-        "raised the pin during the data phase. The pin says something happened; "
-        "only IRQ_STATUS says what, which is why a handler must read it rather "
-        "than infer the cause from the interrupt alone.",
-    ])
+bs = scenario(4)
+i = find(bs, lambda b: st(b) == "RD_CRC")
+if i is None:
+    sys.exit("error: scenario 4 never reached S_RD_CRC")
+j = find(bs, lambda b: st(b) in ("ABORT", "DONE"), i)
+w = bs[max(0, i - 4):(j + 3) if j is not None else (i + 6)]
+emit("fig_wave_crcerr", [
+    byte_row("MOSI", [f"{x.mosi:02X}" for x in w], "2"),
+    byte_row("MISO", [f"{x.miso:02X}" for x in w], "3"),
+    {},
+    merged_row("state", [st(x) for x in w]),
+    level_row("ABORT entered", [x.aborted for x in w]),
+], "A corrupted CRC16, caught at the end of the last CRC byte")
 
+# =============================================================================
+# Facts the document quotes, written where check_facts.py can compare them.
+# =============================================================================
+FACTS = {
+    "ncr_bytes": NCR,
+    "data_response_token": f"0x{TOKEN:02X}",
+    "data_response_sss": f"0b{SSS:03b}",
+    "busy_byte_times": NBUSY,
+}
 
-written = [fig_bit(), fig_cmd(), fig_read(), fig_write(), fig_crcerr()]
-for p in written:
-    print("wrote", p)
+for name, src in FIGS.items():
+    with open(os.path.join(OUT, name + ".json"), "w", encoding="utf-8") as f:
+        json.dump(src, f, indent=1)
+        f.write("\n")
+
+with open(os.path.join(OUT, "wave_facts.json"), "w", encoding="utf-8") as f:
+    json.dump(FACTS, f, indent=1)
+    f.write("\n")
+
+# ---- render, if Node and WaveDrom are available -----------------------------
+node = shutil.which("node") or shutil.which("nodejs")
+if not node:
+    print("wrote the WaveDrom JSON; node not found, so no SVG was rendered")
+    print("  install Node, then: cd doc/tools/waveforms && npm install wavedrom onml")
+    sys.exit(0)
+
+rc = 0
+for name in FIGS:
+    j_path = os.path.join(OUT, name + ".json")
+    s_path = os.path.join(OUT, name + ".svg")
+    r = subprocess.run([node, os.path.join(HERE, "render.js"), j_path, s_path],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.stderr.write(r.stderr)
+        rc = r.returncode
+        break
+    print("wrote", s_path)
+sys.exit(rc)

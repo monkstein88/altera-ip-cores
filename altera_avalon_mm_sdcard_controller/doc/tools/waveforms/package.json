@@ -1,0 +1,6 @@
+{
+  "name": "sdcard-waveforms",
+  "private": true,
+  "description": "Renders the timing figures. npm install, then mkwaves.py calls render.js.",
+  "dependencies": { "onml": "^2.1.0", "wavedrom": "^3.5.0" }
+}

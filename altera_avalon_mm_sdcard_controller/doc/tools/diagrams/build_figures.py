@@ -1,425 +1,288 @@
 #!/usr/bin/env python3
 """
-Draw the block diagrams for the Avalon-MM SD Card Controller, as standalone SVGs.
+Draw the block diagrams for the Avalon-MM SD Card Controller.
 
-Uses the same svg_lib as the other cores' diagrams - same cm coordinate system,
-same style names - so the figures across this repository look like they belong
-to the same set.
+    python3 build_figures.py [outdir]        default doc/figures
 
-SVG, not a drawing program's file format, for the reason recorded in
-doc/tools/README.md: a zip of XML cannot be reviewed in a diff, cannot be
-grepped for a stale claim, and cannot be checked by a script. Every number that
-appears in these figures also appears in the RTL, and check_facts.py compares
-them.
+Writes one .dot and one .svg per figure. Both are tracked: the .dot is the
+source you edit, the .svg is what the documents embed.
 
-Usage:  python3 build_figures.py [outdir]      default doc/figures
+-----------------------------------------------------------------------------
+WHY GRAPHVIZ AND NOT HAND-PLACED COORDINATES
+-----------------------------------------------------------------------------
+The first version of these figures placed every box and every line by hand, in
+centimetres, using the svg_lib the other cores' diagrams use. For a diagram that
+is a row of boxes that works. For the sequencer's state machine it did not: two
+convergence lines ran right to left across the whole figure at nearly the same
+height, crossed the arrow they were converging with, and clipped a label on the
+way past. S_ABORT sat at the far right pointing backwards into S_DONE. Nobody
+could trace a path through it.
+
+Edge routing is a solved problem and solving it again by eye is a bad trade.
+Graphviz does the layout; this file only says what connects to what. Move a node
+and every line reroutes itself, which is the whole point.
+
+The register map used to be a figure here too. It was a table drawn as a
+picture - the same rows the user guide already carries as a real table, but
+unselectable, unsearchable and impossible to keep in step. It is gone. A table
+should be a table.
 """
 
 import os
+import shutil
+import subprocess
 import sys
 
-from svg_lib import Svg
+OUT = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "figures"))
 
-CORE = "Avalon-MM SD Card Controller"
-VER = "v1.0"
+# --------------------------------------------------------------------- style
+#
+# One palette, shared with the other cores' figures so the set still looks like
+# one set: ink blue for structure, green for the sequencer and its arcs, grey
+# for anything outside the core, red for the error path.
+INK, INK_F = "#1F3864", "#DCE6F1"
+GRN, GRN_F = "#375623", "#E2EFDA"
+EXT, EXT_F = "#595959", "#F2F2F2"
+RED, RED_F = "#C00000", "#FDECEC"
+OK, OK_F = "#2E7D32", "#E8F5E9"
+CORE, CORE_F = "#843C0C", "#FDE9D9"
 
-# ---------------------------------------------------------------- palette
-INK      = "#1F3864"   # primary line / bus
-INK_FILL = "#DCE6F1"
-CORE_L   = "#843C0C"   # the controller itself
-CORE_F   = "#FDE9D9"
-REG_L    = "#375623"   # sequencer / control
-REG_F    = "#E2EFDA"
-EXT_L    = "#595959"   # external things
-EXT_F    = "#F2F2F2"
-RED      = "#C00000"
-AMBER    = "#BF8F00"
-GREEN    = "#2E7D32"
-GREY     = "#808080"
-HDR_F    = "#1F3864"
-
-d = Svg(f"{CORE} {VER} - block diagrams")
-
-
-# ---------------------------------------------------------------- styles
-def box(name, fill, line, width="0.05cm", valign="middle", dash=None):
-    kw = {"draw:fill": "solid", "draw:fill-color": fill,
-          "draw:stroke": "dash" if dash else "solid",
-          "svg:stroke-width": width, "svg:stroke-color": line,
-          "draw:textarea-vertical-align": valign,
-          "draw:auto-grow-height": "false", "draw:auto-grow-width": "false",
-          "fo:padding-top": "0.1cm", "fo:padding-bottom": "0.1cm",
-          "fo:padding-left": "0.15cm", "fo:padding-right": "0.15cm"}
-    if dash:
-        kw["draw:stroke-dash"] = dash
-    d.gstyle(name, **kw)
+HEAD = """digraph {name} {{
+  bgcolor="white";
+  fontname="DejaVu Sans"; fontsize=11;
+  node [fontname="DejaVu Sans", fontsize=10.5, shape=box,
+        style="filled,rounded", penwidth=1.4, margin="0.18,0.09"];
+  edge [fontname="DejaVu Sans", fontsize=9, fontcolor="#555555",
+        penwidth=1.3, arrowsize=0.75];
+"""
 
 
-box("gCore",  CORE_F, CORE_L, "0.08cm")
-box("gCoreT", CORE_F, CORE_L, "0.08cm", valign="top")
-box("gBlk",   INK_FILL, INK)
-box("gBlkT",  INK_FILL, INK, valign="top")
-box("gSeq",   REG_F, REG_L)
-box("gSeqT",  REG_F, REG_L, valign="top")
-box("gExt",   EXT_F, EXT_L)
-box("gExtT",  EXT_F, EXT_L, valign="top")
-box("gWhite", "#FFFFFF", GREY, "0.02cm", valign="top")
-box("gHdr",   HDR_F, HDR_F, "0.02cm")
-box("gCell",  "#FFFFFF", GREY, "0.02cm")
-box("gCellA", "#F7F9FC", GREY, "0.02cm")
-box("gOK",    "#E8F5E9", GREEN, "0.05cm")
-box("gErr",   "#FDECEC", RED, "0.05cm")
-box("gNote",  "#FFF9E6", AMBER, "0.04cm", valign="top")
-box("gOpt",   "#FFFFFF", EXT_L, "0.04cm", dash="Dash_20__28_Rounded_29_")
+def blk(fill, line):
+    return f'fillcolor="{fill}", color="{line}"'
 
 
-def arrow(name, color, width="0.06cm", end=True, start=False, dash=False):
-    kw = {"draw:stroke": "dash" if dash else "solid",
-          "svg:stroke-width": width, "svg:stroke-color": color,
-          "draw:fill": "none"}
-    if dash:
-        kw["draw:stroke-dash"] = "Dash_20__28_Rounded_29_"
-    if end:
-        kw.update({"draw:marker-end": "Arrow", "draw:marker-end-width": "0.32cm"})
-    if start:
-        kw.update({"draw:marker-start": "Arrow", "draw:marker-start-width": "0.32cm"})
-    d.gstyle(name, **kw)
+FIGS = {}
 
 
-arrow("aBus",   INK, "0.09cm")
-arrow("aBusBi", INK, "0.09cm", start=True)
-arrow("aSig",   INK, "0.045cm")
-arrow("aCtrl",  REG_L, "0.05cm")
-arrow("aRed",   RED, "0.055cm")
-arrow("aGreen", GREEN, "0.055cm")
-arrow("aPlain", EXT_L, "0.035cm", end=False)
-arrow("aDash",  EXT_L, "0.035cm", end=False, dash=True)
-arrow("aOpt",   EXT_L, "0.05cm", dash=True)
-
-d.pstyle("pC", "center")
-d.pstyle("pL", "start")
-d.pstyle("pR", "end")
-
-d.tstyle("tH",      15, bold=True, color=INK)
-d.tstyle("tBody",   10, color="#000000")
-d.tstyle("tSmall",   8.5, color="#000000")
-d.tstyle("tTiny",    7.5, color=EXT_L)
-d.tstyle("tBold",   10, bold=True, color="#000000")
-d.tstyle("tCore",   12, bold=True, color=CORE_L)
-d.tstyle("tSeq",    10, bold=True, color=REG_L)
-d.tstyle("tHdrW",    9.5, bold=True, color="#FFFFFF")
-d.tstyle("tRed",     9.5, bold=True, color=RED)
-d.tstyle("tGreen",   9.5, bold=True, color=GREEN)
-d.tstyle("tMono",    9, color="#000000", family="DejaVu Sans Mono")
-d.tstyle("tMonoS",   8, color=EXT_L, family="DejaVu Sans Mono")
-d.tstyle("tMonoW",   8.5, bold=True, color="#FFFFFF", family="DejaVu Sans Mono")
-
-NAMES = {}
-
-
-def page(name):
-    NAMES[d.page(name)] = name
+def fig(name, body, **attrs):
+    a = "\n".join(f"  {k}={v};" for k, v in attrs.items())
+    FIGS[name] = HEAD.format(name=name) + a + "\n" + body + "\n}\n"
 
 
 # =============================================================================
-# 1. System context
+# 1. System context - what the core connects to
 # =============================================================================
-page("fig_context")
+fig("fig_context", f"""
+  node [{blk(EXT_F, EXT)}];
+  cpu  [label="Nios II\\nor any Avalon-MM master"];
+  mem  [label="System memory\\nSDRAM or on-chip RAM"];
+  card [label="SD card\\nfour wires plus power"];
+  clk  [label="clk / reset_n", shape=box, style="filled", height=0.3];
 
-d.text(1.0, 0.6, 20, 1.0, ["System context"], "tH", "pL")
+  node [{blk(CORE_F, CORE)}, penwidth=2];
+  core [label="avalon_mm_sdcard_controller\\nSD / SDHC / SDXC, SPI mode",
+        fontsize=12, fontcolor="{CORE}"];
 
-d.rect(1.0, 2.2, 5.4, 2.0, "gExt",
-       ["Nios II", "", "or any Avalon-MM master"], "tBody", "pC")
-d.rect(1.0, 4.8, 5.4, 1.8, "gExt",
-       ["System memory", "", "SDRAM, on-chip RAM"], "tBody", "pC")
+  edge [color="{INK}"];
+  cpu  -> core [label="  csr\\l  17 registers\\l", dir=both];
+  core -> mem  [label="  m0\\l  block data\\l", dir=both];
+  core -> cpu  [label="  irq  ", style=dashed, constraint=false];
+  core -> card [label="  sd\\l  clk mosi miso cs_n\\l", dir=both];
+  clk  -> core [color="{EXT}", style=dotted, arrowhead=none];
 
-d.rect(8.6, 2.0, 8.4, 4.6, "gCore",
-       ["avalon_mm_sdcard_controller", "", "SD / SDHC / SDXC in SPI mode"],
-       "tCore", "pC")
-
-d.rect(19.4, 2.6, 5.6, 2.4, "gExt",
-       ["SD card", "", "four wires plus power"], "tBody", "pC")
-
-# csr
-d.polyline([(6.4, 3.0), (8.6, 3.0)], "aBusBi")
-d.text(6.3, 2.2, 2.4, 0.8, ["csr", "17 words"], "tTiny", "pC")
-
-# m0
-d.polyline([(8.6, 5.6), (6.4, 5.6)], "aBusBi")
-d.text(6.3, 4.8, 2.4, 0.8, ["m0", "bursting master"], "tTiny", "pC")
-
-# irq
-d.polyline([(8.6, 4.3), (6.4, 4.3)], "aSig")
-d.text(6.3, 3.5, 2.4, 0.8, ["irq"], "tTiny", "pC")
-
-# conduit
-d.polyline([(17.0, 3.8), (19.4, 3.8)], "aBusBi")
-d.text(16.9, 3.0, 2.4, 0.8, ["sd", "conduit"], "tTiny", "pC")
-
-d.rect(8.6, 7.6, 8.4, 1.3, "gExt", ["clk / reset_n"], "tSmall", "pC")
-d.polyline([(12.8, 7.6), (12.8, 6.6)], "aSig")
-
-d.rect(1.0, 9.6, 24.0, 2.6, "gNote",
-       "Two Avalon-MM interfaces, not one. csr is the slave software programs; "
-       "m0 is a master the core uses to move block data to and from memory "
-       "itself, so a 512-byte block costs the CPU one command rather than 128 "
-       "loads and stores. m0 is optional - set USE_DMA to 0 and the interface "
-       "disappears from the component, leaving software to move every word "
-       "through the DATA window. The SPI conduit is four wires: clk, mosi, "
-       "miso and cs_n, plus card-detect and write-protect when USE_CARD_DETECT "
-       "is set.", "tSmall", "pL")
+  {{ rank=same; cpu; core; card; }}
+""", rankdir="LR", ranksep="1.1", nodesep="0.5")
 
 # =============================================================================
-# 2. Internal structure
+# 2. Internal structure - what is inside, and what talks to what
 # =============================================================================
-page("fig_internal")
+fig("fig_internal", f"""
+  compound=true;
 
-d.text(1.0, 0.6, 24, 1.0, ["Internal structure"], "tH", "pL")
+  subgraph cluster_core {{
+    label="avalon_mm_sdcard_controller";
+    fontcolor="{CORE}"; fontsize=12; color="{CORE}"; penwidth=2;
+    style=rounded; bgcolor="{CORE_F}"; margin=16;
 
-d.rect(1.4, 1.8, 18.6, 7.6, "gCoreT",
-       ["avalon_mm_sdcard_controller"], "tCore", "pL")
+    node [{blk(INK_F, INK)}];
+    regs [label="regs\\nregister file"];
+    fifo [label="fifo\\nbytes to words"];
+    phy  [label="spi_phy\\ncontinuous shifter"];
+    crc  [label="crc\\nCRC7 + CRC16"];
+    ckg  [label="clkgen\\nSPI clock"];
 
-# --- row 1: register file, sequencer, shifter
-d.rect(2.2, 3.2, 4.4, 2.2, "gBlk",
-       ["_regs", "", "17-word CSR", "readLatency 1"], "tSmall", "pC")
-d.rect(7.4, 3.2, 5.6, 2.2, "gSeq",
-       ["_seq", "", "20-state protocol engine", "commands, tokens, timeouts"],
-       "tSmall", "pC")
-d.rect(13.8, 3.2, 5.0, 2.2, "gBlk",
-       ["_spi_phy", "", "continuous shifter", "one-deep prefetch"],
-       "tSmall", "pC")
+    node [{blk(GRN_F, GRN)}, penwidth=1.8];
+    seq  [label="seq\\nprotocol engine"];
 
-# --- row 2: master, buffer, and the two helpers that hang off the shifter
-d.rect(2.2, 6.4, 4.4, 1.7, "gOpt",
-       ["_dma", "USE_DMA", "bursting master"], "tSmall", "pC")
-d.rect(7.4, 6.4, 5.6, 1.7, "gBlk",
-       ["_fifo", "", "word store + byte packer"], "tSmall", "pC")
-d.rect(13.8, 6.4, 2.3, 1.7, "gBlk", ["_crc"], "tSmall", "pC")
-d.rect(16.5, 6.4, 2.3, 1.7, "gBlk", ["_clkgen"], "tSmall", "pC")
+    node [{blk("#FFFFFF", EXT)}, style="filled,rounded,dashed"];
+    dma  [label="dma\\nAvalon master\\n(USE_DMA)"];
 
-# --- the pins, outside the core boundary
-d.rect(20.8, 3.2, 3.8, 2.2, "gExt",
-       ["sd conduit", "", "clk mosi", "miso cs_n"], "tSmall", "pC")
+    edge [color="{INK}"];
+    regs -> seq  [label="  commands  ", dir=both];
+    seq  -> fifo [label="  block data  ", dir=both];
+    fifo -> dma  [dir=both];
+    seq  -> phy  [label="  a byte at a time  ", dir=both];
+    ckg  -> phy  [label="  strobes  ", color="{EXT}"];
+    phy  -> crc  [label="  every byte  ", dir=both];
+    regs -> dma  [label="  address  ", color="{GRN}", style=dashed,
+                  constraint=false];
 
-# --- host-side interfaces, leaving the core's left edge
-d.polyline([(0.4, 3.9), (2.2, 3.9)], "aBusBi")          # csr
-d.text(0.3, 3.1, 2.0, 0.7, ["csr"], "tTiny", "pL")
-d.polyline([(2.2, 5.0), (0.4, 5.0)], "aSig")            # irq
-d.text(0.3, 5.1, 2.0, 0.7, ["irq"], "tTiny", "pL")
-d.polyline([(2.2, 7.25), (0.4, 7.25)], "aBusBi")        # m0
-d.text(0.3, 7.35, 2.0, 0.7, ["m0"], "tTiny", "pL")
+    // Two lanes, forced - and forced from INSIDE the cluster. Left to right
+    // the core is a chain, but it forks at the sequencer: block data leaves
+    // through the FIFO and the master, single bytes leave through the shifter.
+    // Without these ranks dot interleaves the two and draws the CRC unit past
+    // the memory, as though it were downstream of it.
+    //
+    // A rank group that mixes nodes inside the cluster with nodes outside it
+    // does not merely fail, it collapses the cluster's bounding box down to
+    // whatever is left - so host, ram and pins are deliberately not here.
+    // crc and clkgen are satellites of the shifter, not stages after it, so
+    // they share its column rather than taking a rank of their own. Given a
+    // rank to themselves the CRC unit sits between the shifter and the pins
+    // and the SPI wire has to detour around it.
+    {{ rank=same; fifo; phy; ckg; crc; }}
+  }}
 
-# --- internal connections
-d.polyline([(6.6, 4.3), (7.4, 4.3)], "aBusBi")          # regs <-> seq
-d.polyline([(13.0, 4.3), (13.8, 4.3)], "aBusBi")        # seq <-> phy
-d.polyline([(18.8, 4.3), (20.8, 4.3)], "aBusBi")        # phy -> pins
-d.polyline([(4.4, 5.4), (4.4, 6.4)], "aCtrl")           # regs -> dma config
-d.polyline([(6.6, 7.25), (7.4, 7.25)], "aBusBi")        # dma <-> fifo
-d.polyline([(10.2, 5.4), (10.2, 6.4)], "aBusBi")        # seq <-> fifo
-d.polyline([(14.9, 6.4), (14.9, 5.4)], "aBusBi")        # crc <-> phy
-d.polyline([(17.6, 6.4), (17.6, 5.4)], "aPlain")        # clkgen -> phy
+  node [{blk(EXT_F, EXT)}, style=filled];
+  host [label="CPU"];
+  ram  [label="memory"];
+  pins [label="SD card"];
 
-d.text(10.6, 5.45, 3.2, 0.7, ["bytes"], "tTiny", "pL")
-d.text(13.9, 5.45, 3.0, 0.7, ["every byte"], "tTiny", "pL")
-d.text(17.7, 5.45, 3.0, 0.7, ["strobes"], "tTiny", "pL")
+  edge [color="{INK}"];
+  host -> regs [label="  csr  ", dir=both];
+  dma  -> ram  [label="  m0  ", dir=both];
+  phy  -> pins [label="  sd  ", dir=both];
 
-d.rect(0.4, 9.9, 24.2, 2.4, "gNote",
-       "The shifter runs continuously while a transfer is in progress, with a "
-       "one-deep prefetch, so the next byte is already queued before the "
-       "current one finishes and the SPI clock never pauses between bytes. That "
-       "is where the measured 98.1% of line rate comes from - 16,696 SPI clocks "
-       "to move 2,048 bytes, against a theoretical 16,384. The CRC units are "
-       "byte-wise rather than bit-serial for the same reason: a bit-serial CRC "
-       "cannot keep up with a shifter that never stops. _crc computes CRC7 over "
-       "command frames and CRC16 over data blocks; _clkgen divides the host "
-       "clock to clk / (2 x CLKDIV) and hands the shifter a rising and a "
-       "falling strobe rather than a second clock domain.", "tSmall", "pL")
-
-# =============================================================================
-# 3. Register map
-# =============================================================================
-page("fig_regmap")
-
-d.text(1.0, 0.6, 24, 1.0, ["Register map"], "tH", "pL")
-
-REGS = [
-    ("0x00", "CTRL",       "RW",   "enable, CS control, CRC, DMA, soft resets"),
-    ("0x04", "STATUS",     "RO",   "busy flags, FIFO level, card present, error"),
-    ("0x08", "IRQ_ENABLE", "RW",   "mask, one bit per source"),
-    ("0x0C", "IRQ_STATUS", "RW1C", "pending events and errors"),
-    ("0x10", "CLKDIV",     "RW",   "SPI clock = clk / (2 x CLKDIV)"),
-    ("0x14", "TIMEOUT",    "RW",   "cycles without progress before giving up"),
-    ("0x18", "CMD_ARG",    "RW",   "the command's 32-bit argument"),
-    ("0x1C", "CMD",        "RW",   "index, response type, data flags; write starts"),
-    ("0x20", "RESP0",      "RO",   "R1, or the low word of a longer response"),
-    ("0x24", "RESP1",      "RO",   "R3 / R7 trailer"),
-    ("0x28", "BLK_SIZE",   "RW",   "bytes per block, up to MAX_BLOCK_BYTES"),
-    ("0x2C", "BLK_COUNT",  "RW",   "blocks in this transfer"),
-    ("0x30", "DMA_ADDR",   "RW",   "byte address in system memory"),
-    ("0x34", "DMA_CTRL",   "RW",   "mode; only contiguous is defined"),
-    ("0x38", "DATA",       "RW",   "PIO window into the FIFO"),
-    ("0x3C", "ERR_INFO",   "RO",   "last tokens, last R1, phase that failed"),
-    ("0x40", "CORE_INFO",  "RO",   "build-time configuration, read-only"),
-]
-
-y = 2.0
-d.rect(1.0, y, 2.4, 0.75, "gHdr", "Offset", "tHdrW", "pC")
-d.rect(3.4, y, 4.6, 0.75, "gHdr", "Name", "tHdrW", "pL")
-d.rect(8.0, y, 2.0, 0.75, "gHdr", "Access", "tHdrW", "pC")
-d.rect(10.0, y, 14.4, 0.75, "gHdr", "Purpose", "tHdrW", "pL")
-y += 0.75
-
-for i, (off, name, acc, why) in enumerate(REGS):
-    st = "gCellA" if i % 2 else "gCell"
-    d.rect(1.0, y, 2.4, 0.62, st, off, "tMonoS", "pC")
-    d.rect(3.4, y, 4.6, 0.62, st, name, "tMono", "pL")
-    d.rect(8.0, y, 2.0, 0.62, st, acc, "tTiny", "pC")
-    d.rect(10.0, y, 14.4, 0.62, st, why, "tSmall", "pL")
-    y += 0.62
-
-d.rect(1.0, y + 0.5, 23.4, 1.8, "gNote",
-       "Seventeen words, so CSR_ADDR_WIDTH must be at least 5. The slave has a "
-       "read latency of 1. Writing CMD with bit 31 set is what launches an "
-       "operation; the write is ignored while the sequencer is busy, which is "
-       "correct - a second command must not corrupt a transfer in flight - but "
-       "it means software has to check STATUS first rather than assume the "
-       "write took.", "tSmall", "pL")
+  // Both of these are outside the cluster, so grouping them is safe - and it
+  // is what stops the SD card being drawn adrift below the core with its wire
+  // running diagonally across the corner of the box.
+  {{ rank=same; ram; pins; }}
+""", rankdir="LR", ranksep="0.75", nodesep="0.45")
 
 # =============================================================================
-# 4. Sequencer states
+# 3. Sequencer states
+#
+# The figure that forced the rewrite. Twenty states with two branches that
+# rejoin - exactly the shape hand placement cannot keep tidy.
 # =============================================================================
-page("fig_states")
+fig("fig_states", f"""
+  // States are drawn without the RTL's S_ prefix: it is repeated twenty times,
+  // carries nothing, and in the timing figures a prefixed name does not fit a
+  // one-column box. The prose names them in full.
+  node [{blk(GRN_F, GRN)}, fontname="DejaVu Sans Mono", fontsize=10];
+  edge [color="{GRN}"];
 
-d.text(1.0, 0.6, 24, 1.0, ["Sequencer states"], "tH", "pL")
+  IDLE  [label="IDLE", {blk(EXT_F, EXT)}];
+  PRE   [label="PRE_BUSY"];
+  CMD   [label="CMD"];
+  RESP  [label="RESP_WAIT"];
+  TRAIL [label="RESP_TRAIL"];
+  R1B   [label="R1B_BUSY"];
+  DAT   [label="DAT_START"];
 
-# --- command phase, common to every operation
-d.text(1.0, 1.7, 8.0, 0.6, ["Command phase"], "tGreen", "pL")
-d.rect(1.0, 2.4, 3.4, 1.1, "gSeq", "S_IDLE", "tMono", "pC")
-d.rect(5.4, 2.4, 3.8, 1.1, "gSeq", "S_PRE_BUSY", "tMono", "pC")
-d.rect(10.2, 2.4, 3.4, 1.1, "gSeq", "S_CMD", "tMono", "pC")
-d.rect(14.6, 2.4, 4.0, 1.1, "gSeq", "S_RESP_WAIT", "tMono", "pC")
-d.rect(19.6, 2.4, 4.2, 1.1, "gSeq", "S_RESP_TRAIL", "tMono", "pC")
+  RDT [label="RD_TOKEN"]; RDD [label="RD_DATA"]; RDC [label="RD_CRC"];
+  WRT [label="WR_TOKEN"]; WRD [label="WR_DATA"]; WRC [label="WR_CRC"];
+  WRR [label="WR_RESP"];  WRL [label="WR_TAIL"];
 
-d.polyline([(4.4, 2.95), (5.4, 2.95)], "aCtrl")
-d.polyline([(9.2, 2.95), (10.2, 2.95)], "aCtrl")
-d.polyline([(13.6, 2.95), (14.6, 2.95)], "aCtrl")
-d.polyline([(18.6, 2.95), (19.6, 2.95)], "aCtrl")
+  BEND [label="BLOCK_END"];
+  PREW [label="PRE_BUSY_W"];
+  STOP [label="STOP_TRAN"];
+  DONE [label="DONE",  {blk(OK_F, OK)}, penwidth=2];
+  ABRT [label="ABORT", {blk(RED_F, RED)}, penwidth=2];
 
-# R1b commands wait for the card to lift busy before anything else happens.
-d.rect(14.6, 4.1, 4.0, 1.0, "gSeq", "S_R1B_BUSY", "tMono", "pC")
-d.polyline([(16.6, 3.5), (16.6, 4.1)], "aCtrl")
-d.text(18.7, 4.3, 5.0, 0.6, ["R1b only"], "tTiny", "pL")
+  IDLE -> PRE  [label="  CMD written"];
+  PRE  -> CMD  [label="  MISO high"];
+  CMD  -> RESP;
+  RESP -> TRAIL [label="  R2/R3/R7"];
+  RESP -> R1B   [label="  R1b"];
+  TRAIL -> DAT;
+  R1B  -> DAT;
+  RESP -> DAT  [label="  R1"];
+  RESP -> DONE [label="  no data phase  ", constraint=false];
 
-# the branch into the data phase
-d.polyline([(21.7, 3.5), (21.7, 5.7), (2.9, 5.7), (2.9, 6.4)], "aCtrl")
-d.text(9.0, 5.75, 6.0, 0.6, ["if CMD.DATA_EN"], "tTiny", "pL")
+  DAT -> RDT [label="  read"];
+  DAT -> WRT [label="  write"];
+  RDT -> RDD [label="  0xFE"];
+  RDD -> RDC; RDC -> BEND;
+  WRT -> WRD; WRD -> WRC; WRC -> WRR; WRR -> WRL; WRL -> BEND;
 
-# --- read branch
-d.text(1.0, 6.4, 6.0, 0.6, ["Read path"], "tGreen", "pL")
-d.rect(1.0, 7.0, 3.8, 1.1, "gSeq", "S_DAT_START", "tMono", "pC")
-d.rect(5.8, 7.0, 3.8, 1.1, "gSeq", "S_RD_TOKEN", "tMono", "pC")
-d.rect(10.6, 7.0, 3.4, 1.1, "gSeq", "S_RD_DATA", "tMono", "pC")
-d.rect(15.0, 7.0, 3.4, 1.1, "gSeq", "S_RD_CRC", "tMono", "pC")
-d.polyline([(4.8, 7.55), (5.8, 7.55)], "aCtrl")
-d.polyline([(9.6, 7.55), (10.6, 7.55)], "aCtrl")
-d.polyline([(14.0, 7.55), (15.0, 7.55)], "aCtrl")
+  BEND -> PREW [label="  more blocks"];
+  PREW -> WRT  [constraint=false, style=dashed];
+  BEND -> STOP [label="  multi-block\\l  write ends\\l"];
+  BEND -> DONE [label="  finished  "];
+  STOP -> DONE;
+  ABRT -> DONE [color="{RED}", fontcolor="{RED}", label="  abort the DMA,\\l  then drain it\\l"];
+  DONE -> IDLE [style=dotted, color="{EXT}", constraint=false];
 
-# --- write branch
-d.text(1.0, 8.5, 6.0, 0.6, ["Write path"], "tGreen", "pL")
-d.rect(1.0, 9.1, 3.8, 1.1, "gSeq", "S_WR_TOKEN", "tMono", "pC")
-d.rect(5.8, 9.1, 3.4, 1.1, "gSeq", "S_WR_DATA", "tMono", "pC")
-d.rect(10.2, 9.1, 3.4, 1.1, "gSeq", "S_WR_CRC", "tMono", "pC")
-d.rect(14.6, 9.1, 3.6, 1.1, "gSeq", "S_WR_RESP", "tMono", "pC")
-d.rect(19.2, 9.1, 3.6, 1.1, "gSeq", "S_WR_TAIL", "tMono", "pC")
-d.polyline([(4.8, 9.65), (5.8, 9.65)], "aCtrl")
-d.polyline([(9.2, 9.65), (10.2, 9.65)], "aCtrl")
-d.polyline([(13.6, 9.65), (14.6, 9.65)], "aCtrl")
-d.polyline([(18.2, 9.65), (19.2, 9.65)], "aCtrl")
+  any [label="any state", shape=plaintext, style="", fontsize=9,
+       fontcolor="{RED}"];
+  any -> ABRT [color="{RED}", style=dashed,
+               label="  error or timeout  ", fontcolor="{RED}"];
 
-# S_DAT_START feeds whichever branch CMD.DATA_DIR selected.
-d.polyline([(2.9, 8.1), (2.9, 9.1)], "aCtrl")
-
-# --- both branches converge on the block boundary
-d.rect(1.0, 11.2, 3.8, 1.1, "gSeq", "S_BLOCK_END", "tMono", "pC")
-d.rect(5.8, 11.2, 4.4, 1.1, "gSeq", "S_PRE_BUSY_W", "tMono", "pC")
-d.rect(11.2, 11.2, 3.8, 1.1, "gSeq", "S_STOP_TRAN", "tMono", "pC")
-d.rect(16.0, 11.2, 3.2, 1.1, "gOK", "S_DONE", "tMono", "pC")
-d.rect(20.6, 11.2, 3.2, 1.1, "gErr", "S_ABORT", "tMono", "pC")
-
-# RD_CRC and WR_TAIL both fall into S_BLOCK_END, routed round the right edge.
-d.polyline([(18.4, 7.55), (24.6, 7.55), (24.6, 10.9), (2.9, 10.9),
-            (2.9, 11.2)], "aCtrl")
-d.polyline([(22.8, 9.65), (23.9, 9.65), (23.9, 10.75), (2.9, 10.75),
-            (2.9, 11.2)], "aCtrl")
-
-d.polyline([(4.8, 11.75), (5.8, 11.75)], "aCtrl")
-d.text(4.3, 10.95, 5.0, 0.6, ["more blocks"], "tTiny", "pL")
-d.polyline([(10.2, 11.75), (11.2, 11.75)], "aCtrl")
-d.polyline([(15.0, 11.75), (16.0, 11.75)], "aCtrl")
-d.polyline([(20.6, 11.75), (19.2, 11.75)], "aRed")
-
-d.rect(1.0, 13.4, 23.6, 2.6, "gNote",
-       "Twenty states. Error exits are not drawn - every state has one, and "
-       "they all converge on S_ABORT, which is the point of having it. What "
-       "matters is where S_ABORT goes: not straight to S_IDLE but through "
-       "S_DONE, so the DMA is told to abort and then allowed to drain. An "
-       "Avalon master that simply stops issuing beats part-way through a burst "
-       "hangs the interconnect, so abandoning a transfer is more work than not "
-       "starting one. S_PRE_BUSY free-runs 0xFF with CS high before every "
-       "command, which is why the shifter is always already running when a "
-       "sending state is entered - a fact the assertion suite depends on and "
-       "documents.", "tSmall", "pL")
+  {{ rank=same; RDT; WRT; }}
+  {{ rank=same; DONE; ABRT; any; }}
+""", rankdir="TB", ranksep="0.42", nodesep="0.35")
 
 # =============================================================================
-# 5. Data path: where a block's bytes go
+# 4. Where a block's bytes go
 # =============================================================================
-page("fig_datapath")
+fig("fig_datapath", f"""
+  node [{blk(INK_F, INK)}];
+  edge [color="{OK}", penwidth=1.8];
 
-d.text(1.0, 0.6, 24, 1.0, ["Where a block's bytes go"], "tH", "pL")
+  // Declared bottom-first: dot stacks clusters in reverse declaration
+  // order, so listing read, write, PIO in the obvious order prints them
+  // upside down.
+  subgraph cluster_pio {{
+    label="Read with USE_DMA = 0 — the CPU moves every word";
+    fontcolor="{RED}"; color="{RED}"; style=rounded; margin=12;
+    p0 [label="SD card", {blk(EXT_F, EXT)}];
+    p1 [label="spi_phy"];
+    p2 [label="fifo"];
+    p3 [label="CPU\\nreads the DATA\\nregister, on a deadline",
+        {blk(RED_F, RED)}];
+    edge [color="{RED}"];
+    p0 -> p1 -> p2 -> p3;
+  }}
+  subgraph cluster_wr {{
+    label="Write — memory to card"; fontcolor="{OK}"; color="{OK}";
+    style=rounded; margin=12;
+    w0 [label="memory", {blk(EXT_F, EXT)}];
+    w1 [label="dma\\nbursts words"];
+    w2 [label="fifo\\nunpacks a word\\ninto 4 bytes"];
+    w3 [label="spi_phy\\none byte per\\n8 SPI clocks"];
+    w4 [label="SD card", {blk(EXT_F, EXT)}];
+    w0 -> w1 -> w2 -> w3 -> w4;
+  }}
 
-d.text(1.0, 1.9, 24, 0.7, ["Read: card to memory"], "tGreen", "pL")
-d.rect(1.0, 2.7, 4.0, 1.5, "gExt", ["SD card"], "tSmall", "pC")
-d.rect(6.0, 2.7, 4.4, 1.5, "gBlk", ["_spi_phy", "byte at a time"], "tSmall", "pC")
-d.rect(11.4, 2.7, 4.4, 1.5, "gBlk", ["_fifo", "packs 4 bytes"], "tSmall", "pC")
-d.rect(16.8, 2.7, 4.4, 1.5, "gBlk", ["_dma", "bursts words"], "tSmall", "pC")
-d.rect(22.2, 2.7, 3.6, 1.5, "gExt", ["memory"], "tSmall", "pC")
-for x0, x1 in ((5.0, 6.0), (10.4, 11.4), (15.8, 16.8), (21.2, 22.2)):
-    d.polyline([(x0, 3.45), (x1, 3.45)], "aGreen")
+  subgraph cluster_rd {{
+    label="Read — card to memory"; fontcolor="{OK}"; color="{OK}";
+    style=rounded; margin=12;
+    r0 [label="SD card", {blk(EXT_F, EXT)}];
+    r1 [label="spi_phy\\none byte per\\n8 SPI clocks"];
+    r2 [label="fifo\\npacks 4 bytes\\ninto a word"];
+    r3 [label="dma\\nbursts words"];
+    r4 [label="memory", {blk(EXT_F, EXT)}];
+    r0 -> r1 -> r2 -> r3 -> r4;
+  }}
 
-d.text(1.0, 5.0, 24, 0.7, ["Write: memory to card"], "tGreen", "pL")
-d.rect(1.0, 5.8, 3.6, 1.5, "gExt", ["memory"], "tSmall", "pC")
-d.rect(5.6, 5.8, 4.4, 1.5, "gBlk", ["_dma", "bursts words"], "tSmall", "pC")
-d.rect(11.0, 5.8, 4.4, 1.5, "gBlk", ["_fifo", "unpacks 4 bytes"], "tSmall", "pC")
-d.rect(16.4, 5.8, 4.4, 1.5, "gBlk", ["_spi_phy", "byte at a time"], "tSmall", "pC")
-d.rect(21.8, 5.8, 4.0, 1.5, "gExt", ["SD card"], "tSmall", "pC")
-for x0, x1 in ((4.6, 5.6), (10.0, 11.0), (15.4, 16.4), (20.8, 21.8)):
-    d.polyline([(x0, 6.55), (x1, 6.55)], "aGreen")
-
-d.text(1.0, 8.1, 24, 0.7, ["Without the DMA (USE_DMA = 0)"], "tRed", "pL")
-d.rect(1.0, 8.9, 4.0, 1.5, "gExt", ["SD card"], "tSmall", "pC")
-d.rect(6.0, 8.9, 4.4, 1.5, "gBlk", ["_spi_phy"], "tSmall", "pC")
-d.rect(11.4, 8.9, 4.4, 1.5, "gBlk", ["_fifo"], "tSmall", "pC")
-d.rect(16.8, 8.9, 4.8, 1.5, "gExt", ["CPU", "reads DATA, word at a time"],
-       "tSmall", "pC")
-for x0, x1 in ((5.0, 6.0), (10.4, 11.4), (15.8, 16.8)):
-    d.polyline([(x0, 9.65), (x1, 9.65)], "aRed")
-
-d.rect(1.0, 11.2, 24.8, 2.4, "gNote",
-       "The FIFO is word-wide with a byte packer on the card side, because the "
-       "two ends run at different widths and different rates: the shifter moves "
-       "one byte per eight SPI clocks, the master moves four bytes per host "
-       "cycle. Sizing it at two blocks rather than one is what lets the DMA "
-       "drain block N while the shifter is receiving block N+1, which is where "
-       "multi-block throughput comes from. In PIO mode the CPU is on a "
-       "deadline: with no master to keep the buffer moving, software that is "
-       "slow to service the DATA window starves the shifter and the stall "
-       "timeout fires.", "tSmall", "pL")
+""", rankdir="LR", ranksep="0.5", nodesep="0.35")
 
 # =============================================================================
-outdir = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "..", "figures")
-outdir = os.path.abspath(outdir)
-os.makedirs(outdir, exist_ok=True)
+if not shutil.which("dot"):
+    sys.exit("error: graphviz not found - install it (apt install graphviz)")
 
-for p in d.save(outdir, NAMES):
-    print("wrote", p)
+os.makedirs(OUT, exist_ok=True)
+for name, src in FIGS.items():
+    dot_path = os.path.join(OUT, name + ".dot")
+    svg_path = os.path.join(OUT, name + ".svg")
+    with open(dot_path, "w", encoding="utf-8") as f:
+        f.write(src)
+    r = subprocess.run(["dot", "-Tsvg", dot_path, "-o", svg_path],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"error: dot failed on {name}\n{r.stderr}")
+    if r.stderr.strip():
+        print(f"  note ({name}): {r.stderr.strip()}")
+    print("wrote", svg_path)
