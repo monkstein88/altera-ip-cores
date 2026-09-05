@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="836" height="264" viewBox="0 0 836 264" font-family="Liberation Sans, DejaVu Sans, sans-serif">
+<rect width="836" height="264" fill="white"/>
+<rect x="210" y="52" width="476" height="30" fill="#F4F7FB"/>
+<rect x="210" y="112" width="476" height="30" fill="#F4F7FB"/>
+<line x1="210" y1="16" x2="210" y2="142" stroke="#C9D3E4" stroke-width="1"/>
+<text x="227.0" y="12" font-size="9" fill="#808080" text-anchor="middle">0</text>
+<line x1="244" y1="16" x2="244" y2="142" stroke="#C9D3E4" stroke-width="1"/>
+<text x="261.0" y="12" font-size="9" fill="#808080" text-anchor="middle">1</text>
+<line x1="278" y1="16" x2="278" y2="142" stroke="#C9D3E4" stroke-width="1"/>
+<text x="295.0" y="12" font-size="9" fill="#808080" text-anchor="middle">2</text>
+<line x1="312" y1="16" x2="312" y2="142" stroke="#C9D3E4" stroke-width="1"/>
+<text x="329.0" y="12" font-size="9" fill="#808080" text-anchor="middle">3</text>
+<line x1="346" y1="16" x2="346" y2="142" stroke="#C9D3E4" stroke-width="1"/>
+<text x="363.0" y="12" font-size="9" fill="#808080" text-anchor="middle">4</text>
+<line x1="380" y1="16" x2="380" y2="142" stroke="#C9D3E4" stroke-width="1"/>
+<text x="397.0" y="12" font-size="9" fill="#808080" text-anchor="middle">5</text>
+<line x1="414" y1="16" x2="414" y2="142" stroke="#C9D3E4" stroke-width="1"/>
+<text x="431.0" y="12" font-size="9" fill="#808080" text-anchor="middle">6</text>
+<line x1="448" y1="16" x2="448" y2="142" stroke="#C9D3E4" stroke-width="1"/>
+<text x="465.0" y="12" font-size="9" fill="#808080" text-anchor="middle">7</text>
+<line x1="482" y1="16" x2="482" y2="142" stroke="#C9D3E4" stroke-width="1"/>
+<text x="499.0" y="12" font-size="9" fill="#808080" text-anchor="middle">8</text>
+<line x1="516" y1="16" x2="516" y2="142" stroke="#C9D3E4" stroke-width="1"/>
+<text x="533.0" y="12" font-size="9" fill="#808080" text-anchor="middle">9</text>
+<line x1="550" y1="16" x2="550" y2="142" stroke="#C9D3E4" stroke-width="1"/>
+<text x="567.0" y="12" font-size="9" fill="#808080" text-anchor="middle">10</text>
+<line x1="584" y1="16" x2="584" y2="142" stroke="#C9D3E4" stroke-width="1"/>
+<text x="601.0" y="12" font-size="9" fill="#808080" text-anchor="middle">11</text>
+<line x1="618" y1="16" x2="618" y2="142" stroke="#C9D3E4" stroke-width="1"/>
+<text x="635.0" y="12" font-size="9" fill="#808080" text-anchor="middle">12</text>
+<line x1="652" y1="16" x2="652" y2="142" stroke="#C9D3E4" stroke-width="1"/>
+<text x="669.0" y="12" font-size="9" fill="#808080" text-anchor="middle">13</text>
+<line x1="686" y1="16" x2="686" y2="142" stroke="#C9D3E4" stroke-width="1"/>
+<text x="202" y="41.0" font-size="10.5" text-anchor="end" fill="#000">MOSI  host to card</text>
+<path d="M210,35.5 L214,27 L240,27 L244,35.5 L240,44 L214,44 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M244,35.5 L248,27 L274,27 L278,35.5 L274,44 L248,44 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M278,35.5 L282,27 L308,27 L312,35.5 L308,44 L282,44 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M312,35.5 L316,27 L342,27 L346,35.5 L342,44 L316,44 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M346,35.5 L350,27 L376,27 L380,35.5 L376,44 L350,44 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M380,35.5 L384,27 L410,27 L414,35.5 L410,44 L384,44 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M414,35.5 L418,27 L444,27 L448,35.5 L444,44 L418,44 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M448,35.5 L452,27 L478,27 L482,35.5 L478,44 L452,44 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M482,35.5 L486,27 L512,27 L516,35.5 L512,44 L486,44 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M516,35.5 L520,27 L546,27 L550,35.5 L546,44 L520,44 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M550,35.5 L554,27 L580,27 L584,35.5 L580,44 L554,44 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M584,35.5 L588,27 L614,27 L618,35.5 L614,44 L588,44 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M618,35.5 L622,27 L648,27 L652,35.5 L648,44 L622,44 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M652,35.5 L656,27 L682,27 L686,35.5 L682,44 L656,44 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="227.0" y="38.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">55</text>
+<text x="261.0" y="38.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">FF</text>
+<text x="295.0" y="38.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">FF</text>
+<text x="329.0" y="38.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">FF</text>
+<text x="363.0" y="38.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">FF</text>
+<text x="397.0" y="38.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">FF</text>
+<text x="431.0" y="38.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">FF</text>
+<text x="465.0" y="38.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">FF</text>
+<text x="499.0" y="38.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">FF</text>
+<text x="533.0" y="38.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">FF</text>
+<text x="567.0" y="38.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">FF</text>
+<text x="601.0" y="38.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">FF</text>
+<text x="635.0" y="38.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">FF</text>
+<text x="669.0" y="38.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">FF</text>
+<text x="202" y="71.0" font-size="10.5" text-anchor="end" fill="#000">MISO  card to host</text>
+<path d="M210,65.5 L214,57 L240,57 L244,65.5 L240,74 L214,74 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M244,65.5 L248,57 L274,57 L278,65.5 L274,74 L248,74 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M278,65.5 L282,57 L308,57 L312,65.5 L308,74 L282,74 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M312,65.5 L316,57 L342,57 L346,65.5 L342,74 L316,74 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M346,65.5 L350,57 L376,57 L380,65.5 L376,74 L350,74 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M380,65.5 L384,57 L410,57 L414,65.5 L410,74 L384,74 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M414,65.5 L418,57 L444,57 L448,65.5 L444,74 L418,74 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M448,65.5 L452,57 L478,57 L482,65.5 L478,74 L452,74 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M482,65.5 L486,57 L512,57 L516,65.5 L512,74 L486,74 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M516,65.5 L520,57 L546,57 L550,65.5 L546,74 L520,74 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M550,65.5 L554,57 L580,57 L584,65.5 L580,74 L554,74 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M584,65.5 L588,57 L614,57 L618,65.5 L614,74 L588,74 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M618,65.5 L622,57 L648,57 L652,65.5 L648,74 L622,74 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M652,65.5 L656,57 L682,57 L686,65.5 L682,74 L656,74 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="227.0" y="68.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">FF</text>
+<text x="261.0" y="68.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">FF</text>
+<text x="295.0" y="68.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">FF</text>
+<text x="329.0" y="68.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">01</text>
+<text x="363.0" y="68.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">FE</text>
+<text x="397.0" y="68.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">A0</text>
+<text x="431.0" y="68.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">A1</text>
+<text x="465.0" y="68.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">A2</text>
+<text x="499.0" y="68.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">A3</text>
+<text x="533.0" y="68.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">A4</text>
+<text x="567.0" y="68.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">A5</text>
+<text x="601.0" y="68.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">A6</text>
+<text x="635.0" y="68.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">A7</text>
+<text x="669.0" y="68.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">A8</text>
+<text x="202" y="101.0" font-size="10.5" text-anchor="end" fill="#000">sequencer state</text>
+<path d="M210,95.5 L214,87 L342,87 L346,95.5 L342,104 L214,104 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M346,95.5 L350,87 L376,87 L380,95.5 L376,104 L350,104 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M380,95.5 L384,87 L682,87 L686,95.5 L682,104 L384,104 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="278.0" y="98.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">RESP_WAIT</text>
+<text x="363.0" y="97.9" font-size="6.8" text-anchor="middle" font-family="Liberation Mono, monospace">RD_TOKEN</text>
+<text x="533.0" y="98.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">RD_DATA</text>
+<text x="202" y="131.0" font-size="10.5" text-anchor="end" fill="#000">FIFO bytes</text>
+<path d="M210,125.5 L214,117 L410,117 L414,125.5 L410,134 L214,134 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M414,125.5 L418,117 L444,117 L448,125.5 L444,134 L418,134 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M448,125.5 L452,117 L478,117 L482,125.5 L478,134 L452,134 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M482,125.5 L486,117 L512,117 L516,125.5 L512,134 L486,134 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M516,125.5 L520,117 L546,117 L550,125.5 L546,134 L520,134 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M550,125.5 L554,117 L580,117 L584,125.5 L580,134 L554,134 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M584,125.5 L588,117 L614,117 L618,125.5 L614,134 L588,134 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M618,125.5 L622,117 L648,117 L652,125.5 L648,134 L622,134 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<path d="M652,125.5 L656,117 L682,117 L686,125.5 L682,134 L656,134 Z" fill="#DCE6F1" stroke="#1F3864" stroke-width="1.2"/>
+<text x="312.0" y="128.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">0</text>
+<text x="431.0" y="128.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">1</text>
+<text x="465.0" y="128.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">2</text>
+<text x="499.0" y="128.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">3</text>
+<text x="533.0" y="128.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">0</text>
+<text x="567.0" y="128.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">1</text>
+<text x="601.0" y="128.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">2</text>
+<text x="635.0" y="128.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">3</text>
+<text x="669.0" y="128.9" font-size="9.5" text-anchor="middle" font-family="Liberation Mono, monospace">0</text>
+<text x="10" y="162" font-size="10" fill="#404040">CMD17 READ_SINGLE_BLOCK, after the R1. The card may take as long as it likes before the block arrives, so the core sits in RD_TOKEN clocking 0xFF</text>
+<text x="24" y="178" font-size="10" fill="#404040">until it sees a token.</text>
+<text x="10" y="194" font-size="10" fill="#404040">0xFE is the start-of-block token. Anything with the top four bits clear is a data error token instead, and the core reports it in ERR_INFO rather</text>
+<text x="24" y="210" font-size="10" fill="#404040">than treating the byte as data.</text>
+<text x="10" y="226" font-size="10" fill="#404040">The 512 data bytes follow immediately, then a two-byte CRC16. The FIFO count rises as they land; the DMA drains it in parallel, which is why the</text>
+<text x="24" y="242" font-size="10" fill="#404040">count does not simply climb to 512.</text>
+</svg>

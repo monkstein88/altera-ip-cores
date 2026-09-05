@@ -279,7 +279,7 @@ rather than a new bitstream.
 
 ## Verification
 
-Everything here runs without a licence. Verilator 5.050 or newer.
+Everything here runs on open-source tools. Verilator 5.050 or newer.
 
 ```
 ./verification/run_all.sh                # everything, roll-up result
@@ -293,14 +293,15 @@ simulation/verilator/run_sim.sh phy      # just the shifter
 tclsh verification/check_hw_tcl.tcl      # the Platform Designer component
 ./verification/check_driver_builds.sh    # the HAL driver, and CSD arithmetic
 ./verification/check_assertions_fire.sh  # prove the assertions can fail
+./verification/check_figures.sh          # every figure matches its generator
 python3 doc/tools/check_facts.py         # every number in these documents
 python3 verification/models/crc_reference.py
 ```
 
-Three of those need **no simulator at all**, which is the point of them: they
+Four of those need **no simulator at all**, which is the point of them: they
 catch the dull mechanical faults — a renamed parameter, a port added to an
-interface that does not exist, a typo in the driver, a figure in this README
-that no longer matches the RTL — which otherwise survive until someone with the
+interface that does not exist, a typo in the driver, a diagram or a figure that no
+longer matches the RTL — which otherwise survive until someone with the
 full Quartus toolchain tries to build a project.
 
 | Suite | Checks | What it proves |
@@ -311,7 +312,8 @@ full Quartus toolchain tries to build a project.
 | `check_hw_tcl.tcl` | 22 | The component executes; parameters and ports exist; validation rejects exactly the bad configurations |
 | `check_driver_builds.sh` | 3 | The driver compiles clean under `-Wall -Wextra`; CSD capacity arithmetic for both structure versions; the register header stands alone |
 | `check_assertions_fire.sh` | 3 faults | Each injected into a scratch copy and required to be caught by the assertion meant to catch it |
-| `check_facts.py` | 89 | Every register offset, parameter default, line count and measured figure in these documents, re-derived from the RTL |
+| `check_figures.sh` | 10 figures | Each re-rendered from its generator and compared byte for byte, because a stale picture is worse than a missing one |
+| `check_facts.py` | 174 | Every register offset, parameter default, line count and measured figure in these documents, re-derived from the RTL |
 | lint | 10 configs | `-Wall` clean across every parameter that changes what is built |
 
 **The full-core suite runs five times**, and the exit status is the AND across
@@ -407,16 +409,40 @@ driver compiles.
 rtl/          nine SystemVerilog files, 3127 lines
 tb/           card model, memory model, three testbenches, bound SVA
 simulation/verilator/run_sim.sh
+simulation/questa/run_sim.tcl   coverage and non-vacuity — NOT yet run
 verification/ hw.tcl checker, driver compile check, assertion fault
-              injection, design-time Python models
+              injection, wave capture, design-time Python models
 HAL/, inc/    Nios II driver and the standalone register header
-doc/          design specification
+doc/          user guide, block diagrams, design specification, figures
 *_hw.tcl      Platform Designer component
 *_sw.tcl      BSP driver description
 ```
 
-`doc/avalon_mm_sdcard_controller_design.md` is the design record: why each
-decision was made, what the specification requires, and what is still open.
+## Documentation
+
+| Document | Markdown | PDF |
+|---|---|---|
+| User guide | [`doc/avalon_mm_sdcard_controller_user_guide.md`](doc/avalon_mm_sdcard_controller_user_guide.md) | [PDF](doc/avalon_mm_sdcard_controller_user_guide.pdf) |
+| Block diagrams and descriptions | [`doc/avalon_mm_sdcard_controller_block_diagrams.md`](doc/avalon_mm_sdcard_controller_block_diagrams.md) | [PDF](doc/avalon_mm_sdcard_controller_block_diagrams.pdf) |
+| Design record | [`doc/avalon_mm_sdcard_controller_design.md`](doc/avalon_mm_sdcard_controller_design.md) | — |
+
+The design record is the *why*: each decision, what the specification requires,
+and what is still open. The user guide is the *how*. The block-diagram document
+carries the pictures — and every one of them is generated rather than drawn:
+
+```bash
+python3 doc/tools/diagrams/build_figures.py   # the block diagrams
+./verification/capture.sh                     # record verification/wave.vcd
+python3 doc/tools/waveforms/mkwaves.py        # the timing figures, cut from it
+python3 doc/tools/build_pdf.py all            # typeset both documents
+```
+
+The timing figures come out of a real simulation, so they cannot drift away from
+the RTL: change the design and either the figure changes with it, or `mkwaves.py`
+fails saying which token or state it could no longer find. A hand-drawn timing
+diagram just quietly becomes fiction, and SPI-mode SD is full of details — `N_CR`
+is a range, the data-response token carries five bits of meaning in eight, CRC16
+is seeded with zero and not 0xFFFF — that a plausible drawing gets wrong.
 
 ## Licence
 

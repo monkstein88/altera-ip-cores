@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run_all.sh - everything that can be checked without a board or a licence.
+# run_all.sh - everything that can be checked in software alone.
 #
 #   ./verification/run_all.sh
 #
 # Exit 0 only if every suite passes. Each one prints its own result; this script
 # reports the roll-up and the exit status is the AND of them all.
 #
-# Five suites, deliberately different in kind:
+# Eight suites, deliberately different in kind:
 #
 #   lint          the RTL under -Wall, across every parameter configuration
 #                 that changes what gets built
@@ -20,6 +20,9 @@
 #                 required to be caught by the assertion meant to catch it -
 #                 because an assertion that cannot fail passes just as
 #                 convincingly as one doing real work
+#   figures       every SVG in doc/ re-rendered and compared, because a stale
+#                 picture is worse than a missing one - a reader has no reason
+#                 to distrust it
 #   facts         every number in the documentation re-derived from source
 #
 # The last three need no simulator at all, which matters: they catch the dull
@@ -92,6 +95,7 @@ run "simulation, 3 testbenches"          "$ROOT/simulation/verilator/run_sim.sh"
 run "Platform Designer component"        tclsh "$ROOT/verification/check_hw_tcl.tcl"
 run "HAL driver compiles"                "$ROOT/verification/check_driver_builds.sh"
 run "assertions actually fire"           "$ROOT/verification/check_assertions_fire.sh"
+run "figures match their generators"     "$ROOT/verification/check_figures.sh"
 run "documentation facts"                python3 "$ROOT/doc/tools/check_facts.py"
 run "CRC reference vectors"              python3 "$ROOT/verification/models/crc_reference.py"
 

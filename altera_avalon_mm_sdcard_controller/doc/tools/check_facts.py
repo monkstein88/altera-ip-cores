@@ -217,6 +217,118 @@ check("README does not claim hardware verification",
       "verified on hardware" not in README.lower())
 
 # ---------------------------------------------------------------------------
+# 9. The user guide and the block-diagram document
+#
+# These two are the reader-facing documents, so a number that has drifted in
+# them does more damage than one in the design notes. Everything below is
+# re-derived from the RTL, the component or the testbenches - never from
+# another document, which would only check that two copies of a mistake agree.
+# ---------------------------------------------------------------------------
+UG = rd("doc/avalon_mm_sdcard_controller_user_guide.md")
+BD = rd("doc/avalon_mm_sdcard_controller_block_diagrams.md")
+SVA = rd("tb/avalon_mm_sdcard_controller_sva.sv")
+SEQ = rd("rtl/avalon_mm_sdcard_controller_seq.sv")
+
+# --- 9.1 register map ---
+#
+# The user guide carries the map as a table, so its offsets are checked against
+# the package directly. The block-diagram document carries it as a FIGURE, so
+# the claim to check there is in the script that draws the figure - checking the
+# prose would only confirm that the document does not repeat the offsets, which
+# it deliberately does not.
+FIGSRC = rd("doc/tools/diagrams/build_figures.py")
+for name, word in re.findall(
+        r"localparam int unsigned REG_(\w+)\s*=\s*(\d+);", PKG):
+    if name == "COUNT":
+        continue
+    off = f"0x{int(word) * 4:02X}"
+    row = re.search(r"^\|\s*" + off + r"\s*\|\s*" + word + r"\s*\|\s*`(\w+)`",
+                    UG, re.M)
+    check(f"the user guide lists {name} at {off}",
+          row is not None and row.group(1) == name,
+          f"guide row says {row.group(1) if row else None!r}")
+    check(f"the register-map figure lists {name} at {off}",
+          f'("{off}", "{name}"' in FIGSRC, f"expected ({off}, {name})")
+
+# --- 9.2 sequencer state count ---
+m = re.search(r"typedef enum logic \[4:0\] \{(.*?)\} state_e;", SEQ, re.S)
+nstates = len([x for x in re.sub(r"//[^\n]*", "", m.group(1)).split(",")
+               if x.strip()]) if m else 0
+check("the sequencer really has the number of states the RTL declares",
+      nstates == 20, f"found {nstates}")
+for doc, label in ((UG, "user guide"), (BD, "block diagrams")):
+    check(f"{label} states the sequencer's state count correctly",
+          re.search(r"\b20 states\b|\bTwenty states\b|\b20-state\b", doc)
+          is not None)
+
+# --- 9.3 assertion and cover counts, counted from the file itself ---
+# This is the check that was missing when the root README drifted to "19
+# assertions, 6 cover points" against a file holding 24 and 5.
+n_assert = len([ln for ln in SVA.splitlines()
+                if "assert property" in ln and not ln.strip().startswith("//")])
+n_cover = len([ln for ln in SVA.splitlines()
+               if "cover property" in ln and not ln.strip().startswith("//")])
+check("the user guide's assertion count matches the SVA file",
+      f"{n_assert} bound SVA assertions" in UG or
+      f"{n_assert} bound SVA assertions and {n_cover} cover points" in UG,
+      f"file has {n_assert} assertions, {n_cover} cover points")
+check("the user guide's cover-point count matches the SVA file",
+      f"{n_cover} cover points" in UG,
+      f"file has {n_cover} cover points")
+
+# --- 9.4 parameter defaults and ranges, taken from the component ---
+for pname, default in re.findall(
+        r"add_parameter (\w+) INTEGER (\d+)", HWTCL):
+    row = re.search(r"^\|\s*`" + pname + r"`\s*\|\s*([^|]+?)\s*\|",
+                    UG, re.M)
+    check(f"the user guide lists a default for {pname}", row is not None)
+    if row:
+        check(f"the user guide's default for {pname} matches the component",
+              row.group(1).strip() == default,
+              f"guide says {row.group(1).strip()!r}, component says {default!r}")
+
+# --- 9.5 protocol constants quoted in prose ---
+for const, doc_text in (("TOKEN_START_BLOCK", "0xFE"),
+                        ("TOKEN_START_MULTI_W", "0xFC"),
+                        ("TOKEN_STOP_TRAN", "0xFD"),
+                        ("DATRESP_ACCEPTED", "0x05")):
+    m = re.search(r"localparam logic \[7:0\] " + const + r"\s*=\s*8'h([0-9A-F]+)",
+                  PKG)
+    check(f"the package still defines {const}", m is not None)
+    if m:
+        want = f"0x{m.group(1)}"
+        check(f"the user guide quotes {const} as the package defines it",
+              want == doc_text and want in UG, f"package {want}")
+
+# --- 9.6 the CRC16 seed, which is the one everyone gets wrong ---
+for doc, label in ((UG, "user guide"), (BD, "block diagrams")):
+    if "CRC16" not in doc:
+        continue
+    check(f"{label} does not claim the 0xFFFF seed",
+          "0xFFFF" not in doc or "not" in doc.lower())
+
+# --- 9.7 figures referenced by the documents must exist ---
+FIGDIR = os.path.join(ROOT, "doc", "figures")
+for doc, label in ((UG, "user guide"), (BD, "block diagrams")):
+    for fig in re.findall(r"!\[[^\]]*\]\(figures/([\w.]+)\)", doc):
+        check(f"{label} references a figure that exists: {fig}",
+              os.path.exists(os.path.join(FIGDIR, fig)))
+
+# --- 9.8 honesty, again: neither document may claim hardware verification ---
+for doc, label in ((UG, "user guide"), (BD, "block diagrams")):
+    check(f"{label} states the core has not been on a board",
+          "never run on a board" in doc or "simulation only" in doc.lower())
+    check(f"{label} does not claim hardware verification",
+          "verified on hardware" not in doc.lower())
+
+# --- 9.9 the Questa flow must still describe itself as unrun ---
+QUESTA = rd("simulation/questa/run_sim.tcl")
+check("the Questa flow still says it has not been executed",
+      "NOT YET RUN" in QUESTA or "has NOT been executed" in QUESTA)
+check("the user guide says the Questa flow is untested",
+      "has not been executed" in UG.lower())
+
+# ---------------------------------------------------------------------------
 print()
 print("=== check_facts: avalon_mm_sdcard_controller ===")
 print()

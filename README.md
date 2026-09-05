@@ -24,7 +24,7 @@ own terms — see [Licence](#licence).
 | [`altera_avalon_mm_firewall`](altera_avalon_mm_firewall/README.md) | **Avalon-MM Firewall** · v1.0 · *Bridges and Adapters / Custom* | Burst-capable access-control and fault-isolation firewall for Avalon-MM. Default-deny address windows with per-window read/write/burst permission, whole-burst range checking, downstream timeout detection and an explicit software recovery sequence | **Verified on hardware.** 632 checks, 22 assertions, 11 cover points |
 | [`altera_axi4_lite_firewall`](altera_axi4_lite_firewall/README.md) | **AXI4-Lite Firewall** · v2.0 · *Bridges and Adapters / Custom* | The same idea on AXI4-Lite: single transactions, capture-and-redrive rather than pass-through | **Verified on hardware.** 103 checks, 14 assertions, 6 cover points |
 | [`altera_avalon_mm_sdram_controller`](altera_avalon_mm_sdram_controller/README.md) | **Avalon-MM SDRAM Controller (per-bank rows)** · v1.0 · *Memory Interfaces and Controllers / Custom* | SDR SDRAM controller that keeps one open row *per bank* and treats a read/write turnaround as the datasheet does, rather than as a full row cycle. Drop-in replacement for the vendor core below | **Run on two boards — 8/8 RTL scenarios and 10/10 Nios II checks pass on a Terasic DE0-Nano and on a DE10-Lite, including refresh retention.** 199.6 MB/s on row hits, 99.8% of the bus. 3.6–8.9× the vendor core on mixed and scattered traffic, for 3.8× the logic. 3,024 testbench checks across 18 configurations, four board demonstrations on two parts, 295 documentation claims checked |
-| [`altera_avalon_mm_sdcard_controller`](altera_avalon_mm_sdcard_controller/README.md) | **Avalon-MM SD Card Controller (SPI)** · v1.0 · *Memory Interfaces and Controllers / Custom* | SD card controller in SPI mode. Hardware does the link layer — framing, CRC7/CRC16, tokens, multi-block streaming, pre-emptive busy polling, optional DMA — and a Nios II HAL driver does the card protocol | **Simulation only — never on a board.** 57 checks with the full-core suite run in 5 configurations, 19 assertions, 6 cover points, 22 checks on the Platform Designer component. **98.1% of SPI line rate**, measured |
+| [`altera_avalon_mm_sdcard_controller`](altera_avalon_mm_sdcard_controller/README.md) | **Avalon-MM SD Card Controller (SPI)** · v1.0 · *Memory Interfaces and Controllers / Custom* | SD card controller in SPI mode. Hardware does the link layer — framing, CRC7/CRC16, tokens, multi-block streaming, pre-emptive busy polling, optional DMA — and a Nios II HAL driver does the card protocol | **Simulation only — never on a board.** 57 checks with the full-core suite run in 5 configurations, 24 assertions, 5 cover points, 22 checks on the Platform Designer component, 177 documentation claims and 10 generated figures checked. **98.1% of SPI line rate**, measured |
 | [`altera_avalon_new_sdram_controller`](altera_avalon_new_sdram_controller/README.md) | **SDRAM Controller Intel FPGA IP** · v20.1 · *Memory Interfaces and Controllers / SDRAM* | Intel's own SDRAM controller, kept here because current Quartus releases no longer ship it | Vendor IP, unhidden so it is usable — see *Provenance*. **Demo verified on hardware:** all 64 MB written and read back at 194 MB/s |
 
 The two firewalls appear in the IP Catalog under **Bridges and Adapters /
@@ -54,7 +54,10 @@ or Arduino header and its own pinout. What it does have is 57 self-checking
 assertions against a card model written to the SD specification — including every
 failure a card can report — run across five configurations, bound SVA assertions
 proven live by fault injection, 22 checks on its Platform Designer component, and
-a measured 98.1% of SPI line rate. All of it in simulation.
+a measured 98.1% of SPI line rate. Its user guide and block-diagram document are
+built from that same simulation — every timing figure in them is cut out of a
+recorded VCD rather than drawn, so a figure cannot outlive the RTL it describes.
+All of it in simulation.
 
 The Avalon firewall's demos are the source of its published resource and Fmax
 numbers: 60.77 MHz with the combinational rule lookup, 95.85 MHz with
@@ -202,25 +205,27 @@ The cores' own RTL is plain synthesisable SystemVerilog with no device
 primitives, no vendor attributes and no inferred memory, so it is not tied to a
 family or a release. Only the examples are.
 
-For simulation, all four original cores have a **Verilator** regression that
-needs no licence — 5.050 or newer, because older releases do not implement the
-SVA the assertions use. What differs is what else each one has been run under:
+For simulation, all four original cores have an open-source **Verilator**
+regression — 5.050 or newer, because older releases do not implement the SVA the
+assertions use. What differs is what else each one has been run under:
 
 | Core | Verilator | Questa/ModelSim | Icarus |
 |---|---|---|---|
 | `altera_avalon_mm_firewall` | yes | yes — coverage, assertions | yes — functional only, `-DICARUS` skips the SVA bind |
 | `altera_axi4_lite_firewall` | yes | yes — coverage, assertions | yes — same |
 | `altera_avalon_mm_sdram_controller` | yes — 18 configurations, plus Quartus Analysis & Synthesis | yes — 14 of those, coverage, assertion non-vacuity | — |
-| `altera_avalon_mm_sdcard_controller` | yes — 3 testbenches, the full-core one in 5 configurations, with assertions | — | — |
+| `altera_avalon_mm_sdcard_controller` | yes — 3 testbenches, the full-core one in 5 configurations, with assertions | flow written, **never executed** | — |
 
-The SD card controller additionally carries two checks that need no simulator at
-all: `verification/check_hw_tcl.tcl` executes its Platform Designer component
-against stubbed Qsys commands, and `verification/check_driver_builds.sh`
-compiles the HAL driver against stubbed Nios II headers under `-Wall -Wextra`
-and unit-tests its CSD capacity arithmetic. Both catch the dull mechanical
-faults — a renamed parameter, a port added to an interface that does not exist,
-a typo in the driver — that otherwise survive until someone with the full
-toolchain tries to build a project.
+The SD card controller additionally carries three checks that need no simulator
+at all: `verification/check_hw_tcl.tcl` executes its Platform Designer component
+against stubbed Qsys commands, `verification/check_driver_builds.sh` compiles
+the HAL driver against stubbed Nios II headers under `-Wall -Wextra` and
+unit-tests its CSD capacity arithmetic, and `verification/check_figures.sh`
+re-renders every figure in its documentation and compares it byte for byte
+against the tracked copy. All three catch the dull mechanical faults — a renamed
+parameter, a port added to an interface that does not exist, a typo in the
+driver, a diagram left behind by the RTL it describes — that otherwise survive
+until someone with the full toolchain tries to build a project.
 
 It also carries `verification/check_assertions_fire.sh`, which injects faults
 into scratch copies of the RTL and requires each to be caught by the assertion
@@ -240,6 +245,8 @@ does not cover.
 
 ```
 altera-ip-cores/
+├── tools/                              repository-wide checks: this README
+│                                       against the tree, and every core's own
 ├── altera_avalon_mm_firewall/          Avalon-MM Firewall: rtl, tb, doc,
 │   ├── HAL/ inc/ *_sw.tcl             HAL driver the BSP picks up itself,
 │   ├── example/de10_lite_rtl/         and two hardware demos
@@ -256,9 +263,11 @@ altera-ip-cores/
 │   ├── example/de0_nano_rtl/           on two parts of different geometry
 │   └── example/de0_nano_nios/
 ├── altera_avalon_mm_sdcard_controller/ SD card controller, SPI mode
-│   ├── rtl/ tb/ simulation/ doc/       card model, three testbenches, bound SVA
+│   ├── rtl/ tb/ simulation/            card model, three testbenches, bound SVA
+│   ├── doc/                            user guide, block diagrams, generated
+│   │                                   figures — the timing ones cut from a VCD
 │   ├── HAL/ inc/ *_sw.tcl              HAL driver the BSP picks up itself
-│   └── verification/                   hw.tcl, driver and assertion checks
+│   └── verification/                   hw.tcl, driver, assertion and wave checks
 └── altera_avalon_new_sdram_controller/ Intel's SDRAM controller, unhidden
     └── example/de10_lite_rtl/          plus one hardware demo
 ```
@@ -270,10 +279,32 @@ block-diagram document, in Markdown and PDF, under `doc/` — each with a
 `check_facts.py` that re-derives every number in them from the RTL and fails if
 any has drifted.
 
-Those scripts check their own core and nothing above it. This file is the one
-document in the repository that no tool polices, which is exactly how it came
-to describe the SDRAM controller as never having reached a board, two
-paragraphs after a table saying it had.
+Those scripts check their own core and nothing above it. This file used to be
+the one document in the repository that no tool policed, which is exactly how it
+came to describe the SDRAM controller as never having reached a board two
+paragraphs after a table saying it had — and, later, to credit the SD card
+controller with 19 assertions and 6 cover points against a file holding 24 and 5.
+
+It is policed now:
+
+```bash
+python3 tools/check_readme.py     # this file, against the tree
+./tools/check_all.sh              # the above plus every core's own checks
+```
+
+`tools/check_readme.py` re-derives what is mechanically derivable — every
+relative link, every core directory and component file, the assertion and
+cover-point counts in the status cells, the presence of the user guide and
+block-diagram document each core is claimed to have, and whether a Questa cell
+claims a flow was run against a file saying it was not. It deliberately does
+**not** check measured results: throughput, F_max and board pass counts came
+from hardware and from simulations whose logs are not tracked, and a checker
+that pretended to verify them would be theatre.
+
+Writing it immediately paid for itself twice — once on a pair of links that no
+longer resolved, and once on its own first draft, where the row lookup matched a
+different table keyed by the same core names, hit a length guard, and skipped
+every check below it while reporting green.
 
 ---
 

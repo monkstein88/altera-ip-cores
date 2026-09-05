@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run_sim.sh - licence-free regression run for the Avalon-MM SD Card Controller.
+# run_sim.sh - regression run for the Avalon-MM SD Card Controller.
 #
 #   ./run_sim.sh          run everything
 #   ./run_sim.sh -c       clean the build directories first
