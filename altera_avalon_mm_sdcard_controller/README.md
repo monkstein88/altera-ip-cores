@@ -11,11 +11,13 @@ driver the BSP picks up by itself.
 
 > **Status: simulation only. This core has never been on a board.**
 >
-> It passes 48 self-checking assertions across three testbenches against a
-> behavioural SD card model, 22 checks on the Platform Designer component, and a
-> compile check on the HAL driver. None of that is a substitute for hardware,
-> and the DE10-Lite this repository's other examples target has no microSD
-> socket — see [Verification status](#verification-status-what-is-and-is-not-proven).
+> It passes 57 self-checking assertions across three testbenches against a
+> behavioural SD card model — with the full-core suite run in five
+> configurations — plus bound SVA assertions proven live by fault injection,
+> 22 checks on the Platform Designer component and three on the HAL driver.
+> None of that is a substitute for hardware, and the DE10-Lite this
+> repository's other examples target has no microSD socket — see
+> [Verification status](#verification-status-what-is-and-is-not-proven).
 
 ---
 
@@ -117,7 +119,7 @@ except a cycle count catches it, which is why the count is an assertion.
          sd_clk / mosi / miso / cs_n
 ```
 
-Nine RTL files, 3096 lines, one per box plus the package and the top level.
+Nine RTL files, 3127 lines, one per box plus the package and the top level.
 Single clock domain throughout — no PLL, no CDC, nothing that behaves
 differently in simulation than on hardware.
 
@@ -289,7 +291,8 @@ or individually:
 simulation/verilator/run_sim.sh          # all three testbenches
 simulation/verilator/run_sim.sh phy      # just the shifter
 tclsh verification/check_hw_tcl.tcl      # the Platform Designer component
-./verification/check_driver_builds.sh    # the HAL driver
+./verification/check_driver_builds.sh    # the HAL driver, and CSD arithmetic
+./verification/check_assertions_fire.sh  # prove the assertions can fail
 python3 doc/tools/check_facts.py         # every number in these documents
 python3 verification/models/crc_reference.py
 ```
@@ -304,11 +307,29 @@ full Quartus toolchain tries to build a project.
 | --- | --- | --- |
 | `phy` | 12 | Exactly 8.00 SPI clocks per byte at every divisor; bit-exact loopback; the `SAMPLE_DLY` bound |
 | `fifo` | 5 | Byte↔word round trip both directions, little-endian order, partial-word flush |
-| `core` | 31 | Identification, single and multi-block both directions, every card-reported failure, throughput floor, Avalon conformance |
+| `core` | 40 | Identification, single and multi-block both directions, CSD/CID, every card-reported failure, `ERR_INFO` contents, reset domains, throughput floor, Avalon conformance |
 | `check_hw_tcl.tcl` | 22 | The component executes; parameters and ports exist; validation rejects exactly the bad configurations |
-| `check_driver_builds.sh` | 2 | The driver compiles clean under `-Wall -Wextra`; the register header stands alone |
+| `check_driver_builds.sh` | 3 | The driver compiles clean under `-Wall -Wextra`; CSD capacity arithmetic for both structure versions; the register header stands alone |
+| `check_assertions_fire.sh` | 3 faults | Each injected into a scratch copy and required to be caught by the assertion meant to catch it |
 | `check_facts.py` | 89 | Every register offset, parameter default, line count and measured figure in these documents, re-derived from the RTL |
 | lint | 10 configs | `-Wall` clean across every parameter that changes what is built |
+
+**The full-core suite runs five times**, and the exit status is the AND across
+all of them:
+
+| Configuration | What only it reaches |
+| --- | --- |
+| `dma` | the reference case |
+| `pio` | no master; software moves every word through `DATA` on a deadline |
+| `sdsc` | **byte** addressing — the identity on an SDHC card, so untested anywhere else |
+| `tight` | one block of buffer, so the data path refills mid-transfer |
+| `noburst` | single-beat Avalon transactions throughout |
+
+Adding that sweep was not bookkeeping. The first run of the four non-default
+configurations found a defect the DMA case cannot reach: neither data-streaming
+state checked the timeout, so a data phase starved of data hung the core with no
+recovery short of a soft reset. With a master attached that cannot happen — the
+DMA always supplies. With software feeding the buffer it can, and did.
 
 ### What the card model does that matters
 
@@ -383,10 +404,11 @@ driver compiles.
 ## Layout
 
 ```
-rtl/          nine SystemVerilog files, 3096 lines
-tb/           card model, memory model, three testbenches
+rtl/          nine SystemVerilog files, 3127 lines
+tb/           card model, memory model, three testbenches, bound SVA
 simulation/verilator/run_sim.sh
-verification/ hw.tcl checker, driver compile check, design-time Python models
+verification/ hw.tcl checker, driver compile check, assertion fault
+              injection, design-time Python models
 HAL/, inc/    Nios II driver and the standalone register header
 doc/          design specification
 *_hw.tcl      Platform Designer component

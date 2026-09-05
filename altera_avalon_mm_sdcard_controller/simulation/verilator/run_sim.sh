@@ -133,7 +133,7 @@ run_tb () {
     local log="$OBJROOT/run_$name.log"
 
     echo "=== $name ==="
-    verilator --binary --timing -j "$(nproc)" -Wall -CFLAGS "$CXXSTD" \
+    verilator --binary --timing --assert -j "$(nproc)" -Wall -CFLAGS "$CXXSTD" \
         "${PCHFIX[@]}" "${WAIVE[@]}" --Mdir "$obj" -o simx \
         "${RTL[@]}" "$@" --top-module "$top" > "$log" 2>&1
     if [ $? -ne 0 ]; then
@@ -156,18 +156,58 @@ run_tb () {
 }
 
 if [ "$WHICH" = "all" ] || [ "$WHICH" = "phy" ]; then
-    run_tb phy avalon_mm_sdcard_controller_spi_phy_tb "$ROOT/tb/avalon_mm_sdcard_controller_spi_phy_tb.sv"
+    run_tb phy avalon_mm_sdcard_controller_spi_phy_tb \
+        "$ROOT/tb/avalon_mm_sdcard_controller_sva.sv" \
+        "$ROOT/tb/avalon_mm_sdcard_controller_spi_phy_tb.sv"
 fi
 
 if [ "$WHICH" = "all" ] || [ "$WHICH" = "fifo" ]; then
-    run_tb fifo avalon_mm_sdcard_controller_fifo_tb "$ROOT/tb/avalon_mm_sdcard_controller_fifo_tb.sv"
+    run_tb fifo avalon_mm_sdcard_controller_fifo_tb \
+        "$ROOT/tb/avalon_mm_sdcard_controller_sva.sv" \
+        "$ROOT/tb/avalon_mm_sdcard_controller_fifo_tb.sv"
 fi
 
+# ---------------------------------------------------------------------------
+# The full-core suite runs under several configurations, and the exit status is
+# the AND across all of them.
+#
+# These are not cosmetic variations. Each one is a different design or a
+# different card, and each exercises a path the others cannot reach:
+#
+#   dma       the reference configuration
+#   pio       USE_DMA=0. No master at all; software moves every word through
+#             the DATA window, on a deadline. A completely different FIFO
+#             client, and the only configuration where the shifter can be
+#             starved by the CPU rather than by the interconnect.
+#   sdsc      a standard-capacity card, which is BYTE addressed. On an SDHC
+#             card the block-to-address conversion is the identity, so this is
+#             the only configuration in which it is tested at all.
+#   tight     one block of buffer instead of two, so nothing overlaps and the
+#             data path has to refill mid-transfer.
+#   noburst   M0_BURST_WIDTH=1, single-beat Avalon transactions throughout.
+#
+# Running only the default leaves the PIO path and byte addressing entirely
+# unexecuted, which is what this repository's other cores avoid by sweeping the
+# parameters that change behaviour rather than the ones that change widths.
+# ---------------------------------------------------------------------------
+CORE_CFGS=(
+    "dma:-GTB_USE_DMA=1"
+    "pio:-GTB_USE_DMA=0"
+    "sdsc:-GTB_HIGH_CAPACITY=0"
+    "tight:-GTB_FIFO_B=512"
+    "noburst:-GTB_BURST_W=1"
+)
+
 if [ "$WHICH" = "all" ] || [ "$WHICH" = "core" ]; then
-    run_tb core avalon_mm_sdcard_controller_tb \
-        "$ROOT/tb/spi_card_model.sv" \
-        "$ROOT/tb/avalon_mm_mem_model.sv" \
-        "$ROOT/tb/avalon_mm_sdcard_controller_tb.sv"
+    for entry in "${CORE_CFGS[@]}"; do
+        name="${entry%%:*}"
+        gflag="${entry#*:}"
+        run_tb "core_$name" avalon_mm_sdcard_controller_tb "$gflag" \
+            "$ROOT/tb/avalon_mm_sdcard_controller_sva.sv" \
+            "$ROOT/tb/spi_card_model.sv" \
+            "$ROOT/tb/avalon_mm_mem_model.sv" \
+            "$ROOT/tb/avalon_mm_sdcard_controller_tb.sv"
+    done
 fi
 
 echo

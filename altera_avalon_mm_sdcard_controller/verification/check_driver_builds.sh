@@ -101,6 +101,63 @@ else
     fail=1
 fi
 
+# ---------------------------------------------------------------------------
+# Unit-test the CSD capacity arithmetic.
+#
+# This is the one piece of the driver the RTL regression cannot reach: the
+# testbench proves the 16 bytes arrive intact, and nothing proves they are
+# interpreted correctly. The two CSD structure versions are different
+# arithmetic, not a moved field, and reading a v2 card with the v1 formula
+# yields a plausible number that is wrong by orders of magnitude.
+#
+# The byte patterns below are exactly what tb/spi_card_model.sv transmits, so a
+# change to one without the other fails here.
+# ---------------------------------------------------------------------------
+cat > "$STUB/csdtest.c" <<'EOF'
+#include <stdio.h>
+#define main driver_main_unused
+#include "altera_avalon_mm_sdcard_controller.c"
+#undef main
+
+static int fails = 0;
+static void expect(const char *what, unsigned long got, unsigned long want)
+{
+    if (got != want) { printf("  FAIL  %s: got %lu, want %lu\n", what, got, want); fails++; }
+}
+
+int main(void)
+{
+    /* CSD v2 (SDHC), C_SIZE = 7679  ->  7680 * 1024 blocks */
+    alt_u8 v2[16] = {0};
+    v2[0] = 0x40; v2[5] = 0x59;
+    v2[7] = 0x00; v2[8] = 0x1D; v2[9] = 0xFF;
+    expect("CSD v2 capacity", csd_blocks(v2), 7864320UL);
+
+    /* CSD v1 (SDSC), C_SIZE = 4095, C_SIZE_MULT = 7, READ_BL_LEN = 9
+       -> 4096 * 512 * 512 bytes = 2,097,152 blocks */
+    alt_u8 v1[16] = {0};
+    v1[0]  = 0x00; v1[5] = 0x59;
+    v1[6]  = 0x83; v1[7] = 0xFF; v1[8] = 0xFF;
+    v1[9]  = 0x9F; v1[10] = 0xFA;
+    expect("CSD v1 capacity", csd_blocks(v1), 2097152UL);
+
+    /* The version must come from the CSD, not be assumed: the same bytes read
+       with the wrong formula must NOT accidentally agree. */
+    if (csd_blocks(v1) == csd_blocks(v2)) {
+        printf("  FAIL  the two CSD versions parse identically\n"); fails++;
+    }
+    return fails ? 1 : 0;
+}
+EOF
+if "$CC" -std=c99 -w -I "$STUB" -I "$ROOT/HAL/inc" -I "$ROOT/inc" \
+        -I "$ROOT/HAL/src" -o "$STUB/csdtest" "$STUB/csdtest.c" 2>/dev/null \
+   && "$STUB/csdtest"; then
+    echo "  PASS  CSD capacity arithmetic, both structure versions"
+else
+    echo "  FAIL  CSD capacity arithmetic"
+    fail=1
+fi
+
 # The register header must stand alone: an application that wants only the
 # offsets should not have to pull in the driver or the HAL device struct.
 cat > "$STUB/standalone.c" <<'EOF'

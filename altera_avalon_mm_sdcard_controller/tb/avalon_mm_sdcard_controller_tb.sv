@@ -28,15 +28,45 @@
 //                    every functional check above.
 // =============================================================================
 
-module avalon_mm_sdcard_controller_tb;
+// Swept from run_sim.sh with -G. Each combination is a genuinely different
+// design or a different card, not a cosmetic variation:
+//
+//   TB_USE_DMA=0        removes the master entirely and makes software move
+//                       every word through the DATA window - a different FIFO
+//                       client, on a deadline.
+//   TB_HIGH_CAPACITY=0  a standard-capacity card, which is BYTE addressed;
+//                       the driver's and the testbench's block-to-address
+//                       conversion is dead code on an SDHC card.
+//   TB_FIFO_B=512       one block of buffer instead of two, so nothing
+//                       overlaps and the shifter stalls where it otherwise
+//                       would not.
+//   TB_BURST_W=1        no bursting on m0 at all.
+module avalon_mm_sdcard_controller_tb #(
+    parameter bit          TB_USE_DMA       = 1'b1,
+    parameter bit          TB_HIGH_CAPACITY = 1'b1,
+    parameter int unsigned TB_FIFO_B        = 1024,
+    parameter int unsigned TB_BURST_W       = 8
+);
 
     import avalon_mm_sdcard_controller_pkg::*;
 
     localparam int unsigned CSR_AW    = 5;
     localparam int unsigned ADDR_W    = 32;
-    localparam int unsigned BURST_W   = 8;
-    localparam int unsigned FIFO_B    = 1024;
+    localparam int unsigned BURST_W   = TB_BURST_W;
+    localparam int unsigned FIFO_B    = TB_FIFO_B;
     localparam time         CLK_P     = 10ns;     // 100 MHz
+
+    // Blocks per byte-address unit. SDHC addresses by block, SDSC by byte.
+    localparam int unsigned ADDR_SCALE = TB_HIGH_CAPACITY ? 1 : 512;
+
+    // The CTRL value the core runs with once identification is done. Defined
+    // once so a reset test cannot accidentally re-enable something the rest of
+    // the suite left off. DMA_EN is gated on the parameter as well as on the
+    // hardware, so the PIO configuration really does drive the PIO path.
+    localparam logic [31:0] CTRL_RUNNING =
+          (32'b1 << CTRL_ENABLE)
+        | (32'b1 << CTRL_CRC_EN)
+        | (TB_USE_DMA ? (32'b1 << CTRL_DMA_EN) : 32'b0);
 
     logic clk = 1'b0, reset_n = 1'b0;
     always #(CLK_P/2) clk = ~clk;
@@ -84,7 +114,8 @@ module avalon_mm_sdcard_controller_tb;
         .FIFO_DEPTH_BYTES (FIFO_B),
         .M0_BURST_WIDTH   (BURST_W),
         .CSR_ADDR_WIDTH   (CSR_AW),
-        .ADDR_WIDTH       (ADDR_W)
+        .ADDR_WIDTH       (ADDR_W),
+        .USE_DMA          (TB_USE_DMA)
     ) dut (
         .clk (clk), .reset_n (reset_n),
         .csr_address (csr_address), .csr_read (csr_read), .csr_write (csr_write),
@@ -113,7 +144,8 @@ module avalon_mm_sdcard_controller_tb;
         .saw_zero_byteenable_read (mem_saw_zero_be_read)
     );
 
-    spi_card_model #(.HIGH_CAPACITY (1'b1), .NCR_BYTES (2), .TRACE (1'b0)) u_card (
+    spi_card_model #(.HIGH_CAPACITY (TB_HIGH_CAPACITY), .NCR_BYTES (2),
+                 .TRACE (1'b0)) u_card (
         .sd_clk (sd_clk), .sd_cs_n (sd_cs_n),
         .sd_mosi (sd_mosi), .sd_miso (sd_miso),
         .inj_no_response (inj_no_response), .inj_r1_illegal (inj_r1_illegal),
@@ -189,29 +221,35 @@ localparam bit TRACE_CMD = 1'b0;
         end
     endtask
 
-    // Issue a command and wait for the sequencer to return to idle.
-    task automatic send_cmd(input logic [5:0] idx, input logic [31:0] arg,
-                            input resp_e rt,
-                            input bit dat_en, input bit dat_dir,
-                            input bit multi, input bit autostop,
-                            output logic [31:0] st);
+    // -------------------------------------------------------------------------
+    // Commands, split into issue and wait.
+    //
+    // They are separate because the PIO data path has to move words WHILE the
+    // transfer runs: with no DMA nothing else drains the buffer, and on a write
+    // the sequencer reaches the data phase about ten byte-times after the
+    // command goes out - if the buffer is still empty at that point the shifter
+    // stalls. A blocking issue leaves no opportunity to feed it.
+    // -------------------------------------------------------------------------
+    task automatic cmd_issue(input logic [5:0] idx, input logic [31:0] arg,
+                             input resp_e rt,
+                             input bit dat_en, input bit dat_dir,
+                             input bit multi, input bit autostop);
         logic [31:0] c, rd;
         int unsigned guard;
         begin
             // Wait for idle BEFORE writing CMD. The register is ignored while
-            // the sequencer is busy - which is the right hardware behaviour,
-            // since a second CMD write must not corrupt a transfer in flight -
-            // but it means a driver that writes without checking loses the
-            // command silently. Polling afterwards does not catch it either:
-            // busy is already clear, so the poll returns immediately and the
-            // command simply never happened.
+            // the sequencer is busy - correct, since a second write must not
+            // corrupt a transfer in flight - but it means a driver that writes
+            // without checking loses the command silently. Polling afterwards
+            // does not catch it: busy is already clear, so the poll returns
+            // immediately for a command that never happened.
             guard = 0;
             forever begin
                 csr_rd(REG_STATUS, rd);
                 if (!rd[STAT_CMD_BUSY]) break;
                 guard++;
                 if (guard > 400000) begin
-                    $display("  FAIL  send_cmd(CMD%0d): busy never cleared before issue", idx);
+                    $display("  FAIL  CMD%0d: busy never cleared before issue", idx);
                     checks_fail++;
                     break;
                 end
@@ -229,9 +267,8 @@ localparam bit TRACE_CMD = 1'b0;
             c[CMD_START]          = 1'b1;
             csr_wr(REG_CMD, c);
 
-            // Confirm the command was actually accepted before waiting for it
-            // to finish, so a dropped write is reported as a dropped write
-            // rather than as a mysteriously instant success.
+            // Confirm the write was accepted, so a dropped command is reported
+            // as a dropped command rather than as instant success.
             guard = 0;
             rd = '0;
             while (!rd[STAT_CMD_BUSY] && (guard < 64)) begin
@@ -239,24 +276,158 @@ localparam bit TRACE_CMD = 1'b0;
                 guard++;
             end
             if (!rd[STAT_CMD_BUSY]) begin
-                $display("  FAIL  send_cmd(CMD%0d): write to CMD was not accepted", idx);
+                $display("  FAIL  CMD%0d: write to CMD was not accepted", idx);
                 checks_fail++;
             end
+        end
+    endtask
 
+    task automatic cmd_wait(input logic [5:0] idx, output logic [31:0] st);
+        logic [31:0] rd;
+        int unsigned guard;
+        begin
             guard = 0;
             forever begin
                 csr_rd(REG_STATUS, rd);
                 if (!rd[STAT_CMD_BUSY]) break;
                 guard++;
                 if (guard > 400000) begin
-                    $display("  FAIL  send_cmd(CMD%0d): never left busy", idx);
+                    $display("  FAIL  CMD%0d: never left busy", idx);
                     checks_fail++;
                     break;
                 end
             end
             csr_rd(REG_IRQ_STATUS, st);
             if (TRACE_CMD)
-                $display("    [tb] t=%0t issued CMD%0d -> irq_status=%08x", $time, idx, st);
+                $display("    [tb] t=%0t CMD%0d -> irq_status=%08x", $time, idx, st);
+        end
+    endtask
+
+    task automatic send_cmd(input logic [5:0] idx, input logic [31:0] arg,
+                            input resp_e rt,
+                            input bit dat_en, input bit dat_dir,
+                            input bit multi, input bit autostop,
+                            output logic [31:0] st);
+        begin
+            cmd_issue(idx, arg, rt, dat_en, dat_dir, multi, autostop);
+            cmd_wait(idx, st);
+        end
+    endtask
+
+    // -------------------------------------------------------------------------
+    // Block addressing.
+    //
+    // SDHC addresses by BLOCK, SDSC by BYTE. Every command argument goes
+    // through here so the same test body exercises both, and so the conversion
+    // is not silently untested on a high-capacity card - where it is the
+    // identity and therefore invisible.
+    // -------------------------------------------------------------------------
+    function automatic logic [31:0] blk_arg(input int unsigned block);
+        return TB_HIGH_CAPACITY ? 32'(block) : 32'(block * 512);
+    endfunction
+
+    // -------------------------------------------------------------------------
+    // PIO data movement through the DATA window, for TB_USE_DMA = 0.
+    //
+    // Both loops also watch CMD_BUSY, so a transfer that fails part-way
+    // terminates instead of spinning forever on a buffer that will never fill
+    // or drain again.
+    // -------------------------------------------------------------------------
+    task automatic pio_drain(ref logic [31:0] q [], input int unsigned words);
+        int unsigned got;
+        logic [31:0] st, d;
+        begin
+            got = 0;
+            while (got < words) begin
+                csr_rd(REG_STATUS, st);
+                if (!st[STAT_FIFO_EMPTY]) begin
+                    csr_rd(REG_DATA, d);
+                    q[got] = d;
+                    got++;
+                end else if (!st[STAT_CMD_BUSY]) begin
+                    break;
+                end
+            end
+        end
+    endtask
+
+    task automatic pio_fill(ref logic [31:0] q [], input int unsigned words);
+        int unsigned put;
+        logic [31:0] st;
+        begin
+            put = 0;
+            while (put < words) begin
+                csr_rd(REG_STATUS, st);
+                if (!st[STAT_FIFO_FULL]) begin
+                    csr_wr(REG_DATA, q[put]);
+                    put++;
+                end else if (!st[STAT_CMD_BUSY]) begin
+                    break;
+                end
+            end
+        end
+    endtask
+
+    // -------------------------------------------------------------------------
+    // One block transfer, in whichever data path this configuration has.
+    //
+    // The caller gets words back the same way in both modes, so the checks that
+    // follow do not have to know which path moved them.
+    // -------------------------------------------------------------------------
+    localparam logic [31:0] DMA_BUF = 32'h0010_0000;
+
+    task automatic do_read(input int unsigned block, input int unsigned count,
+                           input bit multi, ref logic [31:0] got [],
+                           output logic [31:0] st);
+        int unsigned i;
+        begin
+            csr_wr(REG_BLK_COUNT, count);
+            csr_wr(REG_DMA_ADDR,  DMA_BUF);
+            cmd_issue(multi ? 6'd18 : 6'd17, blk_arg(block), RESP_R1,
+                      1'b1, 1'b0, multi, multi);
+            if (!TB_USE_DMA) pio_drain(got, count * 128);
+            cmd_wait(multi ? 6'd18 : 6'd17, st);
+            if (TB_USE_DMA)
+                for (i = 0; i < count * 128; i++)
+                    got[i] = u_mem.peek(DMA_BUF / 4 + i);
+        end
+    endtask
+
+    // A data command whose payload is expected to fail. Still has to service
+    // the data path in PIO mode, because a starved data phase now aborts on the
+    // stall timeout rather than hanging - and the test wants the card's error,
+    // not a timeout caused by the testbench.
+    task automatic do_faulty(input logic [5:0] idx, input int unsigned block,
+                             input bit writing, output logic [31:0] st);
+        logic [31:0] scratch [];
+        begin
+            scratch = new[128];
+            for (int unsigned k = 0; k < 128; k++) scratch[k] = 32'hDEAD_0000 + k;
+            csr_wr(REG_BLK_COUNT, 32'd1);
+            csr_wr(REG_DMA_ADDR,  DMA_BUF);
+            cmd_issue(idx, blk_arg(block), RESP_R1, 1'b1, writing, 1'b0, 1'b0);
+            if (!TB_USE_DMA) begin
+                if (writing) pio_fill (scratch, 128);
+                else         pio_drain(scratch, 128);
+            end
+            cmd_wait(idx, st);
+        end
+    endtask
+
+    task automatic do_write(input int unsigned block, input int unsigned count,
+                            input bit multi, ref logic [31:0] src [],
+                            output logic [31:0] st);
+        int unsigned i;
+        begin
+            csr_wr(REG_BLK_COUNT, count);
+            csr_wr(REG_DMA_ADDR,  DMA_BUF);
+            if (TB_USE_DMA)
+                for (i = 0; i < count * 128; i++)
+                    u_mem.poke(DMA_BUF / 4 + i, src[i]);
+            cmd_issue(multi ? 6'd25 : 6'd24, blk_arg(block), RESP_R1,
+                      1'b1, 1'b1, multi, multi);
+            if (!TB_USE_DMA) pio_fill(src, count * 128);
+            cmd_wait(multi ? 6'd25 : 6'd24, st);
         end
     endtask
 
@@ -271,8 +442,7 @@ localparam bit TRACE_CMD = 1'b0;
                              (32'b1 << CTRL_CS_VALUE)  |
                              (32'b1 << CTRL_CLK_RUN));
             repeat (200 * 8 * 2 * 125) @(posedge clk);
-            csr_wr(REG_CTRL, (32'b1 << CTRL_ENABLE) | (32'b1 << CTRL_CRC_EN) |
-                             (32'b1 << CTRL_DMA_EN));
+            csr_wr(REG_CTRL, CTRL_RUNNING);
 
             send_cmd(6'd0,  32'h0,          RESP_R1,   0,0,0,0, st);
             csr_rd(REG_RESP0, r0);
@@ -295,7 +465,8 @@ localparam bit TRACE_CMD = 1'b0;
 
             send_cmd(6'd58, 32'h0,          RESP_R3R7, 0,0,0,0, st);
             csr_rd(REG_RESP1, r1);
-            check("CMD58 OCR reports CCS set (high capacity)", r1[31:24] == 8'hC0);
+            check("CMD58 OCR reports the right capacity class",
+                  r1[31:24] === (TB_HIGH_CAPACITY ? 8'hC0 : 8'h80));
 
             csr_wr(REG_CLKDIV, 32'd2);                    // 25 MHz
             csr_wr(REG_BLK_SIZE, 32'd512);
@@ -312,14 +483,18 @@ localparam bit TRACE_CMD = 1'b0;
 
     // -------------------------------------------------------------------------
     initial begin
-        logic [31:0] st, rd;
-        int unsigned i, base, blk;
+        logic [31:0] st, rd, expw;
+        logic [31:0] gotw [];
+        logic [31:0] srcw [];
+        int unsigned i;
         bit ok;
         int unsigned rises_before;
         real bytes_per_clock;
 
         $display("");
         $display("=== avalon_mm_sdcard_controller: full-core regression ===");
+        $display($sformatf("    USE_DMA=%0d  HIGH_CAPACITY=%0d  FIFO=%0d  BURST_W=%0d",
+                 TB_USE_DMA, TB_HIGH_CAPACITY, TB_FIFO_B, TB_BURST_W));
         $display("");
 
         reset_n = 1'b0;
@@ -331,7 +506,8 @@ localparam bit TRACE_CMD = 1'b0;
         csr_rd(REG_CORE_INFO, rd);
         check("CORE_INFO reports major version 1", rd[15:8] == 8'd1);
         check("CORE_INFO reports the SPI PHY",     rd[26] == 1'b1);
-        check("CORE_INFO reports DMA present",     rd[24] == 1'b1);
+        check("CORE_INFO's DMA bit matches how the core was built",
+              rd[24] === (TB_USE_DMA ? 1'b1 : 1'b0));
 
         // ---- identification ------------------------------------------------
         $display("  -- identification --");
@@ -339,85 +515,110 @@ localparam bit TRACE_CMD = 1'b0;
 
         // ---- single block read ---------------------------------------------
         $display("  -- single block read --");
-        for (i = 0; i < 512; i++) u_card.preload(0 + i, 8'((i * 5) + 17));
-        csr_wr(REG_BLK_COUNT, 32'd1);
-        csr_wr(REG_DMA_ADDR,  32'h0000_1000);
-        send_cmd(6'd17, 32'd0, RESP_R1, 1,0,0,0, st);
+        for (i = 0; i < 512; i++) u_card.preload(32'h0000 + i, 8'((i * 5) + 17));
+        gotw = new[128];
+        do_read(0, 1, 1'b0, gotw, st);
         check("CMD17: DATA_DONE set", st[IRQ_DATA_DONE]);
         check_noerr("CMD17: no error bits", st);
 
         ok = 1'b1;
         for (i = 0; i < 128; i++) begin
-            logic [31:0] exp;
-            exp = {u_card.peek(4*i+3), u_card.peek(4*i+2),
-                   u_card.peek(4*i+1), u_card.peek(4*i+0)};
-            if (u_mem.peek(32'h1000/4 + i) !== exp) begin
+            expw = {u_card.peek(32'h0000+4*i+3), u_card.peek(32'h0000+4*i+2),
+                    u_card.peek(32'h0000+4*i+1), u_card.peek(32'h0000+4*i+0)};
+            if (gotw[i] !== expw) begin
                 if (ok) $display("    first mismatch at word %0d: got %08x exp %08x",
-                                 i, u_mem.peek(32'h1000/4 + i), exp);
+                                 i, gotw[i], expw);
                 ok = 1'b0;
             end
         end
-        check("CMD17: block landed in memory, little-endian", ok);
+        check("CMD17: block matches the card, little-endian", ok);
 
         // ---- multi-block read ----------------------------------------------
         $display("  -- multi-block read (4 blocks, auto CMD12) --");
         for (i = 0; i < 4*512; i++) u_card.preload(32'h4000 + i, 8'((i * 3) + 9));
-        csr_wr(REG_BLK_COUNT, 32'd4);
-        csr_wr(REG_DMA_ADDR,  32'h0002_0000);
+        gotw = new[4*128];
         rises_before = sclk_rises;
-        send_cmd(6'd18, 32'h4000/512, RESP_R1, 1,0,1,1, st);
+        do_read(32, 4, 1'b1, gotw, st);
         check("CMD18: DATA_DONE set", st[IRQ_DATA_DONE]);
         check_noerr("CMD18: no error bits", st);
 
         ok = 1'b1;
         for (i = 0; i < 4*128; i++) begin
-            logic [31:0] exp;
-            exp = {u_card.peek(32'h4000+4*i+3), u_card.peek(32'h4000+4*i+2),
-                   u_card.peek(32'h4000+4*i+1), u_card.peek(32'h4000+4*i+0)};
-            if (u_mem.peek(32'h20000/4 + i) !== exp) ok = 1'b0;
+            expw = {u_card.peek(32'h4000+4*i+3), u_card.peek(32'h4000+4*i+2),
+                    u_card.peek(32'h4000+4*i+1), u_card.peek(32'h4000+4*i+0)};
+            if (gotw[i] !== expw) ok = 1'b0;
         end
-        check("CMD18: all four blocks contiguous in memory", ok);
+        check("CMD18: all four blocks contiguous and correct", ok);
 
-        // Throughput: bytes actually moved per SPI clock. The framing floor is
-        // 512/515 = 0.994 bytes per 8 clocks; anything materially below that is
-        // a stall the controller introduced.
+        // Throughput: bytes moved per SPI clock. The framing floor is
+        // 512/515 per block; anything materially below that is a stall the
+        // controller introduced, which no functional check above would see.
         bytes_per_clock = real'(4*512) / real'(sclk_rises - rises_before);
-        $display("    multi-block read: %0d SPI clocks for 2048 bytes = %0.3f bytes/clock",
+        $display("    multi-block read: %0d SPI clocks for 2048 bytes = %0.4f bytes/clock",
                  sclk_rises - rises_before, bytes_per_clock);
         check("CMD18: throughput above 0.100 bytes per SPI clock",
               bytes_per_clock > 0.100);
 
         // ---- single block write --------------------------------------------
         $display("  -- single block write --");
-        for (i = 0; i < 128; i++) u_mem.poke(32'h3000/4 + i, 32'hA5A5_0000 + i);
-        csr_wr(REG_BLK_COUNT, 32'd1);
-        csr_wr(REG_DMA_ADDR,  32'h0000_3000);
-        send_cmd(6'd24, 32'h8000/512, RESP_R1, 1,1,0,0, st);
+        srcw = new[128];
+        for (i = 0; i < 128; i++) srcw[i] = 32'hA5A5_0000 + i;
+        do_write(64, 1, 1'b0, srcw, st);
         check("CMD24: DATA_DONE set", st[IRQ_DATA_DONE]);
         check_noerr("CMD24: no error bits", st);
 
         ok = 1'b1;
         for (i = 0; i < 128; i++) begin
-            logic [31:0] exp;
-            exp = 32'hA5A5_0000 + i;
-            if ({u_card.peek(32'h8000+4*i+3), u_card.peek(32'h8000+4*i+2),
-                 u_card.peek(32'h8000+4*i+1), u_card.peek(32'h8000+4*i+0)} !== exp) begin
-                if (ok) $display("    first mismatch at word %0d", i);
+            expw = {u_card.peek(32'h8000+4*i+3), u_card.peek(32'h8000+4*i+2),
+                    u_card.peek(32'h8000+4*i+1), u_card.peek(32'h8000+4*i+0)};
+            if (expw !== srcw[i]) begin
+                if (ok) $display("    first mismatch at word %0d: card %08x sent %08x",
+                                 i, expw, srcw[i]);
                 ok = 1'b0;
             end
         end
         check("CMD24: block reached the card intact", ok);
 
-        // ---- multi-block write ---------------------------------------------
+        // ---- multi-block write, longer than the buffer ----------------------
+        // Three blocks is 1536 bytes against a 1024-byte buffer at the default,
+        // and three times the buffer at TB_FIFO_B=512 - so the data path has to
+        // refill mid-transfer rather than being handed the whole thing at once.
         $display("  -- multi-block write (3 blocks, stop-tran) --");
-        for (i = 0; i < 3*128; i++) u_mem.poke(32'h5000/4 + i, 32'h1234_0000 + i);
-        csr_wr(REG_BLK_COUNT, 32'd3);
-        csr_wr(REG_DMA_ADDR,  32'h0000_5000);
-        send_cmd(6'd25, 32'hC000/512, RESP_R1, 1,1,1,1, st);
+        srcw = new[3*128];
+        for (i = 0; i < 3*128; i++) srcw[i] = 32'h1234_0000 + i;
+        do_write(96, 3, 1'b1, srcw, st);
         check("CMD25: DATA_DONE set", st[IRQ_DATA_DONE]);
         check_noerr("CMD25: no error bits", st);
-        check("CMD25: card recorded three written blocks",
-              card_blocks_wr >= 4);   // 1 from CMD24 + 3 here
+
+        ok = 1'b1;
+        for (i = 0; i < 3*128; i++) begin
+            expw = {u_card.peek(32'hC000+4*i+3), u_card.peek(32'hC000+4*i+2),
+                    u_card.peek(32'hC000+4*i+1), u_card.peek(32'hC000+4*i+0)};
+            if (expw !== srcw[i]) ok = 1'b0;
+        end
+        check("CMD25: all three blocks reached the card intact", ok);
+
+        // ---- the 16-byte card registers ------------------------------------
+        // CMD9 is the only place a card reports its size, and it is the only
+        // path in the core that uses a block length other than 512.
+        $display("  -- CSD and CID (BLK_SIZE = 16) --");
+        csr_wr(REG_BLK_SIZE, 32'd16);
+        gotw = new[4];
+        csr_wr(REG_BLK_COUNT, 32'd1);
+        csr_wr(REG_DMA_ADDR,  DMA_BUF);
+        cmd_issue(6'd9, 32'h0, RESP_R1, 1'b1, 1'b0, 1'b0, 1'b0);
+        if (!TB_USE_DMA) pio_drain(gotw, 4);
+        cmd_wait(6'd9, st);
+        if (TB_USE_DMA)
+            for (i = 0; i < 4; i++) gotw[i] = u_mem.peek(DMA_BUF/4 + i);
+        check_noerr("CMD9: no error bits", st);
+
+        // Byte 0 carries CSD_STRUCTURE in its top two bits: 01 for a
+        // high-capacity card, 00 for standard capacity.
+        check("CMD9: CSD structure version matches the card class",
+              (gotw[0][7:6] === (TB_HIGH_CAPACITY ? 2'b01 : 2'b00)));
+
+        csr_wr(REG_BLK_SIZE, 32'd512);
 
         // ---- the truncated-response path -----------------------------------
         $display("  -- v1.x CMD8: R1 only, no trailer (§7.3.2) --");
@@ -432,34 +633,73 @@ localparam bit TRACE_CMD = 1'b0;
         send_cmd(6'd58, 32'h0, RESP_R3R7, 0,0,0,0, st);
         csr_rd(REG_RESP1, rd);
         check("bus still synchronised after a truncated response",
-              rd[31:24] == 8'hC0);
+              rd[31:24] === (TB_HIGH_CAPACITY ? 8'hC0 : 8'h80));
 
         // ---- failure paths --------------------------------------------------
         $display("  -- failure paths --");
         csr_wr(REG_TIMEOUT, 32'd200000);
 
         inj_no_response = 1'b1;
-        send_cmd(6'd17, 32'd0, RESP_R1, 0,0,0,0, st);
+        send_cmd(6'd17, blk_arg(0), RESP_R1, 0,0,0,0, st);
         check("no response: ERR_CMD_TMO reported", st[IRQ_ERR_CMD_TMO]);
         inj_no_response = 1'b0;
 
-        csr_wr(REG_BLK_COUNT, 32'd1);
-        csr_wr(REG_DMA_ADDR,  32'h0000_1000);
         inj_bad_data_crc = 1'b1;
-        send_cmd(6'd17, 32'd0, RESP_R1, 1,0,0,0, st);
+        do_faulty(6'd17, 0, 1'b0, st);
         check("corrupt block CRC16: ERR_DAT_CRC reported", st[IRQ_ERR_DAT_CRC]);
         inj_bad_data_crc = 1'b0;
 
         inj_read_err_token = 1'b1;
-        send_cmd(6'd17, 32'd0, RESP_R1, 1,0,0,0, st);
+        do_faulty(6'd17, 0, 1'b0, st);
         check("data error token: ERR_DAT_TOKEN reported", st[IRQ_ERR_DAT_TOKEN]);
         inj_read_err_token = 1'b0;
 
-        csr_wr(REG_DMA_ADDR, 32'h0000_3000);
         inj_write_crc_err = 1'b1;
-        send_cmd(6'd24, 32'h8000/512, RESP_R1, 1,1,0,0, st);
+        do_faulty(6'd24, 64, 1'b1, st);
         check("write rejected: ERR_WRITE reported", st[IRQ_ERR_WRITE]);
         inj_write_crc_err = 1'b0;
+
+        // ---- ERR_INFO reports WHICH phase failed ---------------------------
+        // The distinction matters: "the card never answered" and "the card
+        // answered and then stopped" need different recovery, and a driver
+        // that cannot tell them apart retries the wrong thing.
+        inj_read_err_token = 1'b1;
+        do_faulty(6'd17, 0, 1'b0, st);
+        csr_rd(REG_ERR_INFO, rd);
+        check("ERR_INFO: phase records the token wait, not the command",
+              rd[ERR_PHASE_LSB +: 4] === 4'(PHASE_TOKEN));
+        check("ERR_INFO: the data error token itself is captured",
+              (rd[ERR_DATERR_LSB +: 8] & 8'hF0) === 8'h00);
+        inj_read_err_token = 1'b0;
+
+        inj_no_response = 1'b1;
+        send_cmd(6'd17, blk_arg(0), RESP_R1, 0,0,0,0, st);
+        csr_rd(REG_ERR_INFO, rd);
+        check("ERR_INFO: phase records the response wait when nothing answers",
+              rd[ERR_PHASE_LSB +: 4] === 4'(PHASE_RESP));
+        inj_no_response = 1'b0;
+
+        // ---- soft reset domains --------------------------------------------
+        // Resetting the data path must NOT lose the card's identified state -
+        // that is the entire reason the reset is split rather than being one
+        // blunt bit. Verified by clearing it and then reading a block without
+        // re-running identification.
+        csr_wr(REG_CTRL, CTRL_RUNNING | (32'b1 << CTRL_SRST_DAT));
+        @(negedge clk);
+        csr_rd(REG_CTRL, rd);
+        check("SRST_DAT is self-clearing", rd[CTRL_SRST_DAT] === 1'b0);
+        check("SRST_DAT leaves ENABLE set", rd[CTRL_ENABLE] === 1'b1);
+
+        gotw = new[128];
+        do_read(0, 1, 1'b0, gotw, st);
+        check_noerr("a block still reads after a data-path reset", st);
+        ok = 1'b1;
+        for (i = 0; i < 128; i++) begin
+            expw = {u_card.peek(32'h0000+4*i+3), u_card.peek(32'h0000+4*i+2),
+                    u_card.peek(32'h0000+4*i+1), u_card.peek(32'h0000+4*i+0)};
+            if (gotw[i] !== expw) ok = 1'b0;
+        end
+        check("the card is still identified after a data-path reset", ok);
 
         // Recovery: after all of that, a normal command must still work.
         send_cmd(6'd58, 32'h0, RESP_R3R7, 0,0,0,0, st);

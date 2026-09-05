@@ -575,17 +575,28 @@ A timing checker watches the bus independently, and — following the SDRAM
 core's precedent — carries a **self-test for the checker**, so a checker that
 silently stops checking cannot pass the suite.
 
-**Configurations to sweep**, at minimum: `CLKDIV` at 1 and at 125 (full speed
-and identification rate), `FIFO_DEPTH_BYTES` 512 and 1024 (single-buffer and
-ping-pong, which exercise very different stall behaviour), `USE_CRC` 0 and 1,
-`USE_DMA` 0 and 1 (the PIO path and the master path are different FIFO clients
-and both must sustain the shifter), `M0_BURST_WIDTH` at 1 and 8 (no bursting and
-full-block bursting), and both card capacity classes.
+**Configurations actually swept.** `run_sim.sh` builds the full-core suite five
+times and ANDs the results. These are not cosmetic variations — each reaches a
+path the others cannot:
 
-`USE_DMA = 0` needs the testbench to drive the `DATA` window from the `csr`
-side on a deadline, which is the only place the suite models software timing —
-the point being to prove the PIO path can keep the shifter fed, not merely that
-it transfers the right bytes.
+| Configuration | What only it exercises |
+| --- | --- |
+| `dma` | the reference case |
+| `pio` (`USE_DMA=0`) | no master at all; software moves every word through `DATA` on a deadline. The only configuration where the shifter can be starved by the CPU rather than by the interconnect. |
+| `sdsc` (`HIGH_CAPACITY=0`) | **byte** addressing. On an SDHC card the block-to-address conversion is the identity, so this is the only place it is tested. |
+| `tight` (`FIFO_DEPTH_BYTES=512`) | one block of buffer instead of two, so nothing overlaps and the data path refills mid-transfer. |
+| `noburst` (`M0_BURST_WIDTH=1`) | single-beat Avalon transactions throughout. |
+
+The shifter's own testbench separately sweeps `CLKDIV` at 1, 2, 4 and 125 and
+`SAMPLE_DLY` across its legal range at each.
+
+Adding the sweep was not bookkeeping. Running only the reference configuration
+had left the PIO path and byte addressing entirely unexecuted, and the first run
+of the other four found a defect the DMA case cannot reach: neither data
+streaming state checked the timeout, so a data phase starved of data hung the
+core with no recovery short of a soft reset. With a master attached that cannot
+happen, because the DMA always supplies. With software feeding the buffer it
+can, and did.
 
 **Throughput is a checked result, not a claim.** The testbench measures
 sustained bytes per second for multi-block read and write and asserts it against

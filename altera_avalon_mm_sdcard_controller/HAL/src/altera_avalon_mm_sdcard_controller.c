@@ -57,13 +57,18 @@ static void account(alt_sdcard_dev *dev, alt_u32 st)
         dev->timeout_count++;
 }
 
-int alt_sdcard_command(alt_sdcard_dev *dev, alt_u8 index, alt_u32 arg,
-                       alt_u32 resp_type, alt_u32 extra_cmd_bits,
-                       alt_u32 *resp0, alt_u32 *resp1)
+/* Issue a command and return immediately.
+ *
+ * Split out from alt_sdcard_command because the PIO data path has to move
+ * words WHILE the transfer runs: with no DMA, nothing else drains the buffer,
+ * and a blocking issue leaves no opportunity to. On a write it is stricter than
+ * that - the sequencer reaches the data phase about ten byte-times after the
+ * command goes out, and if the buffer is still empty the shifter simply stalls.
+ */
+static void issue(alt_sdcard_dev *dev, alt_u8 index, alt_u32 arg,
+                  alt_u32 resp_type, alt_u32 extra_cmd_bits)
 {
-    alt_u32 cmd, st;
-
-    if (dev == 0) return ALT_SDCARD_ERR_PARAM;
+    alt_u32 cmd;
 
     wait_not_busy(dev);
 
@@ -77,6 +82,12 @@ int alt_sdcard_command(alt_sdcard_dev *dev, alt_u8 index, alt_u32 arg,
 
     ALT_SDCARD_WR(dev->base, ALT_SDCARD_CMD_OFST, cmd);
     dev->cmd_count++;
+}
+
+/* Wait for the command to finish and turn the latched status into a result. */
+static int complete(alt_sdcard_dev *dev, alt_u32 *resp0, alt_u32 *resp1)
+{
+    alt_u32 st;
 
     while (ALT_SDCARD_RD_STATUS(dev->base) & ALT_SDCARD_STAT_CMD_BUSY_MSK) {
         /* spin - every wait inside the core is bounded by TIMEOUT, so this
@@ -90,6 +101,120 @@ int alt_sdcard_command(alt_sdcard_dev *dev, alt_u8 index, alt_u32 arg,
     if (resp1) *resp1 = ALT_SDCARD_RD_RESP1(dev->base);
 
     return irq_to_result(st);
+}
+
+int alt_sdcard_command(alt_sdcard_dev *dev, alt_u8 index, alt_u32 arg,
+                       alt_u32 resp_type, alt_u32 extra_cmd_bits,
+                       alt_u32 *resp0, alt_u32 *resp1)
+{
+    if (dev == 0) return ALT_SDCARD_ERR_PARAM;
+    issue(dev, index, arg, resp_type, extra_cmd_bits);
+    return complete(dev, resp0, resp1);
+}
+
+/* -------------------------------------------------------------------------
+ * PIO data movement, used when the core was built or configured without DMA.
+ *
+ * Both loops watch CMD_BUSY as well as the FIFO flags so a transfer that fails
+ * part-way terminates instead of spinning forever on a buffer that will never
+ * fill or drain again.
+ * ---------------------------------------------------------------------- */
+
+static int pio_read(alt_sdcard_dev *dev, alt_u32 *dst, alt_u32 words)
+{
+    alt_u32 got = 0;
+    alt_u32 st;
+
+    while (got < words) {
+        st = ALT_SDCARD_RD_STATUS(dev->base);
+        if (!(st & ALT_SDCARD_STAT_FIFO_EMPTY_MSK)) {
+            dst[got++] = ALT_SDCARD_RD(dev->base, ALT_SDCARD_DATA_OFST);
+        } else if (!(st & ALT_SDCARD_STAT_CMD_BUSY_MSK)) {
+            break;      /* transfer over and the buffer is drained */
+        }
+    }
+    return (got == words) ? ALT_SDCARD_OK : ALT_SDCARD_ERR_TIMEOUT;
+}
+
+static int pio_write(alt_sdcard_dev *dev, const alt_u32 *src, alt_u32 words)
+{
+    alt_u32 put = 0;
+    alt_u32 st;
+
+    while (put < words) {
+        st = ALT_SDCARD_RD_STATUS(dev->base);
+        if (!(st & ALT_SDCARD_STAT_FIFO_FULL_MSK)) {
+            ALT_SDCARD_WR(dev->base, ALT_SDCARD_DATA_OFST, src[put++]);
+        } else if (!(st & ALT_SDCARD_STAT_CMD_BUSY_MSK)) {
+            break;      /* the transfer gave up before we finished feeding it */
+        }
+    }
+    return (put == words) ? ALT_SDCARD_OK : ALT_SDCARD_ERR_TIMEOUT;
+}
+
+/* -------------------------------------------------------------------------
+ * Read one of the 16-byte card registers (CSD via CMD9, CID via CMD10).
+ *
+ * These come back through the ordinary data path with a block length of 16
+ * rather than 512, which is the only place in the driver that BLK_SIZE moves.
+ * ---------------------------------------------------------------------- */
+static int read_reg16(alt_sdcard_dev *dev, alt_u8 index, alt_u8 *out16)
+{
+    alt_u32 buf[4];
+    int     r;
+
+    ALT_SDCARD_WR(dev->base, ALT_SDCARD_BLK_SIZE_OFST, 16);
+    ALT_SDCARD_WR(dev->base, ALT_SDCARD_BLK_COUNT_OFST, 1);
+    ALT_SDCARD_WR(dev->base, ALT_SDCARD_DMA_ADDR_OFST, (alt_u32)buf);
+
+    issue(dev, index, 0, ALT_SDCARD_RESP_R1, ALT_SDCARD_CMD_DATA_EN_MSK);
+
+    if (!dev->use_dma) (void)pio_read(dev, buf, 4);
+
+    r = complete(dev, 0, 0);
+
+    ALT_SDCARD_WR(dev->base, ALT_SDCARD_BLK_SIZE_OFST, 512);
+
+    if (r != ALT_SDCARD_OK) return r;
+
+    memcpy(out16, buf, 16);
+    return ALT_SDCARD_OK;
+}
+
+/* -------------------------------------------------------------------------
+ * Capacity from the CSD.
+ *
+ * The two structure versions are genuinely different arithmetic, not a field
+ * that moved:
+ *
+ *   v1 (SDSC)  blocks = (C_SIZE+1) * 2^(C_SIZE_MULT+2) * 2^READ_BL_LEN / 512
+ *   v2 (SDHC)  blocks = (C_SIZE+1) * 1024
+ *
+ * Reading a v2 card with the v1 formula produces a plausible number that is
+ * wrong by orders of magnitude, which is why the version is checked rather
+ * than assumed from the OCR's CCS bit.
+ * ---------------------------------------------------------------------- */
+static alt_u32 csd_blocks(const alt_u8 *csd)
+{
+    alt_u32 c_size, mult, read_bl_len;
+
+    if ((csd[0] >> 6) == 1u) {                       /* CSD version 2 */
+        c_size = (((alt_u32)csd[7] & 0x3Fu) << 16)
+               | ((alt_u32)csd[8] << 8)
+               |  (alt_u32)csd[9];
+        return (c_size + 1u) * 1024u;
+    }
+
+    /* CSD version 1 */
+    read_bl_len = (alt_u32)(csd[5] & 0x0Fu);
+    c_size      = (((alt_u32)csd[6] & 0x03u) << 10)
+                | ((alt_u32)csd[7] << 2)
+                | ((alt_u32)csd[8] >> 6);
+    mult        = ((((alt_u32)csd[9] & 0x03u) << 1)
+                | ((alt_u32)csd[10] >> 7)) + 2u;
+
+    /* (C_SIZE+1) << (mult + read_bl_len) bytes, then / 512 for blocks. */
+    return ((c_size + 1u) << (mult + read_bl_len)) >> 9;
 }
 
 /* An ACMD is CMD55 followed by the command itself. */
@@ -276,11 +401,27 @@ int alt_sdcard_probe(alt_sdcard_dev *dev)
         if (r != ALT_SDCARD_OK) return r;
     }
 
-    /* ---- 8. speed up ---- */
+    /* ---- 8. speed up ----
+     * Before reading the card registers, so identification does not spend
+     * milliseconds at 400 kHz reading two 16-byte blocks. */
     ALT_SDCARD_WR(dev->base, ALT_SDCARD_CLKDIV_OFST,
                   ALT_SDCARD_CLKDIV_MAKE(dev->clkdiv_run, dev->sample_dly));
 
     ALT_SDCARD_WR(dev->base, ALT_SDCARD_BLK_SIZE_OFST, 512);
+
+    /* ---- 9. identity and capacity: CMD9 and CMD10 ----
+     *
+     * The CSD is the only place the card reports its size. Note the version is
+     * taken from the CSD itself rather than inferred from the OCR's CCS bit:
+     * the two agree on every card that follows the specification, and when they
+     * disagree the CSD is the one describing the layout being parsed.
+     */
+    r = read_reg16(dev, 9, dev->csd);
+    if (r != ALT_SDCARD_OK) return r;
+    dev->blocks = csd_blocks(dev->csd);
+
+    r = read_reg16(dev, 10, dev->cid);
+    if (r != ALT_SDCARD_OK) return r;
 
     return ALT_SDCARD_OK;
 }
@@ -336,8 +477,17 @@ static int transfer(alt_sdcard_dev *dev, alt_u32 block, void *buf,
         index  = writing ? 24 : 17;
     }
 
-    r = alt_sdcard_command(dev, index, block_to_arg(dev, block),
-                           ALT_SDCARD_RESP_R1, extra, 0, 0);
+    issue(dev, index, block_to_arg(dev, block), ALT_SDCARD_RESP_R1, extra);
+
+    /* Without the DMA nothing else moves the data, so software must - and on a
+     * write it must start immediately, because the sequencer reaches the data
+     * phase about ten byte-times after the command goes out. */
+    if (!dev->use_dma) {
+        if (writing) (void)pio_write(dev, (const alt_u32 *)buf, count * 128u);
+        else         (void)pio_read (dev, (alt_u32 *)buf,       count * 128u);
+    }
+
+    r = complete(dev, 0, 0);
     if (r != ALT_SDCARD_OK) {
         /* A failed transfer can leave the data path mid-block. Clearing it is
          * cheap and keeps the failure from spreading to the next call. */

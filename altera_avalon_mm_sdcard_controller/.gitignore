@@ -84,7 +84,12 @@ greybox_tmp/
 **/qsys/.qsys_edit/
 *.sopcinfo
 
-# Nios II example build artifacts
+# Nios II example build artifacts.
+#
+# There is no example/ yet - the DE10-Lite these examples target has no microSD
+# socket, so one needs a breakout and its own pinout. These rules are kept
+# ready rather than removed, because the shape is fixed by the sibling cores
+# and re-deriving it later is wasted work.
 example/de10_lite_nios/software/bsp/
 example/de10_lite_nios/software/obj/
 example/de10_lite_nios/software/Makefile

@@ -709,19 +709,40 @@ module avalon_mm_sdcard_controller_seq
                         end
                     end
 
+                    // The streaming states measure time WITHOUT PROGRESS, not
+                    // total duration: tmo is cleared on every byte, so a long
+                    // block never trips it but a stalled one does after
+                    // `timeout` idle cycles.
+                    //
+                    // Without this a data phase starved of data hangs forever.
+                    // The DMA configuration cannot reach that - the master
+                    // always supplies - which is exactly why it went unnoticed
+                    // until the PIO path was simulated: there, software feeding
+                    // the buffer too slowly, or not at all, wedges the core with
+                    // no recovery short of a soft reset.
                     S_RD_DATA: begin
                         if (tick) begin
+                            tmo <= '0;
                             if (byte_cnt == BCW'(blk_size - 1)) begin
                                 crc_cnt <= '0;
                                 state   <= S_RD_CRC;
                             end else begin
                                 byte_cnt <= byte_cnt + BCW'(1);
                             end
+                        end else if (tmo >= timeout) begin
+                            err_flags[E_DAT_TMO] <= 1'b1;
+                            err_phase <= PHASE_DATA;
+                            state     <= S_ABORT;
                         end
                     end
 
                     S_RD_CRC: begin
-                        if (tick) begin
+                        if (!tick && (tmo >= timeout)) begin
+                            err_flags[E_DAT_TMO] <= 1'b1;
+                            err_phase <= PHASE_CRC;
+                            state     <= S_ABORT;
+                        end else if (tick) begin
+                            tmo <= '0;
                             if (crc_cnt == 2'd1) begin
                                 // The accumulation runs through both CRC bytes,
                                 // so an intact block leaves the register at
@@ -765,7 +786,12 @@ module avalon_mm_sdcard_controller_seq
                     end
 
                     S_WR_DATA: begin
-                        if (tick) begin
+                        if (!tick && (tmo >= timeout)) begin
+                            err_flags[E_DAT_TMO] <= 1'b1;
+                            err_phase <= PHASE_DATA;
+                            state     <= S_ABORT;
+                        end else if (tick) begin
+                            tmo <= '0;
                             if (byte_cnt == BCW'(blk_size - 1)) begin
                                 crc_cnt <= '0;
                                 state         <= S_WR_CRC;
@@ -776,7 +802,12 @@ module avalon_mm_sdcard_controller_seq
                     end
 
                     S_WR_CRC: begin
-                        if (tick) begin
+                        if (!tick && (tmo >= timeout)) begin
+                            err_flags[E_DAT_TMO] <= 1'b1;
+                            err_phase <= PHASE_CRC;
+                            state     <= S_ABORT;
+                        end else if (tick) begin
+                            tmo <= '0;
                             if (crc_cnt == 2'd1) begin
                                 tmo   <= '0;
                                 state <= S_WR_RESP;

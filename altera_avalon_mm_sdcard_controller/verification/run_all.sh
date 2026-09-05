@@ -16,6 +16,10 @@
 #   hw.tcl        the Platform Designer component executed against stubbed
 #                 Qsys commands
 #   driver        the HAL driver compiled against stubbed Nios II headers
+#   assertions    three faults injected into scratch copies of the RTL, each
+#                 required to be caught by the assertion meant to catch it -
+#                 because an assertion that cannot fail passes just as
+#                 convincingly as one doing real work
 #   facts         every number in the documentation re-derived from source
 #
 # The last three need no simulator at all, which matters: they catch the dull
@@ -87,6 +91,7 @@ run "lint, 10 parameter configurations"  lint_all
 run "simulation, 3 testbenches"          "$ROOT/simulation/verilator/run_sim.sh"
 run "Platform Designer component"        tclsh "$ROOT/verification/check_hw_tcl.tcl"
 run "HAL driver compiles"                "$ROOT/verification/check_driver_builds.sh"
+run "assertions actually fire"           "$ROOT/verification/check_assertions_fire.sh"
 run "documentation facts"                python3 "$ROOT/doc/tools/check_facts.py"
 run "CRC reference vectors"              python3 "$ROOT/verification/models/crc_reference.py"
 

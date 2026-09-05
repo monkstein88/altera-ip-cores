@@ -204,6 +204,95 @@ module spi_card_model #(
         return HIGH_CAPACITY ? (arg * 512) : arg;
     endfunction
 
+    // -------------------------------------------------------------------------
+    // CSD and CID
+    //
+    // A real CSD, not filler, because the driver parses it for capacity and the
+    // two layouts are genuinely different arithmetic:
+    //
+    //   v1 (SDSC):  capacity = (C_SIZE+1) * 2^(C_SIZE_MULT+2) * 2^READ_BL_LEN
+    //   v2 (SDHC):  capacity = (C_SIZE+1) * 512 KB
+    //
+    // A model that returns arbitrary bytes lets a driver "parse" them and get a
+    // plausible-looking wrong answer, which is exactly the bug this is meant to
+    // catch. The values below are chosen so the expected block count is a round
+    // number the testbench can assert against:
+    //
+    //   HIGH_CAPACITY=1  C_SIZE=7679  ->  7680 * 1024   = 7,864,320 blocks
+    //   HIGH_CAPACITY=0  C_SIZE=4095, C_SIZE_MULT=7,
+    //                    READ_BL_LEN=9 -> 4096 * 512    = 2,097,152 blocks
+    //
+    // Byte 15 carries the CSD's own CRC7 in bits [7:1], as a card sends it.
+    // -------------------------------------------------------------------------
+    localparam int unsigned CSD_V2_C_SIZE     = 7679;
+    localparam int unsigned CSD_V1_C_SIZE     = 4095;
+    localparam int unsigned CSD_BLOCKS_SDHC   = (CSD_V2_C_SIZE + 1) * 1024;
+    localparam int unsigned CSD_BLOCKS_SDSC   = (CSD_V1_C_SIZE + 1) * 512;
+
+    function automatic void build_csd(ref logic [7:0] c []);
+        logic [7:0] head [];
+        int k;
+        begin
+            for (k = 0; k < 16; k++) c[k] = 8'h00;
+
+            if (HIGH_CAPACITY) begin
+                c[0]  = 8'h40;                 // CSD_STRUCTURE = 01 (v2)
+                c[1]  = 8'h0E;                 // TAAC
+                c[2]  = 8'h00;                 // NSAC
+                c[3]  = 8'h32;                 // TRAN_SPEED = 25 MHz
+                c[4]  = 8'h5B;                 // CCC high
+                c[5]  = 8'h59;                 // CCC low | READ_BL_LEN = 9
+                c[6]  = 8'h00;
+                c[7]  = 8'((CSD_V2_C_SIZE >> 16) & 8'h3F);   // C_SIZE[21:16]
+                c[8]  = 8'((CSD_V2_C_SIZE >> 8)  & 8'hFF);   // C_SIZE[15:8]
+                c[9]  = 8'( CSD_V2_C_SIZE        & 8'hFF);   // C_SIZE[7:0]
+                c[10] = 8'h7F;
+                c[11] = 8'h80;
+                c[12] = 8'h0A;
+                c[13] = 8'h40;
+                c[14] = 8'h00;
+            end else begin
+                c[0]  = 8'h00;                 // CSD_STRUCTURE = 00 (v1)
+                c[1]  = 8'h26;
+                c[2]  = 8'h00;
+                c[3]  = 8'h32;
+                c[4]  = 8'h5F;
+                c[5]  = 8'h59;                 // READ_BL_LEN = 9 in [3:0]
+                c[6]  = 8'h83;                 // C_SIZE[11:10] in [1:0]
+                c[7]  = 8'hFF;                 // C_SIZE[9:2]
+                c[8]  = 8'hFF;                 // C_SIZE[1:0] in [7:6]
+                c[9]  = 8'h9F;                 // C_SIZE_MULT[2:1] in [1:0]
+                c[10] = 8'hFA;                 // C_SIZE_MULT[0]   in [7]
+                c[11] = 8'h7F;
+                c[12] = 8'h00;
+                c[13] = 8'h0A;
+                c[14] = 8'h40;
+            end
+
+            head = new[15];
+            for (k = 0; k < 15; k++) head[k] = c[k];
+            c[15] = {crc7_of(head), 1'b1};
+        end
+    endfunction
+
+    function automatic void build_cid(ref logic [7:0] c []);
+        logic [7:0] head [];
+        int k;
+        begin
+            c[0]  = 8'h02;                     // manufacturer ID
+            c[1]  = 8'h54; c[2] = 8'h4D;       // OEM "TM"
+            c[3]  = 8'h53; c[4] = 8'h44;       // product name "SDMDL"
+            c[5]  = 8'h4D; c[6] = 8'h44; c[7] = 8'h4C;
+            c[8]  = 8'h10;                     // revision
+            c[9]  = 8'hDE; c[10] = 8'hAD;      // serial
+            c[11] = 8'hBE; c[12] = 8'hEF;
+            c[13] = 8'h01; c[14] = 8'h5A;      // manufacturing date
+            head = new[15];
+            for (k = 0; k < 15; k++) head[k] = c[k];
+            c[15] = {crc7_of(head), 1'b1};
+        end
+    endfunction
+
     task automatic push_r1(input logic [7:0] r1);
         int k;
         begin
@@ -330,7 +419,8 @@ module spi_card_model #(
                 6'd9, 6'd10: begin                      // CSD / CID, 16 bytes
                     push_r1(r1);
                     reg16 = new[16];
-                    for (k = 0; k < 16; k++) reg16[k] = 8'(idx) + 8'(k);
+                    if (idx == 6'd9) build_csd(reg16);
+                    else             build_cid(reg16);
                     rc = crc16_of(reg16);
                     tx_q.push_back(8'hFE);
                     for (k = 0; k < 16; k++) tx_q.push_back(reg16[k]);
