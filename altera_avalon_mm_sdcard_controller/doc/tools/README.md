@@ -27,6 +27,23 @@ python3 doc/tools/check_facts.py              # confirm every number
 The SVGs are tracked, so **reading** the documents needs none of these tools.
 They are only needed to change a figure.
 
+`check_figures.sh` compares 19 files: the four block diagrams and five timing
+figures, each with the generator input beside it. It reports three outcomes,
+not two — **PASS** only when all 19 were compared, **FAIL** when one has
+drifted, and **INCOMPLETE** with a count when a tool or the recording is
+missing, which the roll-ups render as a `PART` row rather than a green one.
+
+That distinction was added after the check spent a long time reporting
+
+```text
+*** PASS *** (0 files identical to a fresh render)
+```
+
+on a machine with no Graphviz and no recorded VCD: a pass earned by comparing
+nothing, and indistinguishable in `check_all.sh` from one that had checked
+everything. Absent evidence is not evidence, and a checker that cannot tell the
+difference teaches people to ignore it.
+
 ## Why Graphviz for the block diagrams
 
 The first version placed every box and every line by hand, in centimetres.

@@ -4,8 +4,10 @@
 #
 #   ./verification/run_all.sh
 #
-# Exit 0 only if every suite passes. Each one prints its own result; this script
-# reports the roll-up and the exit status is the AND of them all.
+# Exit 0 unless a suite actually failed; 2 if every suite was happy but one of
+# them could not check everything it covers. Each prints its own result and
+# this script reports the roll-up. See run() for why "incomplete" is not
+# allowed to look like "passed".
 #
 # Eight suites, deliberately different in kind:
 #
@@ -36,12 +38,25 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 
 fail=0
+partial=0
 summary=()
 
+# A suite may report three things, not two. Exit 2 means "nothing was wrong
+# with what I checked, but I could not check all of it" - a missing tool, an
+# unrecorded VCD. That is not a failure, so it does not stop the build, and it
+# is emphatically not a pass, so it does not get a PASS row: a check that
+# silently verified nothing is the exact fault this suite exists to catch.
 run () {
     local name="$1"; shift
-    if "$@" > /tmp/runall.$$ 2>&1; then
+    "$@" > /tmp/runall.$$ 2>&1
+    local rc=$?
+    if [ $rc -eq 0 ]; then
         summary+=("  PASS  $name")
+    elif [ $rc -eq 2 ]; then
+        summary+=("  PART  $name - see below")
+        echo "--- $name (incomplete) ---"
+        grep -E '^\s+--|INCOMPLETE|Do what' /tmp/runall.$$ | head -8
+        partial=1
     else
         summary+=("  FAIL  $name")
         echo "--- $name ---"
@@ -102,10 +117,17 @@ run "CRC reference vectors"              python3 "$ROOT/verification/models/crc_
 echo ""
 printf '%s\n' "${summary[@]}"
 echo ""
-if [ $fail -eq 0 ]; then
-    echo "*** ALL CHECKS PASS ***"
-else
+if [ $fail -ne 0 ]; then
     echo "*** SOMETHING FAILED ***"
+elif [ $partial -ne 0 ]; then
+    echo "*** ALL CHECKS PASS - BUT SOME WERE INCOMPLETE (see PART above) ***"
+else
+    echo "*** ALL CHECKS PASS ***"
 fi
 echo ""
-exit $fail
+
+# Pass the three-way result upwards rather than flattening it here: the
+# repository-wide roll-up cannot report what this one hides.
+[ $fail -ne 0 ] && exit 1
+[ $partial -ne 0 ] && exit 2
+exit 0

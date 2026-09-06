@@ -4,8 +4,10 @@
 #
 #   ./verification/check_figures.sh
 #
-# Exit 0 if every SVG in doc/figures/ is byte-identical to a fresh render, 1 if
-# any has drifted.
+# Exit 0 if EVERY file in doc/figures/ is byte-identical to a fresh render,
+# 1 if any has drifted, and 2 if some could not be checked because a tool or
+# the recorded VCD is missing. Two is not a failure and it is not a pass: see
+# the outcome block at the foot of this file for why it has to be its own code.
 #
 # -----------------------------------------------------------------------------
 # WHY
@@ -37,6 +39,13 @@ trap 'rm -rf "$WORK"' EXIT
 fail=0
 checked=0
 skipped=""
+
+# The full set, named once so that "how many should have been checked" is a
+# fact about this list rather than a number kept in step by hand.
+DIAGRAMS=(fig_context fig_internal fig_states fig_datapath)
+WAVES=(fig_wave_bit fig_wave_cmd fig_wave_read fig_wave_write fig_wave_crcerr)
+#          .dot + .svg each        .json + .svg each        wave_facts.json
+EXPECTED=$(( ${#DIAGRAMS[@]} * 2 + ${#WAVES[@]} * 2 + 1 ))
 
 compare () {
     local name="$1"
@@ -71,7 +80,7 @@ else
         python3 "$ROOT/doc/tools/diagrams/build_figures.py" "$WORK" 2>&1 | tail -5
         exit 1
     fi
-    for f in fig_context fig_internal fig_states fig_datapath; do
+    for f in "${DIAGRAMS[@]}"; do
         compare "$f.dot"
         compare "$f.svg"
     done
@@ -94,8 +103,7 @@ elif [ $have_node -eq 0 ]; then
         The WaveDrom JSON is still compared; only the SVG render needs Node."
     if python3 "$ROOT/doc/tools/waveforms/mkwaves.py" "$VCD" "$WORK" \
             >/dev/null 2>&1; then
-        for f in fig_wave_bit fig_wave_cmd fig_wave_read fig_wave_write \
-                 fig_wave_crcerr; do
+        for f in "${WAVES[@]}"; do
             compare "$f.json"
         done
         compare "wave_facts.json"
@@ -107,8 +115,7 @@ else
         python3 "$ROOT/doc/tools/waveforms/mkwaves.py" "$VCD" "$WORK" 2>&1 | tail -5
         fail=1
     else
-        for f in fig_wave_bit fig_wave_cmd fig_wave_read fig_wave_write \
-                 fig_wave_crcerr; do
+        for f in "${WAVES[@]}"; do
             compare "$f.json"
             compare "$f.svg"
         done
@@ -118,10 +125,36 @@ fi
 
 echo ""
 [ -n "$skipped" ] && printf '%s\n\n' "${skipped# }"
-if [ $fail -eq 0 ]; then
-    echo "*** PASS *** ($checked files identical to a fresh render)"
-else
+
+# ---------------------------------------------------------------------------
+# Three outcomes, not two.
+#
+# This block used to print PASS whenever nothing had FAILED, which on a machine
+# without graphviz and without a recorded VCD meant
+#
+#   *** PASS *** (0 files identical to a fresh render)
+#
+# a green result from comparing nothing at all - and in the roll-up above it,
+# an unqualified "PASS  figures match their generators". That is the same shape
+# of fault as a checker that skips its checks and reports success, which this
+# repository has already been bitten by once and now injects faults to catch.
+#
+# So: PASS only when every expected file was actually compared. Short of that
+# it is INCOMPLETE, which is not a failure - a fresh clone legitimately has
+# neither the VCD nor, perhaps, graphviz - but must not read as a pass either.
+# Exit 2 says so, and the callers render it as its own row.
+# ---------------------------------------------------------------------------
+if [ $fail -ne 0 ]; then
     echo "*** FAIL ***"
+    echo ""
+    exit 1
+elif [ "$checked" -eq "$EXPECTED" ]; then
+    echo "*** PASS *** (all $EXPECTED files identical to a fresh render)"
+    echo ""
+    exit 0
+else
+    echo "*** INCOMPLETE *** ($checked of $EXPECTED files checked, none had drifted)"
+    echo "    Do what is named above to check the rest."
+    echo ""
+    exit 2
 fi
-echo ""
-exit $fail

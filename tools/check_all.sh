@@ -5,8 +5,15 @@
 #   ./tools/check_all.sh              everything
 #   ./tools/check_all.sh --fast       skip the suites that need a simulator
 #
-# Exit 0 only if every check passes. Each core prints its own result; this
-# script reports the roll-up and its exit status is the AND of them all.
+# Exit 0 unless something actually failed. Each core prints its own result;
+# this script reports the roll-up.
+#
+# A suite can report three things. PASS, FAIL, and PART - "what I looked at was
+# correct, but I could not look at all of it", which a fresh clone hits
+# legitimately whenever an optional tool or an untracked recording is absent.
+# PART does not fail the build and does not count as a pass; it gets its own
+# row and the closing line says so. A green row here has to mean something was
+# verified, or this file is decoration.
 #
 # -----------------------------------------------------------------------------
 # WHY THIS EXISTS
@@ -30,14 +37,27 @@ FAST=0
 [[ "${1:-}" == "--fast" ]] && FAST=1
 
 fail=0
+partial=0
 summary=()
 
+# Three outcomes. Exit 2 from a suite means "what I checked was correct, but I
+# could not check all of it" - graphviz absent, a VCD not recorded. It must not
+# stop the build, because a fresh clone legitimately lacks those; it must not
+# read as PASS either, because the whole point of this file is that a green row
+# should mean something was verified. It gets its own row.
 run () {
     local name="$1"; shift
     local log
     log=$(mktemp)
-    if "$@" > "$log" 2>&1; then
+    "$@" > "$log" 2>&1
+    local rc=$?
+    if [ $rc -eq 0 ]; then
         summary+=("  PASS  $name")
+    elif [ $rc -eq 2 ]; then
+        summary+=("  PART  $name - incomplete, see below")
+        echo "--- $name (incomplete) ---"
+        grep -E '^\s+--|INCOMPLETE|PART |Do what' "$log" | head -10
+        partial=1
     else
         summary+=("  FAIL  $name")
         echo "--- $name ---"
@@ -85,10 +105,13 @@ run "top-level README" python3 "$ROOT/tools/check_readme.py"
 echo ""
 printf '%s\n' "${summary[@]}"
 echo ""
-if [ $fail -eq 0 ]; then
-    echo "*** ALL CHECKS PASS ***"
-else
+if [ $fail -ne 0 ]; then
     echo "*** SOMETHING FAILED ***"
+elif [ $partial -ne 0 ]; then
+    echo "*** ALL CHECKS PASS - BUT SOME WERE INCOMPLETE (see PART above) ***"
+    echo "    Nothing has drifted. Something could not be looked at."
+else
+    echo "*** ALL CHECKS PASS ***"
 fi
 echo ""
 exit $fail

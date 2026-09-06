@@ -312,7 +312,7 @@ full Quartus toolchain tries to build a project.
 | `check_hw_tcl.tcl` | 22 | The component executes; parameters and ports exist; validation rejects exactly the bad configurations |
 | `check_driver_builds.sh` | 3 | The driver compiles clean under `-Wall -Wextra`; CSD capacity arithmetic for both structure versions; the register header stands alone |
 | `check_assertions_fire.sh` | 3 faults | Each injected into a scratch copy and required to be caught by the assertion meant to catch it |
-| `check_figures.sh` | 9 figures | Each re-rendered from its generator and compared byte for byte, because a stale picture is worse than a missing one |
+| `check_figures.sh` | 19 files | The 9 figures and their generator inputs, each re-rendered and compared byte for byte, because a stale picture is worse than a missing one. Needs `graphviz` for the block diagrams and Node plus a recorded `wave.vcd` for the timing figures; short of those it reports **INCOMPLETE** with a count, rather than passing on what it could not look at |
 | `check_facts.py` | 193 | Every register offset, parameter default, line count and measured figure in these documents, re-derived from the RTL |
 | lint | 10 configs | `-Wall` clean across every parameter that changes what is built |
 
