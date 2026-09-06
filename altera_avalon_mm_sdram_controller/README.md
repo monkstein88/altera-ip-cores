@@ -429,14 +429,42 @@ Questa reports every one of the 23 assertion instances passing **non-vacuously**
 which is the number that matters: an assertion that only ever passes because
 its antecedent never held has verified nothing while reporting green.
 
-Merged code coverage on the controller across the sweep: **98.4% statement,
-92.6% branch, 85.0% condition, and 100% of FSM states and transitions.** The
-transitions took work — reset asserted from each initialisation and refresh
-state had never been tried, and four of those states last a single cycle, so
-the reset instant has to be swept cycle by cycle rather than sampled. What
-remains uncovered is the elaboration-time conversion functions, which Questa
-counts as statements but which never execute at run time, and an unreachable
-defensive `default`.
+Merged code coverage on the controller across the sweep: **95.1% statement,
+93.3% branch, 85.4% condition, 80.7% expression, 87.7% toggle, and 100% of FSM
+states and transitions** — 12 of 12 and 24 of 24. The transitions took work —
+reset asserted from each initialisation and refresh state had never been tried,
+and four of those states last a single cycle, so the reset instant has to be
+swept cycle by cycle rather than sampled.
+
+All thirteen uncovered statements are accounted for, and none is controller
+logic that runs: six lines belong to the elaboration-time conversion functions,
+which Questa counts as statements but which never execute at run time; six are
+the continuous `assign issue_* = (cmd == C_*)` decodes, which Questa does not
+score as executed statements; and one is the unreachable defensive `default`.
+
+**One branch is uncovered, and it is worth naming.** The refresh-credit
+collision fix — folding `ref_tick` back in when the interval timer wraps on the
+same cycle a refresh issues — has its true arm taken **zero times in 1,586
+refreshes**. What establishes the fix is the sustained-traffic measurement
+recorded in `f5f735c`: 31 collisions in 72,153 intervals, and the credit
+deficit that went with them.
+
+Writing a scenario for it is harder than it looks, and the reason is worth
+recording because it is a property of the design rather than of the testbench.
+Under steady load the refresh cadence **phase-locks to the interval timer**:
+one credit is earned per tREFI, `ref_hold` releases as soon as one is spent, so
+exactly one refresh issues per tick, and the walk through `S_REF_PRE` →
+`S_REF_TRP` → `S_REF_CMD` takes the same number of cycles every time. The issue
+therefore lands at a fixed offset from the tick, and a fixed non-zero offset
+never coincides with it.
+
+Three attempts confirmed that. A short tREFI (`REF_ROWS` far above any real
+part) gave 628 refreshes and no collisions; a master holding `az_cs` high
+throughout gave 3,993 and none; randomising bank, row and column gave the same
+3,993 — identical, because the refresh count is set by the timer alone and the
+traffic never moves it. The collision needs the phase to *slip*, which is a
+transient, not a steady state, and provoking one deliberately is a piece of
+work this core has not had yet.
 
 The testbench asserts on the **command stream**, not only the data. A
 controller that closed and reopened a row before every access would return
