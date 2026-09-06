@@ -92,10 +92,21 @@ proc part_args {part} {
     return [list]
 }
 
-proc run_one {cas look depth map khz col part ucdb} {
-    set tag ${cas}_${look}_${depth}_${map}_${khz}_${col}_${part}
+# stress/refrows are optional and default to off, so the fourteen calls below
+# are unchanged. They exist for the refresh-credit collision configuration:
+# REFRESH_STRESS runs the refresh scenarios alone, and REF_ROWS sets tREFI
+# short enough that a backlog drain meets the interval wrap. See the call.
+proc run_one {cas look depth map khz col part ucdb {stress 0} {refrows 0}} {
+    set tag ${cas}_${look}_${depth}_${map}_${khz}_${col}_${part}_${stress}
+    set extra [list]
+    if {$stress != 0} {
+        lappend extra -G/avalon_mm_sdram_controller_tb/REFRESH_STRESS=$stress
+    }
+    if {$refrows != 0} {
+        lappend extra -G/avalon_mm_sdram_controller_tb/REF_ROWS=$refrows
+    }
     eval vopt avalon_mm_sdram_controller_tb -o tb_opt_$tag +acc -cover sbceft -assertdebug \
-        [part_args $part] \
+        [part_args $part] $extra \
         -G/avalon_mm_sdram_controller_tb/CAS_LAT=$cas \
         -G/avalon_mm_sdram_controller_tb/LOOKAHEAD=$look \
         -G/avalon_mm_sdram_controller_tb/FIFO_DEPTH=$depth \
@@ -132,15 +143,32 @@ run_one 3 1  8  0 100000 11 0 c12.ucdb
 run_one 3 1  8  0 100000  9 1 c13.ucdb
 run_one 3 1  8  0 100000  8 2 c14.ucdb
 
+# The refresh-credit collision. Not a part: REF_ROWS=106,666 is a tREFI of 60
+# cycles, and it is here because the branch it reaches - folding ref_tick back
+# in when the timer wraps on a spending cycle - is taken ZERO times in the
+# 1,586 refreshes of the fourteen configurations above. The refresh cadence
+# phase-locks to the interval timer, so a refresh issues a fixed five cycles
+# after its trigger tick and never on the wrap; only a backlog drain sweeps
+# the timer, and a short tREFI is what puts the wrap inside that drain.
+run_one 3 1  8  0 100000 10 0 c15.ucdb 1 106666
+
 vcover merge coverage.ucdb \
     c01.ucdb c02.ucdb c03.ucdb c04.ucdb c05.ucdb c06.ucdb c07.ucdb \
-    c08.ucdb c09.ucdb c10.ucdb c11.ucdb c12.ucdb c13.ucdb c14.ucdb
+    c08.ucdb c09.ucdb c10.ucdb c11.ucdb c12.ucdb c13.ucdb c14.ucdb c15.ucdb
 vcover report -details -output coverage_report.txt coverage.ucdb
 
 # ---- pass/fail, decided from the transcript rather than from exit codes -----
-# A simulator that ran fourteen configurations and printed thirteen "all tests passed"
-# has failed one of them, and will still exit 0.
+# A simulator that ran fifteen configurations and printed fourteen "all tests
+# passed" has failed one of them, and will still exit 0.
+#
+# The threshold has to be the EXACT count, and for a long time it was not: it
+# read "n < 13" against fourteen configurations, so a run with one silently
+# failing configuration reported PASSED - the very thing the sentence above
+# describes. It is derived from the list now rather than typed twice.
+set NCONFIGS 15
+
 proc run_passed {} {
+    global NCONFIGS
     if {![file exists run.log]} { return 0 }
     set fh [open run.log r]
     set txt [read $fh]
@@ -151,7 +179,7 @@ proc run_passed {} {
         incr n
         incr idx
     }
-    if {$n < 13} { return 0 }
+    if {$n < $NCONFIGS} { return 0 }
     if {[string first "Assertion error" $txt] >= 0}   { return 0 }
     if {[string first "TIMING VIOLATION" $txt] >= 0}  { return 0 }
     if {[string first "MODEL ERROR" $txt] >= 0}       { return 0 }
@@ -159,7 +187,7 @@ proc run_passed {} {
 }
 
 if {[run_passed]} {
-    puts "RESULT: PASSED - all fourteen configurations, no assertion failures,"
+    puts "RESULT: PASSED - all $NCONFIGS configurations, no assertion failures,"
     puts "                 no timing violations, no illegal device accesses"
 } else {
     puts "RESULT: FAILED - see run.log"

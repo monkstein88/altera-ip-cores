@@ -55,6 +55,18 @@ module avalon_mm_sdram_controller_tb #(
     // rate it needs.
     parameter int REF_ROWS      = 8192,
     parameter int REF_PERIOD_MS = 64,
+
+    // Refresh-stress mode: initialisation and the refresh scenarios only.
+    //
+    // It exists to reach ONE branch - the refresh-credit collision, where the
+    // interval timer wraps on the very cycle a refresh is spent. That branch is
+    // not reachable at a realistic tREFI (see t_refresh_credit_collision), so
+    // the mode is driven with a deliberately short one, and at a short tREFI
+    // refresh legitimately intrudes on the windows the command-stream scenarios
+    // measure - "no refreshes here", "exactly one PRECHARGE for a row change".
+    // Running them in this mode would report faults the controller has not
+    // committed, which is what happened when it was first tried.
+    parameter bit REFRESH_STRESS = 1'b0,
     // Geometry. Swept so that the address encoding is EXERCISED at more than
     // one shape, not merely elaborated: at COL_BITS 11 the column's top bit
     // has to step over A10, the auto-precharge flag, and that branch of
@@ -261,6 +273,34 @@ module avalon_mm_sdram_controller_tb #(
         if (m_ref) n_ref++;
         if (m_mrs) n_mrs++;
     end
+
+
+    // ---- refresh credit ledger ---------------------------------------------
+    // The controller EARNS a credit every tREFI and SPENDS one when it issues a
+    // REFRESH. Both are nonblocking assignments to ref_pend in one always_ff,
+    // so when they land on the same cycle the later simply wins and the earned
+    // credit is LOST rather than deferred - nothing reconstructs a debt
+    // counter. f5f735c fixed that by folding ref_tick back into the spend.
+    //
+    // init_done is exactly (S_RUN | S_REF_PRE | S_REF_TRP | S_REF_CMD), and the
+    // only other place C_REF issues is S_INIT_REF, which init_done excludes -
+    // so inside this block issue_ref already means S_REF_CMD. Testing the state
+    // as well would need a hierarchical reference to an enum member, and that
+    // is something Verilator does not survive. (Note the wording: a comment
+    // line STARTING with the word verilator is read as a lint pragma, and
+    // this one was, which is a fine way to lose ten minutes.)
+    int n_tick, n_spend, n_collide;
+    always_ff @(posedge clk) if (reset_n && dut.init_done) begin
+        if (dut.ref_tick) n_tick++;
+        if (dut.issue_ref && dut.ref_pend != '0) begin
+            n_spend++;
+            if (dut.ref_tick) n_collide++;
+        end
+    end
+
+    task automatic zero_ledger;
+        begin n_tick = 0; n_spend = 0; n_collide = 0; end
+    endtask
 
     task automatic zero_counts;
         begin n_act = 0; n_pre = 0; n_pre_all = 0;
@@ -831,6 +871,102 @@ module avalon_mm_sdram_controller_tb #(
         end
     endtask
 
+
+    // 9b. A refresh credit earned on the very cycle another is spent must not
+    //     be lost. Reachable only under REFRESH_STRESS - see below.
+    task automatic t_refresh_credit_collision;
+        int i, pend_before, pend_after, expect_after;
+        bit accepted;
+        begin
+            start_test("refresh credit kept when the timer wraps as one is spent");
+            settle();
+            zero_ledger();
+            pend_before = int'(dut.ref_pend);
+
+            // WHY THIS NEEDS A SHORT tREFI, AND WHY TRAFFIC ALONE WILL NOT DO
+            //
+            // The refresh cadence PHASE-LOCKS to the interval timer. A credit
+            // falls due every tREFI; ref_hold releases as soon as one is spent;
+            // and the walk through S_REF_PRE, S_REF_TRP and S_REF_CMD takes the
+            // same number of cycles every time. Measured, the refresh issues
+            // with ref_timer = 4 - five cycles after its trigger tick, every
+            // time. A fixed non-zero offset never coincides with the wrap, so
+            // no amount of traffic shaping collides: a saturating master gave
+            // 3,993 refreshes and none, and randomising bank, row and column
+            // gave exactly the same 3,993, because the refresh count is set by
+            // the timer and traffic does not move it.
+            //
+            // What does collide is a BACKLOG DRAIN. When the buffer empties
+            // with credits outstanding, refreshes issue back to back six cycles
+            // apart, and that walk sweeps the timer's whole range. Shorten
+            // tREFI and the wrap falls inside the drain window often rather
+            // than almost never. At CYC_REFI = 150 the first collision arrives
+            // within about twenty refreshes; at the real 781 it is roughly one
+            // in two thousand, which is the 31-in-72,153 that f5f735c measured.
+            //
+            // Below about 40 cycles the part cannot be refreshed at that rate
+            // at all and a_ref_pend_bounded correctly fires, so this is a
+            // window, not a limit to push.
+            // SATURATE, THEN LET IT DRAIN, AND REPEAT.
+            //
+            // Neither half alone reaches the branch. Held saturated, the
+            // buffer never empties, ref_hold waits for REF_MAX_PEND, and one
+            // refresh issues per tick at the fixed offset - no collision in
+            // 3,993. Left to trickle, avm_write keeps at most one access
+            // outstanding, the buffer empties after every one, and refresh
+            // issues at pend = 1 at the same fixed offset - no collision in
+            // 188.
+            //
+            // The collision lives in the DRAIN. Saturating for a couple of
+            // intervals banks several credits; going idle then makes ref_hold
+            // stay asserted until they are all spent, and those refreshes
+            // issue back to back six cycles apart. That burst sweeps the
+            // interval timer, so the wrap can land on one of them.
+            for (int rep = 0; rep < 150; rep++) begin
+                // ---- saturate: hold az_cs high so the buffer cannot empty
+                az_addr = mk_addr(0, 100, 0);
+                az_data = 16'h5A5A;
+                az_be_n = '0;
+                az_cs   = 1'b1;
+                az_rd_n = 1'b1;
+                az_wr_n = 1'b0;
+                for (i = 0; i < 9 * CYC_REFI; i++) begin
+                    #(CLK_NS - 0.2);
+                    accepted = !za_waitrequest;
+                    #0.2;
+                    if (accepted)
+                        az_addr = mk_addr(i % BANKS, 100 + (i % 5), i % 512);
+                end
+                // ---- and drain: idle long enough to spend the whole backlog
+                avm_idle();
+                settle(80);
+            end
+
+            avm_idle();
+            settle(4);
+            pend_after = int'(dut.ref_pend);
+
+            // The test must PROVE it reached the case. Without this it would
+            // confirm the ledger below having never executed the branch that
+            // ledger exists to check - which is the state the ordinary sweep is
+            // in, and the reason this scenario was written.
+            $display("        %0d collisions in %0d refreshes, %0d credits earned",
+                     n_collide, n_spend, n_tick);
+            chk(n_collide >= 1, $sformatf(
+                "the timer wrapped on a spending cycle at least once: %0d in %0d refreshes",
+                n_collide, n_spend));
+
+            // Every credit earned is either still outstanding or was spent.
+            // None evaporates. This is the invariant the defect broke: it
+            // dropped the credit instead of deferring it, so ref_pend came out
+            // low by exactly the number of collisions.
+            expect_after = pend_before + n_tick - n_spend;
+            chk_eq(pend_after, expect_after, $sformatf(
+                "refresh credits balance: %0d held + %0d earned - %0d spent",
+                pend_before, n_tick, n_spend));
+        end
+    endtask
+
     // 10. Reset must return the controller to the beginning, not to a state
     //     that thinks rows are still open.
     // Reset asserted from states other than S_RUN.
@@ -965,6 +1101,10 @@ module avalon_mm_sdram_controller_tb #(
 
         t_initialisation();
         settle();
+        if (REFRESH_STRESS) begin
+            t_refresh_under_load();
+            t_refresh_credit_collision();
+        end else begin
         t_single_access();
         t_byte_enables();
         t_turnaround_in_row();
@@ -979,6 +1119,7 @@ module avalon_mm_sdram_controller_tb #(
         t_refresh_under_load();
         t_reset_recovery();
         t_reset_in_every_state();
+        end
 
         settle(32);
         $display("-------------------------------------------------------------------------");

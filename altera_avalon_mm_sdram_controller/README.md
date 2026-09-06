@@ -411,9 +411,9 @@ altera_avalon_mm_sdram_controller/
 
 | Flow | Covers | Result |
 |---|---|---|
-| [`simulation/verilator/run_sim.sh`](simulation/verilator/run_sim.sh) | Lint of RTL, checker and model; timing-checker self-test; testbench across 18 configurations including three clock rates and all three supplied parts; lint in 4 geometries; Quartus Analysis & Synthesis | 27 checks, 168 checks per configuration |
+| [`simulation/verilator/run_sim.sh`](simulation/verilator/run_sim.sh) | Lint of RTL, checker and model; timing-checker self-test; testbench across 19 configurations including three clock rates, all three supplied parts and the refresh-credit stress mode; lint in 4 geometries; Quartus Analysis & Synthesis | 28 checks, 168 per configuration and 15 for the stress mode |
 | [`tb/`](tb) | 168 checks per configuration, on the command stream as well as the data | Passing |
-| [`simulation/questa/run_sim.tcl`](simulation/questa/run_sim.tcl) | Fourteen of those configurations — its `run_one` has no argument for the read-capture or turnaround knobs, so the four that exercise those run under Verilator only — plus code coverage and assertion non-vacuity | 23 assertion instances, **none vacuous** |
+| [`simulation/questa/run_sim.tcl`](simulation/questa/run_sim.tcl) | Fifteen of those configurations — its `run_one` has no argument for the read-capture or turnaround knobs, so the four that exercise those run under Verilator only — plus code coverage and assertion non-vacuity | 23 assertion instances, **none vacuous** |
 | [`benchmark/`](benchmark/README.md) | Throughput against the core being replaced | Passing |
 | [`example/de10_lite_rtl`](example/de10_lite_rtl/README.md) | DE10-Lite board demonstration, 9 phases | 61 checks in simulation, **8/8 scenarios on the board** |
 | [`example/de0_nano_rtl`](example/de0_nano_rtl/README.md) | DE0-Nano board demonstration, same nine phases at the other part's geometry | 61 checks in simulation, **8/8 scenarios on the board** |
@@ -430,7 +430,7 @@ which is the number that matters: an assertion that only ever passes because
 its antecedent never held has verified nothing while reporting green.
 
 Merged code coverage on the controller across the sweep: **95.1% statement,
-93.3% branch, 85.4% condition, 80.7% expression, 87.7% toggle, and 100% of FSM
+93.9% branch, 85.4% condition, 80.7% expression, 87.7% toggle, and 100% of FSM
 states and transitions** — 12 of 12 and 24 of 24. The transitions took work —
 reset asserted from each initialisation and refresh state had never been tried,
 and four of those states last a single cycle, so the reset instant has to be
@@ -442,29 +442,44 @@ which Questa counts as statements but which never execute at run time; six are
 the continuous `assign issue_* = (cmd == C_*)` decodes, which Questa does not
 score as executed statements; and one is the unreachable defensive `default`.
 
-**One branch is uncovered, and it is worth naming.** The refresh-credit
-collision fix — folding `ref_tick` back in when the interval timer wraps on the
-same cycle a refresh issues — has its true arm taken **zero times in 1,586
-refreshes**. What establishes the fix is the sustained-traffic measurement
-recorded in `f5f735c`: 31 collisions in 72,153 intervals, and the credit
-deficit that went with them.
+**The last uncovered branch is covered now, and getting there is the useful
+part.** The refresh-credit fix — folding `ref_tick` back in when the interval
+timer wraps on the very cycle a refresh is spent — had its true arm taken
+**zero times in 1,586 refreshes**. The fix was correct and nothing exercised
+it.
 
-Writing a scenario for it is harder than it looks, and the reason is worth
-recording because it is a property of the design rather than of the testbench.
-Under steady load the refresh cadence **phase-locks to the interval timer**:
-one credit is earned per tREFI, `ref_hold` releases as soon as one is spent, so
-exactly one refresh issues per tick, and the walk through `S_REF_PRE` →
-`S_REF_TRP` → `S_REF_CMD` takes the same number of cycles every time. The issue
-therefore lands at a fixed offset from the tick, and a fixed non-zero offset
-never coincides with it.
+It is not reachable by running the sweep harder, because under steady load the
+refresh cadence **phase-locks to the interval timer**. A credit falls due every
+tREFI, `ref_hold` releases as soon as one is spent, and the walk through
+`S_REF_PRE` → `S_REF_TRP` → `S_REF_CMD` takes the same number of cycles every
+time. Measured, the refresh issues with `ref_timer = 4` — five cycles after its
+trigger tick, every time. A fixed non-zero offset never lands on the wrap:
 
-Three attempts confirmed that. A short tREFI (`REF_ROWS` far above any real
-part) gave 628 refreshes and no collisions; a master holding `az_cs` high
-throughout gave 3,993 and none; randomising bank, row and column gave the same
-3,993 — identical, because the refresh count is set by the timer alone and the
-traffic never moves it. The collision needs the phase to *slip*, which is a
-transient, not a steady state, and provoking one deliberately is a piece of
-work this core has not had yet.
+| Stimulus | Refreshes | Collisions |
+|---|---|---|
+| Ordinary sweep traffic | 1,586 | 0 |
+| A master holding `az_cs` high throughout | 3,993 | 0 |
+| The same, with bank, row and column randomised | 3,993 | 0 |
+
+The last two are identical because the refresh count is set by the timer alone
+and traffic does not move it. What *does* sweep the timer is a **backlog
+drain**: when the buffer empties with credits outstanding, refreshes issue back
+to back six cycles apart, and the wrap can fall on one of them. Shortening
+tREFI makes that likely rather than rare.
+
+So the nineteenth configuration is `REFRESH_STRESS=1` with `REF_ROWS=106666` —
+not a part, but a tREFI of 60 cycles — driven with a saturate-then-drain
+workload. It reaches **50 collisions in 1,550 refreshes**, and the scenario
+asserts on the collision count as well as on the ledger, because a run that
+never collided would confirm the invariant having never executed the branch
+that invariant is about. Below roughly 40 cycles the part cannot be refreshed
+at that rate at all and `a_ref_pend_bounded` correctly fires, so this is a
+window rather than a limit to push.
+
+Re-injecting the defect proves the scenario does real work: the same 50
+collisions, 1,550 credits earned against 1,500 spent, and `ref_pend` ending at
+0 where it owes 50. **The deficit equals the collision count exactly** — one
+credit lost per collision, which is what the defect was.
 
 The testbench asserts on the **command stream**, not only the data. A
 controller that closed and reopened a row before every access would return

@@ -213,6 +213,16 @@ SWEEP=(
     # refresh interval was only ever derived one way and a whole class of
     # arithmetic went unexercised.
     "-GROW_BITS=12 -GCOL_BITS=8 -GSA_BITS=12 -GREF_ROWS=4096 -GT_RC_PS=66000 -GT_RAS_PS=44000 -GT_RP_PS=20000 -GT_RCD_PS=20000 -GT_RRD_PS=15000 -GT_WR_PS=15000 -GT_MRD_PS=20000 -GT_RFC_PS=66000"
+    # Refresh-credit collision. REF_ROWS=106,666 is not a part - it is a tREFI
+    # of 60 cycles, chosen because the branch this reaches is unreachable at a
+    # realistic one. The refresh cadence phase-locks to the interval timer, so
+    # a refresh issues a fixed five cycles after its trigger tick and never on
+    # the wrap; only a BACKLOG DRAIN sweeps the timer, and shortening tREFI is
+    # what makes the wrap fall inside that drain often rather than once in
+    # thousands. REFRESH_STRESS runs the refresh scenarios alone, because at
+    # this interval refresh legitimately intrudes on every command-stream
+    # window the other scenarios measure.
+    "-GREFRESH_STRESS=1 -GREF_ROWS=106666"
 )
 for cfg in "${SWEEP[@]}"; do
     label="${cfg:-defaults}"
