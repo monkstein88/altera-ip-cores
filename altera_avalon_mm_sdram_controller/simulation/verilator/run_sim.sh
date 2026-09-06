@@ -44,6 +44,35 @@ TB="$ROOT/tb"
 command -v verilator >/dev/null 2>&1 || {
     echo "error: verilator not found in PATH" >&2; exit 1; }
 
+# ---------------------------------------------------------------------------
+# Discard object directories built by a Verilator that is no longer installed.
+#
+# Verilator's generated makefile records the ABSOLUTE path of its own
+# include/verilated.cpp as a prerequisite of verilated.o. Move this tree
+# between machines, or switch between a pip install and a distro one, and make
+# stops with
+#
+#   No rule to make target '.../include/verilated.cpp', needed by 'verilated.o'
+#
+# BEFORE Verilator is invoked - so rebuilding never helps, and the error names
+# a file nobody here asked for. These directories are gitignored, which is
+# exactly why they survive everything that would otherwise clear them: a fresh
+# clone does not carry them, but a moved or copied working tree does.
+#
+# This has already cost a debugging session once, reported as a failing
+# regression that had in fact never run. Detecting it costs one find.
+# ---------------------------------------------------------------------------
+prune_stale_objdirs () {
+    local dep want
+    find "$1" -type f -name '*.d' 2>/dev/null | while IFS= read -r dep; do
+        want=$(grep -ohE '/[^ :]*/include/verilated\.cpp' "$dep" 2>/dev/null | head -1)
+        [ -n "$want" ] && [ ! -e "$want" ] || continue
+        echo "  (discarding $(dirname "$dep") - built against a Verilator no longer present)"
+        rm -rf "$(dirname "$dep")"
+    done
+}
+prune_stale_objdirs "$HERE"
+
 # --timing compiles to C++20 coroutines. GCC before 12 has them behind a flag
 # and defaults to a standard that predates them, so a stock Ubuntu 22.04 host
 # fails to build the runtime with "the coroutine header requires -fcoroutines".

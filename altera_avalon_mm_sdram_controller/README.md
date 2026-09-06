@@ -4,9 +4,10 @@
 verified in simulation, synthesised, closing timing at 100 MHz — and RUN ON
 TWO BOARDS.** All eight demonstration scenarios pass on a real Terasic
 DE0-Nano driving an ISSI IS42S16160B, and on a Terasic DE10-Lite driving an
-IS42S16320D. On silicon it reaches **199.6 MB/s** where every access is a row
-hit — 99.8% of a 16-bit bus at 100 MHz — and 29.5 MB/s where every access is a
-row miss.
+IS42S16320D. On silicon it reaches **199.8 MB/s** where every access is a row
+hit — 99.9% of a 16-bit bus at 100 MHz — and 34.4 MB/s where every access is a
+row miss. Those are the DE10-Lite's figures; the DE0-Nano's narrower part
+gives 199.6 and 29.5 against the same stimulus.
 
 The two parts are not the same shape: 9 column bits and 32 MByte against 10
 and 64. The address decode, the preset mechanism and the timing parameters are
@@ -85,25 +86,38 @@ fully random access.
 ## Cost and speed
 
 Quartus 18.1.1 Standard, MAX 10 `10M50DAF484C7G` (the DE10-Lite's part), Slow
-1200 mV 85 °C model. Both controllers synthesised standalone with the same
-constraints, so the comparison is like for like.
+1200 mV 85 °C model. Both controllers fitted standalone with the same
+constraints, so the comparison is like for like. Reproduce with
+[`doc/tools/measure_fit.sh`](doc/tools/measure_fit.sh).
+
+Each figure is the **median of five fitter seeds**, with the range beside it.
+One fit is not a measurement here: placement moves f_MAX by more than most of
+the RTL changes this project has tried, so a single number cannot tell a real
+regression from a lucky seed.
 
 | | Intel's core | Custom core |
 |---|---|---|
-| Logic elements | 353 | 1,345 |
-| Registers | 225 | 787 |
-| f_MAX | 115.2 MHz | **104.8 MHz** |
+| Logic elements | 351 (348–352) | 1,345 (1,337–1,366) |
+| Registers | 284 | 787 |
+| f_MAX | 113.5 MHz (109.5–123.4) | **102.1 MHz** (99.7–106.0) |
 
 The whole DE10-Lite demonstration — controller, sequencer, master, PLL,
-displays and JTAG — fits in **3,099 LEs and 1,778 registers**, 6% of the
-device, and closes 100 MHz with **0.208 ns** of setup slack. The DE0-Nano
-demonstration closes it with **1.011 ns** on a Cyclone IV E.
+displays and JTAG — fits in **3,306 LEs and 1,875 registers**, 7% of the
+device, and closes 100 MHz with **0.601 ns** of setup slack. The DE0-Nano
+demonstration closes it with **1.357 ns** on a Cyclone IV E.
 
 The core costs about 3.8× the logic of the controller it replaces and runs at
-0.91× its f_MAX. That is what per-bank row tracking, look-ahead and an 8-deep
+0.90× its f_MAX. That is what per-bank row tracking, look-ahead and an 8-deep
 command buffer cost. It is worth it at and below 100 MHz, where the throughput
 table above applies; it is not a free substitution, and a design already at
-115 MHz with Intel's core cannot simply swap this one in.
+113 MHz with Intel's core cannot simply swap this one in.
+
+Intel's core is generated output and is not tracked in this repository, so its
+column is measured from whatever `altera_avalon_new_sdram_controller`'s
+DE10-Lite example last generated. An earlier revision of this table reported
+353 LEs, 225 registers and 115.2 MHz for it from a project that was never
+checked in; those figures could not be reproduced, which is the reason the
+harness above now exists and names the file it measured.
 
 ## What each layer of verification actually catches
 
@@ -242,11 +256,13 @@ Also outstanding:
   9 column bits and 32 MByte against 10 and 64 - so the address decode, the
   preset mechanism and the timing parameters are exercised across two
   geometries rather than fitted to one.
-- **f_MAX headroom, and what actually sets it.** 104.8 MHz standalone against
-  a 100 MHz target. Both demonstrations now close with over a nanosecond on
-  the system clock - +1.207 ns on the DE0-Nano, +1.037 on the DE10-Lite - but
-  that came from the fitter, not from the RTL, and the distinction is the
-  useful part.
+- **f_MAX headroom, and what actually sets it.** 102.1 MHz standalone, median
+  of five seeds, against a 100 MHz target. Both demonstrations close on the
+  system clock - +1.357 ns on the DE0-Nano, +0.601 on the DE10-Lite - but that
+  came from the fitter, not from the RTL, and the distinction is the useful
+  part. The margin is real and it is not generous: the DE10-Lite closes by
+  less than a tenth of its period, and the seed spread below is wider than
+  that.
 
   **Placement, not logic depth, is what limits this design.** Five builds of
   identical RTL at different fitter seeds measured 0.249, 0.770, 0.734, 0.451
@@ -262,6 +278,13 @@ Also outstanding:
   +0.208 ns to +0.011 for 208 more logic elements. The counters do leave the
   critical path, but it terminates one register earlier at the same length -
   the comparison was never the expensive part.
+
+  Those four figures are single-seed measurements of the RTL as it stood at
+  the time, each variant against its own baseline on the same day. They stand
+  as comparisons and none of them is the current f_MAX - which is 102.1 MHz,
+  measured across five seeds on the RTL at HEAD. Read together they are also
+  the argument for the seed sweep: a 1.0 MHz difference between two variants
+  sat well inside a spread nobody had characterised yet.
 
   Shortening the loop for real means splitting the priority chain across two
   cycles, which costs a cycle on every row change. On a core whose whole

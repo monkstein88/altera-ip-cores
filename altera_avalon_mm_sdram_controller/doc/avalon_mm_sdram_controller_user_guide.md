@@ -351,26 +351,32 @@ gain is entirely in mixed and scattered traffic.
 ## 7.4 Resources and f_MAX
 
 Quartus 18.1.1 Standard, MAX 10 `10M50DAF484C7G`, Slow 1200 mV 85 °C model.
-Both controllers synthesised standalone under the same constraints.
+Both controllers fitted standalone under the same constraints. Every figure is
+the median of five fitter seeds, with the range beside it, because placement
+moves f_MAX here by more than most RTL changes do. Reproduce the table with
+`doc/tools/measure_fit.sh`.
 
 | | Intel's core | This core |
 |---|---|---|
-| Logic elements | 353 | 1,345 |
-| Registers | 225 | 787 |
-| f_MAX | 115.2 MHz | 104.8 MHz |
+| Logic elements | 351 (348–352) | 1,345 (1,337–1,366) |
+| Registers | 284 | 787 |
+| f_MAX | 113.5 MHz (109.5–123.4) | 102.1 MHz (99.7–106.0) |
 
 The complete DE10-Lite demonstration — this controller plus sequencer, master,
-PLL, seven-segment displays and JTAG probes — occupies 3,099 logic elements and
-1,778 registers, 6% of the device, and closes its 100 MHz constraint with
-0.208 ns of setup slack. The SDRAM interface paths close with 1.763 ns. The
-DE0-Nano demonstration, on a Cyclone IV E, occupies 3,123 logic elements and
-closes with 1.011 ns.
+PLL, seven-segment displays and JTAG probes — occupies 3,306 logic elements and
+1,875 registers, 7% of the device, and closes its 100 MHz constraint with
+0.601 ns of setup slack. The SDRAM interface paths close with 2.035 ns. The
+DE0-Nano demonstration, on a Cyclone IV E, occupies 3,325 logic elements and
+closes with 1.357 ns.
+
+Intel's core is generated output that this repository does not track, so its
+column describes whatever its own DE10-Lite example last generated.
 
 > **Caution:** the throughput table in 7.3 assumes 100 MHz for both
 > controllers. Cycle counts are a property of the scheduler; megabytes per
-> second are not. This core reaches 104.8 MHz and the core it replaces reaches
-> 115, so the ratios hold at 100 MHz and below and stop holding above it. A
-> system already running Intel's controller above 104.8 MHz cannot substitute
+> second are not. This core reaches 102.1 MHz and the core it replaces reaches
+> 113.5, so the ratios hold at 100 MHz and below and stop holding above it. A
+> system already running Intel's controller above 102.1 MHz cannot substitute
 > this one without lowering its clock.
 
 The critical path is the loop from the registered command-buffer head, through

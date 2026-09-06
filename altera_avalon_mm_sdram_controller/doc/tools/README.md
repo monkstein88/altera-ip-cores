@@ -6,6 +6,7 @@
 | `check_facts.py` | Re-derives every number in both documents and the core README from the RTL, the `_hw.tcl` and the preset, and fails if any has drifted |
 | `diagrams/build_figures.py` | Draws the four block diagrams as SVG |
 | `diagrams/svg_lib.py` | The drawing library, shared with the firewall cores' diagrams |
+| `measure_fit.sh` | Fits both controllers standalone in Quartus and prints the "Cost and speed" table: logic elements, registers and f_MAX, median and range over five fitter seeds |
 
 ## Rebuilding
 
@@ -53,6 +54,27 @@ wrong rather than unlucky:
   *other* core's example genuinely did measure on a board. A check that fails
   on correct prose is one somebody deletes, so it is now scoped to claims about
   this core.
+
+## Measuring
+
+```bash
+./doc/tools/measure_fit.sh           # both cores, five seeds each
+SEEDS=1 ./doc/tools/measure_fit.sh custom
+```
+
+`check_facts.py` deliberately does **not** verify measured results — throughput,
+f_MAX and board pass counts come from hardware and from a fitter, and a checker
+that pretended to derive them would be theatre. That is the right call, but it
+leaves a gap: nothing notices when the RTL changes underneath a published
+measurement, and that is exactly what happened. The three numbers in "Cost and
+speed" were taken once, by hand, in a Quartus project that was never checked in;
+after `f5f735c` changed the RTL they described a controller this repository no
+longer contained, and they could not be re-derived because nobody had the
+project.
+
+The answer to a measurement a checker cannot verify is not to fake the check.
+It is to make the measurement cheap enough to repeat, and to say which file it
+read. Needs Quartus; takes a few minutes.
 
 ## Why Markdown and SVG
 

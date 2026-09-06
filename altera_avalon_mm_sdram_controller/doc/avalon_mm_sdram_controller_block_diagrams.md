@@ -122,6 +122,14 @@ settled**. A first attempt at the row match compared against the selected
 entry instead, which put the equality downstream of the whole priority chain
 and cost 6 MHz rather than gaining any.
 
+Those figures — 83, 101 and 104.8 MHz — are single-seed measurements taken as
+each change was made, each against its own baseline on the same day. They are
+a record of what the two registers bought, not the current speed of the core:
+that is 102.1 MHz, the median of five fitter seeds on the RTL at HEAD, and the
+seed spread alone is wider than the 6 MHz this paragraph attributes to a
+misplaced comparison. See §7.4 of the user guide, and
+`doc/tools/measure_fit.sh`.
+
 **Scheduler.** One decision per cycle, in priority order:
 
 | Condition | Command issued |

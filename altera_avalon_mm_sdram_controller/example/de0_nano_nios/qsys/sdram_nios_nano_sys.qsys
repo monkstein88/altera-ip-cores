@@ -379,6 +379,7 @@
   <parameter name="T_RP_NS" value="20.0" />
   <parameter name="T_RRD_NS" value="14.0" />
   <parameter name="T_WR_NS" value="14.0" />
+  <parameter name="WR_TURNAROUND_EXTRA" value="0" />
  </module>
  <module
    name="sysid"

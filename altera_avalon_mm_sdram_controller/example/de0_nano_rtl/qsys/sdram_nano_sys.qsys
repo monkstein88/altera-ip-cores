@@ -84,6 +84,7 @@
   <parameter name="T_RP_NS" value="20.0" />
   <parameter name="T_RRD_NS" value="14.0" />
   <parameter name="T_WR_NS" value="14.0" />
+  <parameter name="WR_TURNAROUND_EXTRA" value="0" />
  </module>
  <connection kind="clock" version="18.1" start="clk.clk" end="sdram.clk" />
  <connection kind="reset" version="18.1" start="clk.clk_reset" end="sdram.reset" />
