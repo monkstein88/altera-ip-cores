@@ -109,3 +109,17 @@ thing to keep in step. A table should be a table.
 **The explanatory notes.** They used to be baked into each figure as a block of
 small text. They are prose in the documents now, where they can be edited,
 searched, and read at a sensible size.
+
+## Links to other files, in a PDF
+
+A markdown link to another file in the repository — `../README.md`, a companion
+document — is rendered as **plain text** in the PDF, not as a hyperlink.
+In-document anchors are unaffected; the table of contents still works.
+
+WeasyPrint resolves relative links against the base URL, which has to be the
+doc directory or no figure would load, so such a link would otherwise be baked
+in as `file:///home/<whoever>/.../README.md`. That publishes the build
+machine's directory layout, is dead on every other machine, and makes the PDF
+depend on where it was built — so the same source gives different bytes in two
+checkouts and nothing can compare them. Two PDFs in this repository had
+absolute paths in them before this was fixed.

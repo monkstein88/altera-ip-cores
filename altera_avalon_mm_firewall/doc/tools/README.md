@@ -107,3 +107,17 @@ measured-result checks are skipped):
 Tried it on the sibling core; it is how the staleness described above happened.
 Markdown renders on GitHub, diffs in review, and can be read by a checker.
 The PDF is the deliverable; the Markdown is the source of truth.
+
+## Links to other files, in a PDF
+
+A markdown link to another file in the repository — `../README.md`, a companion
+document — is rendered as **plain text** in the PDF, not as a hyperlink.
+In-document anchors are unaffected; the table of contents still works.
+
+WeasyPrint resolves relative links against the base URL, which has to be the
+doc directory or no figure would load, so such a link would otherwise be baked
+in as `file:///home/<whoever>/.../README.md`. That publishes the build
+machine's directory layout, is dead on every other machine, and makes the PDF
+depend on where it was built — so the same source gives different bytes in two
+checkouts and nothing can compare them. Two PDFs in this repository had
+absolute paths in them before this was fixed.

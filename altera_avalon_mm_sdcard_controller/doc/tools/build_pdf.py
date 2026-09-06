@@ -181,6 +181,39 @@ def is_wide(img_tag):
         return False
 
 
+# -----------------------------------------------------------------------------
+# Links to other files in the repository
+# -----------------------------------------------------------------------------
+# WeasyPrint resolves every relative href against base_url, and base_url has to
+# be the doc directory or no figure would load. The consequence is that a link
+# like ../README.md#what-is-left is baked into the PDF as
+#
+#   file:///home/<whoever>/<wherever>/altera-ip-cores/.../README.md#what-is-left
+#
+# which is three separate faults: it publishes the build machine's directory
+# layout, it is a dead link on every machine but that one, and it makes the PDF
+# depend on WHERE it was built, so the same source produces different bytes in
+# two checkouts and nothing can compare them.
+#
+# It is not hypothetical. The AXI4-Lite block-diagram PDF has carried an
+# absolute path since 92b2461, and the SDRAM user guide picked one up the first
+# time it was rebuilt after gaining such a link - the PDF before that was
+# simply stale, which is how it went unnoticed.
+#
+# So a link to a local file becomes plain text: the sentence still names the
+# document it is pointing at, which is all a printed page could offer anyway.
+# In-document anchors (#section) are untouched, because those are what the
+# table of contents is made of, and http/https/mailto are left alone.
+# -----------------------------------------------------------------------------
+LOCAL_HREF = re.compile(
+    r'<a\s+[^>]*href="(?!https?:|mailto:|#)[^"]*"[^>]*>(.*?)</a>',
+    re.S | re.I)
+
+
+def deref_local_links(html_body):
+    return LOCAL_HREF.sub(r"\1", html_body)
+
+
 def build_toc(html_text):
     """Number-free TOC built from the h1/h2 already in the document.
 
@@ -365,6 +398,7 @@ def build(key):
     body = markdown.markdown(
         body_md, extensions=["tables", "fenced_code", "attr_list", "toc"])
     body = captions(body)
+    body = deref_local_links(body)
     toc, body = build_toc(body)
 
     title_page = f"""
