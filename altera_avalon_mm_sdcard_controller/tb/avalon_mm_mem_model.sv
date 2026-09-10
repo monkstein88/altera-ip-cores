@@ -17,7 +17,8 @@ module avalon_mm_mem_model #(
     parameter int unsigned ADDR_WIDTH     = 32,
     parameter int unsigned BURST_WIDTH    = 8,
     parameter int unsigned MAX_WAIT       = 0,   // wait states per command
-    parameter int unsigned READ_LATENCY   = 2    // cycles before readdatavalid
+    parameter int unsigned READ_LATENCY   = 2,   // cycles before readdatavalid
+    parameter bit          LEAD_STALL     = 1'b1 // stall the FIRST beat too
 ) (
     input  logic                      clk,
     input  logic                      reset_n,
@@ -58,7 +59,33 @@ module avalon_mm_mem_model #(
     logic [31:0] dl_data [0:7];
     logic        dl_valid [0:7];
 
-    always_comb waitrequest = (wait_cnt != 0);
+    // MAX_WAIT stalls the beats AFTER one has been accepted, which is enough to
+    // backpressure a write burst but never a read command.
+    //
+    // A read burst presents `read` for exactly one accepted cycle - the master
+    // issues one command and then collects readdatavalid beats - so a model
+    // that is always ready when the command arrives never asserts waitrequest
+    // while `read` is high. The master's obligation to hold address and
+    // burstcount across a stalled read command then goes completely untested,
+    // and the write direction hides it because a burst has later beats to
+    // stall. Questa's non-vacuity counts are what surfaced this: the read-side
+    // assertion had 0 real passes against 765k attempts while its write-side
+    // twin had 254.
+    //
+    // So stall the FIRST cycle of every command as well. Doing it on the
+    // command's leading edge rather than periodically is deliberate: simulation
+    // here is deterministic, so a periodic stall either always coincides with
+    // the read command or never does, and "never" is what we already had.
+    logic cmd_d;
+    always_ff @(posedge clk or negedge reset_n) begin
+        if (!reset_n) cmd_d <= 1'b0;
+        else          cmd_d <= (read || write);
+    end
+
+    logic lead_stall;
+    always_comb lead_stall = LEAD_STALL && (read || write) && !cmd_d;
+
+    always_comb waitrequest = (wait_cnt != 0) || lead_stall;
     always_comb response    = 2'b00;
 
     always_ff @(posedge clk or negedge reset_n) begin
@@ -83,7 +110,7 @@ module avalon_mm_mem_model #(
             // ---- command acceptance ----
             if (wait_cnt != 0) begin
                 wait_cnt <= wait_cnt - 1;
-            end else begin
+            end else if (!lead_stall) begin
 
                 if (write) begin
                     if (wr_left == 0) begin

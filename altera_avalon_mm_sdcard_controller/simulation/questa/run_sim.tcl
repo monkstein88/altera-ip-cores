@@ -28,23 +28,66 @@
 #                     vacuously has verified nothing while reporting green, and
 #                     no other flow here can tell you which ones those are.
 #
-# NOT YET RUN
-# -----------
-# This file is written to the pattern of the sibling cores' flows and has NOT
-# been executed against a Questa installation. Treat the first run as part of
-# the work, not as a formality. The SDRAM controller's equivalent file records
-# what its own first run turned up, and both faults are worth knowing about
-# here:
+# WHAT THE FIRST RUN FOUND
+# -----------------------
+# It was run, against Questa 2024.1, and the header's own warning was right:
+# treating the first run as part of the work rather than a formality turned up
+# four faults, three of them in this file and one in the RTL.
 #
-#   * `write report -assertions` is not a Questa command. Assertion pass and
-#     vacuity counts come from `coverage report -assert`, which is what is used
-#     below.
-#   * Its RTL would not elaborate at all, because a variable was written by both
-#     an initial block and an always_ff - forbidden by IEEE 1800-2017 9.2.2.4,
-#     rejected by vopt, and linted clean by Verilator with -Wall and nothing
-#     waived. That specific trap does not apply here: this core's RTL contains
-#     no initial blocks at all. It is the class of fault to expect, though -
-#     something Verilator accepts and vopt does not.
+#   * The RTL would not compile. `cmd_byte_val` was consumed in u_crc7's port
+#     connection some fifty lines before it was declared; with no
+#     `default_nettype none` that use creates an implicit 1-bit net and the
+#     later `logic [7:0]` is a duplicate declaration. vlog rejected it outright.
+#     Verilator resolved it to the 8-bit signal and linted clean under -Wall.
+#     This is the same class of fault the SDRAM controller hit - something
+#     Verilator accepts and vopt does not - and it had a sharper edge here: a
+#     tool taking the implicit-net reading would have fed CRC7 one bit of every
+#     command frame instead of eight.
+#
+#   * NONE OF THE ASSERTIONS WERE RUNNING. The binds sit at compilation-unit
+#     scope, so without -mfcu -cuname vlog compiled the four SVA modules, warned
+#     once (vlog-2650) and elaborated none of them. Seven configurations passed
+#     reporting "no assertion failures" because there were no assertions. The
+#     assertion report was zero bytes and nothing looked wrong.
+#
+#   * So the verdict now REQUIRES the assertions by name before it may report a
+#     pass - see check_assertions_reported. Absence of a failure is not
+#     evidence; presence of the assertion is.
+#
+#     That gate was then fault-injected against itself, the same way
+#     verification/check_assertions_fire.sh treats the assertions: drop the
+#     -mfcu -cuname above and the sva_cu top below, and the run reproduces the
+#     original fault exactly - seven configurations printing *** PASS ***, a
+#     zero-byte assertion report, and no complaint from any simulator. The gate
+#     reports RESULT: FAILED and names all 24 missing assertions. A gate that
+#     has not been shown to fail is worth no more than the assertions it is
+#     there to protect.
+#
+#   * `write report -assertions` is indeed not a Questa command; pass and
+#     vacuity counts come from `coverage report -assert`, which additionally
+#     needs vsim -assertcounts. Without it the report is empty even once the
+#     binds elaborate.
+#
+# And then the non-vacuity data earned its keep immediately, which is the whole
+# argument for this flow existing:
+#
+#   * a_no_push_when_full had a consequent of literal 1'b1. It could not fail
+#     whatever the design did - its name promised it caught a push into a full
+#     FIFO and its body permitted exactly that. Both simulators had always
+#     called it green. Repaired to `mem_push |-> !mem_full`, it now passes for a
+#     real reason 258 times, so the property does hold.
+#
+#   * a_waitrequest_holds_read never once passed non-vacuously - 0 against 765k
+#     attempts - while its write-side twin passed 254 times. The memory model
+#     stalled only AFTER accepting a command, and a read burst presents `read`
+#     for exactly one accepted cycle, so waitrequest was never asserted while
+#     read was high. The model now stalls the first beat of every command too.
+#
+# STILL OPEN: the sequencer reaches all 20 states but only 32 of its 58
+# transitions. The gaps are the soft-reset escape from nearly every state, and
+# the timeout paths into S_ABORT from S_PRE_BUSY, S_PRE_BUSY_W, S_R1B_BUSY,
+# S_RD_DATA, S_WR_DATA and S_WR_CRC. Those branches exist and are lint-clean and
+# nothing in the regression takes them.
 #
 # The sweep below matches simulation/verilator/run_sim.sh exactly, so a
 # disagreement between the two flows is a real disagreement between simulators
@@ -75,7 +118,15 @@ foreach f [list ${RTL}_pkg.sv ${RTL}_crc.sv ${RTL}_clkgen.sv ${RTL}_spi_phy.sv \
 # inflates the totals with numbers nobody should act on.
 vlog -sv +acc ../../tb/spi_card_model.sv
 vlog -sv +acc ../../tb/avalon_mm_mem_model.sv
-vlog -sv +acc ../../tb/avalon_mm_sdcard_controller_sva.sv
+# -mfcu -cuname is what makes the BINDS take effect, and it is not optional.
+# The bind statements sit at compilation-unit scope, and without a named unit
+# vlog compiles the four SVA modules, warns once (vlog-2650), and elaborates
+# none of them - so every assertion is silently absent and the run reports "no
+# assertion failures" because there were no assertions. That is precisely the
+# failure this flow exists to detect, and it went unnoticed until the assertion
+# report came back empty. `sva_cu` is then named as a top alongside each
+# testbench below.
+vlog -sv +acc -mfcu -cuname sva_cu ../../tb/avalon_mm_sdcard_controller_sva.sv
 vlog -sv +acc ../../tb/avalon_mm_sdcard_controller_spi_phy_tb.sv
 vlog -sv +acc ../../tb/avalon_mm_sdcard_controller_fifo_tb.sv
 vlog -sv +acc ../../tb/avalon_mm_sdcard_controller_tb.sv
@@ -86,8 +137,15 @@ if {[file exists assert_report.txt]} { file delete -force assert_report.txt }
 # One run of a testbench that takes no parameters.
 # -----------------------------------------------------------------------------
 proc run_unit {top tag ucdb} {
-    vopt $top -o opt_$tag +acc -cover sbceft -assertdebug
-    vsim opt_$tag -coverage -assertdebug
+    # sva_cu carries binds for all four RTL modules; a unit testbench contains
+    # only one of them, so the other three bind targets are legitimately absent.
+    # vopt-10717 and vsim-12036 are those unresolved references. Suppressing
+    # them is safe ONLY because check_assertions_reported below then requires
+    # the assertions that SHOULD be there to appear in the report - absence of
+    # an error is not evidence, presence of the assertion is.
+    vopt $top sva_cu -o opt_$tag +acc -cover sbceft -assertdebug \
+        -suppress vopt-10717
+    vsim opt_$tag -coverage -assertdebug -assertcounts -suppress vsim-12036
     onfinish stop
     onbreak {resume}
     run -all
@@ -116,12 +174,16 @@ proc run_unit {top tag ucdb} {
 # -----------------------------------------------------------------------------
 proc run_core {dma hicap fifob burstw tag ucdb} {
     set T /avalon_mm_sdcard_controller_tb
-    vopt avalon_mm_sdcard_controller_tb -o opt_$tag +acc -cover sbceft -assertdebug \
+    # The pio configuration builds with USE_DMA=0, where the DMA is not
+    # instantiated at all, so its bind target genuinely does not exist - hence
+    # the same suppression as run_unit.
+    vopt avalon_mm_sdcard_controller_tb sva_cu -o opt_$tag +acc -cover sbceft -assertdebug \
+        -suppress vopt-10717 \
         -G$T/TB_USE_DMA=$dma \
         -G$T/TB_HIGH_CAPACITY=$hicap \
         -G$T/TB_FIFO_B=$fifob \
         -G$T/TB_BURST_W=$burstw
-    vsim opt_$tag -coverage -assertdebug
+    vsim opt_$tag -coverage -assertdebug -assertcounts -suppress vsim-12036
     onfinish stop
     onbreak {resume}
     run -all
@@ -150,6 +212,87 @@ vcover report -details -output coverage_report.txt coverage.ucdb
 # ---- pass/fail, decided from the transcript rather than from exit codes -----
 # A simulator that ran seven configurations and printed six "*** PASS ***" has
 # failed one of them, and will still exit 0.
+# The assertions are the whole reason this flow exists, and they are the one
+# thing here that can go missing without anything looking wrong: a bind that
+# does not elaborate produces no error, no failure and no assertion - just a
+# green run over an empty report. So the report is required to contain the
+# assertions, by name, before the run may be called a pass.
+#
+# Counting is not enough on its own either. An assertion whose Pass count is
+# zero was never evaluated for a real reason - either its antecedent never held
+# in any configuration, or its consequent is a tautology - and it has verified
+# nothing however green it looks. Those are listed rather than failed, because
+# some antecedents are genuinely unreachable in a given configuration and only
+# the merged view across the sweep is meaningful.
+proc check_assertions_reported {} {
+    if {![file exists assert_report.txt]} {
+        puts "ASSERTIONS: assert_report.txt was never written"
+        return 0
+    }
+    set fh [open assert_report.txt r]
+    set txt [read $fh]
+    close $fh
+
+    # Every assertion in tb/avalon_mm_sdcard_controller_sva.sv, by name.
+    set expected {
+        a_burstcount_nonzero a_byte_port_follows_direction a_byte_read_follows_direction
+        a_clock_parks_low a_cs_only_while_busy a_done_only_while_busy
+        a_fifo_one_direction a_idle_means_empty a_no_invented_bytes
+        a_no_pop_when_empty a_no_push_when_full a_no_spontaneous_start
+        a_no_zero_byteenable_read a_pending_is_busy a_pop_matches_accept
+        a_pop_only_when_nonempty a_queued_byte_not_dropped a_request_never_dropped
+        a_send_state_never_idles a_start_only_when_phy_idle a_tx_we_needs_ready
+        a_waitrequest_holds_command a_waitrequest_holds_read a_write_has_data
+    }
+
+    set missing {}
+    foreach a $expected {
+        if {[string first $a $txt] < 0} { lappend missing $a }
+    }
+    if {[llength $missing] > 0} {
+        puts "ASSERTIONS: [llength $missing] never appeared in the report:"
+        foreach a $missing { puts "    $a" }
+        return 0
+    }
+
+    # Report, but do not fail on, assertions that never passed for a real
+    # reason. The report gives a name line, a file(line) line, then a counts
+    # line: Failure Pass Vacuous Disable Attempt ... - so the name is carried
+    # forward until its counts arrive. Names recur across the report's two
+    # sections and across the merged configurations, so the BEST pass count
+    # seen for each name is the one that matters: an antecedent unreachable in
+    # one configuration may well be exercised in another.
+    array set best {}
+    set pending ""
+    foreach line [split $txt "\n"] {
+        if {[regexp {/(a_\w+)\s*$} $line -> nm]} {
+            set pending $nm
+            if {![info exists best($nm)]} { set best($nm) 0 }
+        } elseif {$pending ne ""} {
+            if {[regexp {^\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)} \
+                        $line -> nfail npass nvac ndis natt]} {
+                if {$npass > $best($pending)} { set best($pending) $npass }
+                set pending ""
+            }
+        }
+    }
+
+    set never {}
+    foreach a $expected {
+        if {[info exists best($a)] && $best($a) == 0} { lappend never $a }
+    }
+
+    puts "ASSERTIONS: all [llength $expected] present in the report"
+    if {[llength $never] > 0} {
+        puts "ASSERTIONS: [llength $never] never passed non-vacuously across the whole sweep -"
+        puts "            each has verified nothing, however green the run looks:"
+        foreach a $never { puts "    $a" }
+    } else {
+        puts "ASSERTIONS: every one passed non-vacuously somewhere in the sweep"
+    }
+    return 1
+}
+
 proc run_passed {} {
     if {![file exists run.log]} { return 0 }
     set fh [open run.log r]
@@ -172,11 +315,25 @@ proc run_passed {} {
     return 1
 }
 
-if {[run_passed]} {
-    puts "RESULT: PASSED - all seven configurations, no assertion failures,"
-    puts "                 no protocol violations at the card model"
-} else {
-    puts "RESULT: FAILED - see run.log"
+# Wrapped in a proc so the verdict does not echo the procs' return values into
+# the transcript ahead of the lines they belong to.
+proc report_result {} {
+    set sim_ok    [run_passed]
+    set assert_ok [check_assertions_reported]
+
+    if {$sim_ok && $assert_ok} {
+        puts "RESULT: PASSED - all seven configurations, no assertion failures,"
+        puts "                 no protocol violations at the card model"
+    } elseif {$sim_ok && !$assert_ok} {
+        # Deliberately NOT a pass. The simulations agreeing with each other
+        # while the assertions were absent is the exact shape of a green run
+        # that checked less than it claimed.
+        puts "RESULT: FAILED - the simulations passed but the assertions did not"
+        puts "                 all run; see the ASSERTIONS lines above"
+    } else {
+        puts "RESULT: FAILED - see run.log"
+    }
 }
+report_result
 
 quit -f

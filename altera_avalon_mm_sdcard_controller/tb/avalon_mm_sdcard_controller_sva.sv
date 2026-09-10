@@ -229,8 +229,14 @@ module avalon_mm_sdcard_controller_fifo_sva (
 
     default disable iff (!reset_n);
 
+    // The consequent here was once the literal constant 1'b1, which made this
+    // assertion incapable of failing whatever the design did - its name
+    // promised it caught a push into a full FIFO and its body permitted
+    // exactly that. Both simulators reported it green for the same reason:
+    // a tautology passes. Only Questa's non-vacuity counts exposed it - a pass
+    // count of zero, every single attempt in the sweep vacuous.
     a_no_push_when_full:
-        assert property (@(posedge clk) (mem_push && mem_full) |-> 1'b1);
+        assert property (@(posedge clk) mem_push |-> !mem_full);
     a_no_pop_when_empty:
         assert property (@(posedge clk) mem_pop |-> !mem_empty);
 

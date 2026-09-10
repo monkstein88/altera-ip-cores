@@ -119,7 +119,7 @@ except a cycle count catches it, which is why the count is an assertion.
          sd_clk / mosi / miso / cs_n
 ```
 
-Nine RTL files, 3127 lines, one per box plus the package and the top level.
+Nine RTL files, 3136 lines, one per box plus the package and the top level.
 Single clock domain throughout — no PLL, no CDC, nothing that behaves
 differently in simulation than on hardware.
 
@@ -371,6 +371,43 @@ plus the command and its response — not controller stalls.
 The same measurement on a shifter that idles one clock per byte would read
 0.111 bytes/clock, and every functional check would still pass.
 
+### What Questa added, and what it found
+
+Everything above runs on open source tools. `simulation/questa/run_sim.tcl`
+runs the same seven configurations under Questa for the two things no other
+flow here provides: coverage, and **non-vacuity** — how many times each
+assertion passed for a real reason rather than because its antecedent never
+held.
+
+Running it for the first time was not a formality. It found four faults, and
+the most serious was in the flow itself:
+
+- **None of the assertions had ever run.** The binds sit at compilation-unit
+  scope, so without `-mfcu -cuname` the four SVA modules compiled, `vlog`
+  warned once, and none of them elaborated. Seven configurations passed
+  reporting no assertion failures because there were no assertions, and the
+  assertion report was zero bytes. The verdict now requires every assertion by
+  name before it may report a pass — absence of a failure is not evidence.
+- **The RTL would not compile at all.** A signal was consumed in a port
+  connection fifty lines before it was declared, which makes it an implicit
+  one-bit net and the real declaration a duplicate. Verilator resolved it to
+  the full eight bits and linted clean under `-Wall`.
+- **One assertion could never fail.** `a_no_push_when_full` had a consequent of
+  literal `1'b1` — its name promised it caught a push into a full buffer and
+  its body permitted exactly that. Repaired, it passes for a real reason and
+  the property does hold.
+- **The read side of the memory backpressure was never exercised.** A read
+  burst presents its command for exactly one accepted cycle, and the memory
+  model only stalled *after* accepting one, so `waitrequest` was never asserted
+  while a read was outstanding. Its write-side twin passed 254 times and hid
+  it. The model now stalls the first beat of every command.
+
+What it leaves open is a genuine gap rather than a defect. The sequencer
+reaches **all 20 of its states but only 32 of its 58 transitions**. The
+uncovered ones are the soft-reset escape from nearly every state, and the
+timeout paths into `S_ABORT` from six states. Those branches are written, they
+are lint-clean, and nothing in the regression takes them.
+
 ### Verification status — what is and is not proven
 
 **Proven in simulation:** the SPI link layer against a specification-derived
@@ -406,10 +443,10 @@ driver compiles.
 ## Layout
 
 ```
-rtl/          nine SystemVerilog files, 3127 lines
+rtl/          nine SystemVerilog files, 3136 lines
 tb/           card model, memory model, three testbenches, bound SVA
 simulation/verilator/run_sim.sh
-simulation/questa/run_sim.tcl   coverage and non-vacuity — NOT yet run
+simulation/questa/run_sim.tcl   coverage and non-vacuity
 verification/ hw.tcl checker, driver compile check, assertion fault
               injection, wave capture, design-time Python models
 HAL/, inc/    Nios II driver and the standalone register header

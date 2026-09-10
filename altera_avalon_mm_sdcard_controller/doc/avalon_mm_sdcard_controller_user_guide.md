@@ -559,11 +559,24 @@ The script records that rather than swapping in a fault that worked.
 `simulation/questa/run_sim.tcl` runs the same sweep with coverage and
 non-vacuity reporting.
 
-**It has not been executed.** Coverage and non-vacuity are the two things no
-other flow here provides, and they are worth having — but treat the first run as
-part of the work, not a formality. The SDRAM controller's equivalent file records two faults its own
-first run found, one of them RTL that Verilator linted clean and `vopt` rejected
-outright.
+**It has been run**, against Questa 2024.1, and all seven configurations pass
+with every assertion present and passing non-vacuously somewhere in the sweep.
+Treating that first run as part of the work rather than a formality was the
+right call: it found four faults, and the worst was that **none of the
+assertions had ever been running**. The binds sit at compilation-unit scope, so
+without `-mfcu -cuname` the SVA modules compiled and none of them elaborated —
+seven configurations reporting "no assertion failures" because there were no
+assertions. The verdict now requires each assertion by name before it may
+report a pass.
+
+It also found RTL that `vopt` rejected outright and Verilator linted clean, one
+assertion whose consequent was the literal `1'b1` and which therefore could
+never fail, and a memory model that never backpressured a read command.
+
+What it leaves open is coverage rather than correctness: the sequencer reaches
+all 20 of its states but only 32 of its 58 transitions. The uncovered ones are
+the soft-reset escape from nearly every state and the timeout paths into
+`S_ABORT`.
 
 ---
 

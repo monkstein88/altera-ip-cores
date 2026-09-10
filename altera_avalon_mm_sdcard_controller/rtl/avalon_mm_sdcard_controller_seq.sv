@@ -218,6 +218,15 @@ module avalon_mm_sdcard_controller_seq
     logic tx_accept;
     always_comb tx_accept = phy_tx_we;
 
+    // Declared HERE, ahead of u_crc7 below, and not beside the always_comb that
+    // drives it further down. A port connection to an undeclared identifier
+    // creates an implicit 1-bit net (there is no `default_nettype none` here),
+    // so a later `logic [7:0]` declaration is a duplicate in the same scope:
+    // Questa's vlog rejects it outright, and a tool that instead took the
+    // implicit-net reading would wire eight bits of command frame down to one
+    // and CRC7 every command incorrectly.
+    logic [7:0] cmd_byte_val;
+
     avalon_mm_sdcard_controller_crc7 u_crc7 (
         .clk (clk), .reset_n (reset_n),
         .clear (crc7_clear), .en (crc7_en), .byte_in (cmd_byte_val),
@@ -268,8 +277,8 @@ module avalon_mm_sdcard_controller_seq
     always_comb card_busy = card_busy_q;
 
     // ---- command byte multiplexer -------------------------------------------
-    // Indexed by the QUEUE counter, not the completion counter.
-    logic [7:0] cmd_byte_val;
+    // Indexed by the QUEUE counter, not the completion counter. Declared above,
+    // with the CRC engines that consume it.
     always_comb begin
         unique case (q_cnt[2:0])
             3'd0:    cmd_byte_val = {CMD_FRAME_START, index_q};

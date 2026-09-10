@@ -29,7 +29,10 @@ run.log
 modelsim.ini
 vsim.dbg
 coverage_report.txt
+assert_report.txt
 covhtmlreport/
+# Questa scratch files, named with the pid of the run that made them.
+etch[0-9]*
 
 # Verilator
 obj_dir/

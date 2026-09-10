@@ -351,12 +351,30 @@ for doc, label in ((UG, "user guide"), (BD, "block diagrams")):
     check(f"{label} does not claim hardware verification",
           "verified on hardware" not in doc.lower())
 
-# --- 9.9 the Questa flow must still describe itself as unrun ---
+# --- 9.9 the Questa flow has been run, and says what it found ---
+#
+# This pair used to assert the opposite - that the flow still described itself
+# as unrun. It has now been executed, so the claim to pin is the new one. The
+# point of pinning it either way is the same: the documents must not drift from
+# whether the flow has actually been through a simulator.
 QUESTA = rd("simulation/questa/run_sim.tcl")
-check("the Questa flow still says it has not been executed",
-      "NOT YET RUN" in QUESTA or "has NOT been executed" in QUESTA)
-check("the user guide says the Questa flow is untested",
-      "has not been executed" in UG.lower())
+check("the Questa flow no longer claims to be unrun",
+      "NOT YET RUN" not in QUESTA and "has NOT been executed" not in QUESTA)
+check("the Questa flow records what its first run found",
+      "WHAT THE FIRST RUN FOUND" in QUESTA)
+check("the user guide no longer says the Questa flow is unexecuted",
+      "it has not been executed" not in UG.lower())
+check("the user guide records that the Questa flow has been run",
+      "has been run" in UG.lower())
+
+# The two faults worth refusing to let drift back out of the documents: the
+# assertions having been absent entirely, and the transition coverage that
+# remains open. Both are easy to quietly drop in an edit, and both are the
+# reason this flow exists.
+check("the README records that the assertions were not running",
+      "never run" in README.lower() or "had ever run" in README.lower())
+check("the README records the sequencer transition coverage gap",
+      "58 transitions" in README)
 
 # ---------------------------------------------------------------------------
 print()
