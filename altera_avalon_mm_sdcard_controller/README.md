@@ -11,7 +11,7 @@ driver the BSP picks up by itself.
 
 > **Status: simulation only. This core has never been on a board.**
 >
-> It passes 57 self-checking assertions across three testbenches against a
+> It passes 75 self-checking assertions across three testbenches against a
 > behavioural SD card model — with the full-core suite run in five
 > configurations — plus bound SVA assertions proven live by fault injection,
 > 22 checks on the Platform Designer component and three on the HAL driver.
@@ -119,7 +119,7 @@ except a cycle count catches it, which is why the count is an assertion.
          sd_clk / mosi / miso / cs_n
 ```
 
-Nine RTL files, 3136 lines, one per box plus the package and the top level.
+Nine RTL files, 3153 lines, one per box plus the package and the top level.
 Single clock domain throughout — no PLL, no CDC, nothing that behaves
 differently in simulation than on hardware.
 
@@ -308,7 +308,7 @@ full Quartus toolchain tries to build a project.
 | --- | --- | --- |
 | `phy` | 12 | Exactly 8.00 SPI clocks per byte at every divisor; bit-exact loopback; the `SAMPLE_DLY` bound |
 | `fifo` | 5 | Byte↔word round trip both directions, little-endian order, partial-word flush |
-| `core` | 40 | Identification, single and multi-block both directions, CSD/CID, every card-reported failure, `ERR_INFO` contents, reset domains, throughput floor, Avalon conformance |
+| `core` | 58 | Identification, single and multi-block both directions, CSD/CID, every card-reported failure, `ERR_INFO` contents, every per-state timeout escape, soft reset from inside a transfer, throughput floor, Avalon conformance |
 | `check_hw_tcl.tcl` | 22 | The component executes; parameters and ports exist; validation rejects exactly the bad configurations |
 | `check_driver_builds.sh` | 3 | The driver compiles clean under `-Wall -Wextra`; CSD capacity arithmetic for both structure versions; the register header stands alone |
 | `check_assertions_fire.sh` | 3 faults | Each injected into a scratch copy and required to be caught by the assertion meant to catch it |
@@ -402,11 +402,30 @@ the most serious was in the flow itself:
   while a read was outstanding. Its write-side twin passed 254 times and hid
   it. The model now stalls the first beat of every command.
 
-What it leaves open is a genuine gap rather than a defect. The sequencer
-reaches **all 20 of its states but only 32 of its 58 transitions**. The
-uncovered ones are the soft-reset escape from nearly every state, and the
-timeout paths into `S_ABORT` from six states. Those branches are written, they
-are lint-clean, and nothing in the regression takes them.
+What it left open has since been worked through. The sequencer reaches **all 20
+of its states and 40 of its 58 transitions**, and the 18 that remain are
+accounted for rather than merely unreached:
+
+- **Sixteen are one statement.** `if (srst) state <= S_IDLE` is counted once per
+  source state. Three of them are exercised, taking a reset mid-command,
+  mid-read and mid-write, which is where a driver actually uses one and where
+  the core has to come back usable. Reaching the other thirteen means thirteen
+  precisely-timed resets to exercise a single line, which is coverage
+  arithmetic rather than verification.
+- **Two are defensive and structurally unreachable.** The timeouts in
+  `S_RD_DATA` and `S_WR_CRC` cannot fire as the sequencer is wired. A receive
+  state free-runs the shifter, so a byte lands every eight SPI clocks and the
+  no-progress counter is cleared before it can expire; and the CRC state's two
+  bytes come from a register with no buffer dependency, so it cannot be starved
+  at all. Both are kept, and both now say so at the branch, because the
+  guarantee each rests on lives in a different module.
+
+The four timeout escapes that **are** reachable are now tested, each checked for
+the `phase_e` it reports: busy before a command, busy between the blocks of a
+multi-block write, an R1b whose busy never lifts, and a write data phase starved
+of data. That last one is the sequel to a defect this core already had — the
+configuration sweep once found that neither data-streaming state checked its
+timeout at all — and until now nothing exercised the fix.
 
 ### Verification status — what is and is not proven
 
@@ -443,7 +462,7 @@ driver compiles.
 ## Layout
 
 ```
-rtl/          nine SystemVerilog files, 3136 lines
+rtl/          nine SystemVerilog files, 3153 lines
 tb/           card model, memory model, three testbenches, bound SVA
 simulation/verilator/run_sim.sh
 simulation/questa/run_sim.tcl   coverage and non-vacuity

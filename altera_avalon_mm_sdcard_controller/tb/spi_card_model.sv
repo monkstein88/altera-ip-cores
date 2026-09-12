@@ -135,7 +135,18 @@ module spi_card_model #(
     // -------------------------------------------------------------------------
     always @(negedge sd_clk or posedge sd_cs_n) begin
         if (sd_cs_n) begin
-            tx_byte <= 8'hFF;
+            // A card that is still programming does not stop being busy because
+            // it was deselected. §7.2.4's programming is internal, so on
+            // reselection the card resumes holding MISO low until it finishes.
+            //
+            // Resetting unconditionally to 0xFF made that busy invisible to the
+            // host's PRE-EMPTIVE check, which is the one place it is meant to be
+            // seen: the sequencer waits for busy immediately before the next
+            // command rather than after the previous one, and every reselection
+            // handed it a free 0xFF that said "ready". The whole mechanism was
+            // being tested against a card that could not express the condition
+            // it exists to absorb.
+            tx_byte <= (busy_bytes > 0) ? 8'h00 : 8'hFF;
             tx_bit  <= 3'd7;
         end else begin
             if (tx_bit == 3'd0) begin
@@ -484,6 +495,12 @@ module spi_card_model #(
         end
     endtask
 
+    // pstate is assigned with BLOCKING assignments throughout, including inside
+    // handle_command. That is deliberate and has to stay consistent: the task
+    // sets pstate itself for CMD24 and CMD25, so a nonblocking assignment
+    // anywhere else in this block would be applied afterwards and quietly undo
+    // it. Driving one variable both ways in a single block is the kind of thing
+    // that works until the day it does not.
     always @(posedge sd_clk) begin
         if (byte_done) begin
             unique case (pstate)
@@ -503,10 +520,35 @@ module spi_card_model #(
                 P_WAIT_WR_TOKEN: begin
                     if (rx_byte == 8'hFE || rx_byte == 8'hFC) begin
                         wr_buf.delete();
-                        pstate <= P_WR_DATA;
+                        pstate = P_WR_DATA;
                     end else if (rx_byte == 8'hFD) begin
                         busy_bytes = 2;
-                        pstate     <= P_CMD;
+                        pstate     = P_CMD;
+                    end else if ((cmd_buf.size() > 0) ||
+                                 (rx_byte[7:6] == 2'b01)) begin
+                        // §7.3.3.1: a multi-block write that FAILED is stopped
+                        // with CMD12, NOT with the stop-tran token - the
+                        // sequencer's own header says so, and its abort path
+                        // depends on the host being able to do it. So a command
+                        // frame is a legitimate thing to see here.
+                        //
+                        // Accepting only tokens left the card unresynchronisable
+                        // after any aborted multi-block write: every command
+                        // that followed was swallowed as if it were data, got no
+                        // response, and came back as a command timeout. Tests
+                        // downstream of such an abort were then all passing or
+                        // failing for reasons that had nothing to do with what
+                        // they meant to check.
+                        //
+                        // pstate is set BEFORE handle_command and with a
+                        // blocking assignment, so a command that wants its own
+                        // state - CMD24 and CMD25 do - still overrides it.
+                        cmd_buf.push_back(rx_byte);
+                        if (cmd_buf.size() == 6) begin
+                            pstate = P_CMD;
+                            handle_command(cmd_buf);
+                            cmd_buf.delete();
+                        end
                     end
                 end
 
@@ -514,20 +556,20 @@ module spi_card_model #(
                     wr_buf.push_back(rx_byte);
                     if (wr_buf.size() == int'(block_len)) begin
                         wr_count <= 0;
-                        pstate   <= P_WR_CRC;
+                        pstate   = P_WR_CRC;
                     end
                 end
 
                 P_WR_CRC: begin
                     if (wr_count == 1) begin
                         finish_write_block();
-                        pstate <= wr_multi ? P_WAIT_WR_TOKEN : P_CMD;
+                        pstate = wr_multi ? P_WAIT_WR_TOKEN : P_CMD;
                     end else begin
                         wr_count <= wr_count + 1;
                     end
                 end
 
-                default: pstate <= P_CMD;
+                default: pstate = P_CMD;
             endcase
 
             if (TRACE && (pstate == P_WAIT_WR_TOKEN) &&
@@ -556,6 +598,35 @@ module spi_card_model #(
     // -------------------------------------------------------------------------
     // Test hooks
     // -------------------------------------------------------------------------
+
+    // Put the protocol machine back to "waiting for a command", discarding any
+    // partially received block.
+    //
+    // This is a TESTBENCH utility, not card behaviour, and the distinction
+    // matters. A host that abandons a write part-way through a block leaves a
+    // real card still waiting for the rest of it, and no command can be issued
+    // until the block is completed or the card is power-cycled - the core's own
+    // data-path reset clears the controller, not the card. A test that
+    // deliberately starves a write therefore has to put the MODEL straight
+    // again, or every command after it is swallowed as write data.
+    task automatic resync();
+        begin
+            // tx_q matters as much as the receive side. A card interrupted
+            // part-way through sending a block still has the rest of it queued,
+            // and the next command's response then arrives behind all of it. The
+            // sequencer takes the first byte with bit 7 clear as R1, so a stale
+            // payload byte is read as a response - and a plausible one, which
+            // came back as a CRC or illegal-command error from a card that had
+            // reported neither.
+            tx_q.delete();
+            cmd_buf.delete();
+            wr_buf.delete();
+            wr_count = 0;
+            wr_multi = 1'b0;
+            pstate   = P_CMD;
+        end
+    endtask
+
     function automatic void preload(input int unsigned addr, input logic [7:0] d);
         card_mem[addr] = d;
     endfunction

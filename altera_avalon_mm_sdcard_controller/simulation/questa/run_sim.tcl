@@ -83,11 +83,11 @@
 #     for exactly one accepted cycle, so waitrequest was never asserted while
 #     read was high. The model now stalls the first beat of every command too.
 #
-# STILL OPEN: the sequencer reaches all 20 states but only 32 of its 58
-# transitions. The gaps are the soft-reset escape from nearly every state, and
-# the timeout paths into S_ABORT from S_PRE_BUSY, S_PRE_BUSY_W, S_R1B_BUSY,
-# S_RD_DATA, S_WR_DATA and S_WR_CRC. Those branches exist and are lint-clean and
-# nothing in the regression takes them.
+# TRANSITION COVERAGE: the sequencer reaches all 20 states and 40 of its 58
+# transitions. The 18 remaining are accounted for rather than unreached - 16 are
+# the single `if (srst)` statement counted once per source state, and two are
+# defensive timeouts that cannot fire as the sequencer is wired. The README's
+# verification section has the reasoning, and both branches say so in the RTL.
 #
 # The sweep below matches simulation/verilator/run_sim.sh exactly, so a
 # disagreement between the two flows is a real disagreement between simulators

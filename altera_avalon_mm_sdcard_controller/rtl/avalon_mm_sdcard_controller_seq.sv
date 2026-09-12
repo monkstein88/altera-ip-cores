@@ -729,6 +729,17 @@ module avalon_mm_sdcard_controller_seq
                     // until the PIO path was simulated: there, software feeding
                     // the buffer too slowly, or not at all, wedges the core with
                     // no recovery short of a soft reset.
+                    // The timeout below is DEFENSIVE and cannot fire as this
+                    // module is wired. S_RD_DATA is a receive state, so it
+                    // raises tx_idle and the shifter free-runs 0xFF - a tick
+                    // therefore arrives every byte and clears tmo, and a full
+                    // FIFO drops bytes rather than stalling. Questa's FSM
+                    // coverage reports the arc to S_ABORT as unreached for
+                    // exactly that reason, and no directed test can reach it
+                    // without artificially shrinking TIMEOUT mid-block. It stays
+                    // because the guarantee it rests on lives in another module:
+                    // if the shifter ever stopped free-running on receive, this
+                    // is the only thing between that and a wedged core.
                     S_RD_DATA: begin
                         if (tick) begin
                             tmo <= '0;
@@ -810,6 +821,12 @@ module avalon_mm_sdcard_controller_seq
                         end
                     end
 
+                    // Defensive for the same reason as S_RD_DATA, by a
+                    // different route: both bytes this state sends come from
+                    // crc16_tx_val, a register, with no FIFO dependency at all.
+                    // It cannot be starved, so the arc to S_ABORT is unreachable
+                    // and reported uncovered. Kept for symmetry with S_WR_DATA,
+                    // which CAN starve and does.
                     S_WR_CRC: begin
                         if (!tick && (tmo >= timeout)) begin
                             err_flags[E_DAT_TMO] <= 1'b1;

@@ -168,6 +168,22 @@ check("README's headline assertion count equals the sum of its own suite table",
       m is not None and int(m.group(1)) == sim_total,
       f"headline {m.group(1) if m else '?'}, table sums to {sim_total}")
 
+# The table above is checked against the README's own headline, which catches a
+# suite added without updating the total - but not a README that has drifted from
+# the testbenches themselves. Derive the counts from the sources too.
+#
+# Only `core` and `fifo` can be counted statically: every check in them is a
+# straight-line call, so one call is one check at run time. The phy testbench
+# sweeps divisors in a loop and runs its two checks six times over, so a static
+# count says 2 where the run says 12 - and a check that quietly compared those
+# would be worse than no check.
+for suite, path in (("core", "tb/avalon_mm_sdcard_controller_tb.sv"),
+                    ("fifo", "tb/avalon_mm_sdcard_controller_fifo_tb.sv")):
+    n = len(re.findall(r"^\s+check(?:_noerr)?\(", rd(path), re.M))
+    check(f"README's `{suite}` count matches that testbench's own checks",
+          suite_counts.get(suite) == n,
+          f"README {suite_counts.get(suite)}, source has {n}")
+
 # ---------------------------------------------------------------------------
 # 6. Throughput: the two documents must quote the same measurement
 # ---------------------------------------------------------------------------

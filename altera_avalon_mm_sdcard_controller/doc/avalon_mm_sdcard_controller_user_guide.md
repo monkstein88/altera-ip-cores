@@ -573,10 +573,12 @@ It also found RTL that `vopt` rejected outright and Verilator linted clean, one
 assertion whose consequent was the literal `1'b1` and which therefore could
 never fail, and a memory model that never backpressured a read command.
 
-What it leaves open is coverage rather than correctness: the sequencer reaches
-all 20 of its states but only 32 of its 58 transitions. The uncovered ones are
-the soft-reset escape from nearly every state and the timeout paths into
-`S_ABORT`.
+The sequencer now reaches all 20 of its states and 40 of its 58 transitions.
+The 18 remaining are accounted for: 16 are the single `if (srst)` statement
+counted once per source state, of which the three that matter are tested; and
+two are defensive timeouts in `S_RD_DATA` and `S_WR_CRC` that cannot fire as the
+sequencer is wired, since neither state can be starved of a byte. See the
+README's verification section for the reasoning.
 
 ---
 

@@ -489,6 +489,7 @@ localparam bit TRACE_CMD = 1'b0;
         int unsigned i;
         bit ok;
         int unsigned rises_before;
+        int unsigned guard;
         real bytes_per_clock;
 
         $display("");
@@ -679,6 +680,156 @@ localparam bit TRACE_CMD = 1'b0;
               rd[ERR_PHASE_LSB +: 4] === 4'(PHASE_RESP));
         inj_no_response = 1'b0;
 
+        // ---- the timeout escapes into S_ABORT ------------------------------
+        //
+        // Six of the sequencer's transitions are per-state timeout escapes, and
+        // the regression reached none of them until this block existed. Questa's
+        // FSM transition coverage is what said so; every functional check passed
+        // either way, which is the point.
+        //
+        // They are not interchangeable. Each records a different phase_e in
+        // ERR_INFO, and that field exists precisely so a driver can tell "the
+        // card never answered" from "the card answered and then stopped
+        // programming" - the two need different recovery, and a driver that
+        // confuses them retries the wrong thing.
+        //
+        // This is also the sequel to a defect this core already had once.
+        // Sweeping the non-default configurations found that neither
+        // data-streaming state checked its timeout at all, so a data phase
+        // starved of data wedged the core. The branches were added and then
+        // nothing exercised them, which means the fix could have regressed in
+        // silence.
+        $display("  -- timeout escapes into S_ABORT --");
+
+        // A shorter bound than the 200000 above, so these do not each spend a
+        // large fraction of the run waiting. Still far longer than a byte time.
+        csr_wr(REG_TIMEOUT, 32'd20000);
+
+        // 1. R1b whose busy never lifts. CMD12 is the R1b command the model
+        //    answers with busy bytes, and inj_busy_forever freezes them.
+        inj_busy_forever = 1'b1;
+        send_cmd(6'd12, 32'h0, RESP_R1B, 0,0,0,0, st);
+        check("R1b busy that never lifts: ERR_DAT_TMO", st[IRQ_ERR_DAT_TMO]);
+        csr_rd(REG_ERR_INFO, rd);
+        check("R1b busy timeout records PHASE_BUSY",
+              rd[ERR_PHASE_LSB +: 4] === 4'(PHASE_BUSY));
+
+        // 2. Busy BEFORE a command, which is the pre-emptive check rather than
+        //    a wait after the previous packet. A write leaves the card
+        //    programming (§7.2.4); freeze that and the next command cannot even
+        //    begin framing.
+        srcw = new[128];
+        for (i = 0; i < 128; i++) srcw[i] = 32'hBEEF_0000 + i;
+        do_write(72, 1, 1'b0, srcw, st);          // completes; card left busy
+        send_cmd(6'd58, 32'h0, RESP_R3R7, 0,0,0,0, st);
+        check("busy before a command: ERR_DAT_TMO", st[IRQ_ERR_DAT_TMO]);
+        csr_rd(REG_ERR_INFO, rd);
+        check("pre-command busy timeout records PHASE_BUSY",
+              rd[ERR_PHASE_LSB +: 4] === 4'(PHASE_BUSY));
+
+        // Release the frozen busy and let the card drain it, so what follows
+        // starts from a card that is actually ready.
+        inj_busy_forever = 1'b0;
+        send_cmd(6'd58, 32'h0, RESP_R3R7, 0,0,0,0, st);
+        check_noerr("the frozen busy drains once released", st);
+
+        // 3. Busy BETWEEN the blocks of a multi-block write - a different state
+        //    from the pre-command check, with its own timeout, and the place
+        //    where the card's programming time is actually absorbed.
+        //
+        //    The freeze has to be applied AFTER the command has started, not
+        //    before. Freezing first leaves the card busy from the previous
+        //    block and the transfer aborts in the PRE-COMMAND check instead,
+        //    which sets the same error bit and the same phase - so the check
+        //    passes while testing the wrong state entirely. FSM transition
+        //    coverage is what caught that; the error bits could not.
+        srcw = new[2*128];
+        for (i = 0; i < 2*128; i++) srcw[i] = 32'hFEED_0000 + i;
+        csr_wr(REG_BLK_COUNT, 32'd2);
+        csr_wr(REG_DMA_ADDR,  DMA_BUF);
+        if (TB_USE_DMA)
+            for (i = 0; i < 2*128; i++) u_mem.poke(DMA_BUF/4 + i, srcw[i]);
+        cmd_issue(6'd25, blk_arg(80), RESP_R1, 1'b1, 1'b1, 1'b1, 1'b1);
+        inj_busy_forever = 1'b1;        // bites at the first block's busy
+        if (!TB_USE_DMA) pio_fill(srcw, 2*128);
+        cmd_wait(6'd25, st);
+        check("busy between write blocks: ERR_DAT_TMO", st[IRQ_ERR_DAT_TMO]);
+        csr_rd(REG_ERR_INFO, rd);
+        check("inter-block busy timeout records PHASE_BUSY",
+              rd[ERR_PHASE_LSB +: 4] === 4'(PHASE_BUSY));
+
+        inj_busy_forever = 1'b0;
+
+        //    An aborted multi-block write leaves the card waiting for the next
+        //    data token, and §7.3.3.1 says the host terminates a FAILED stream
+        //    with CMD12 rather than the stop-tran token. Do exactly that - it is
+        //    what a driver has to do, and without it every command after this
+        //    point is swallowed as write data and times out.
+        send_cmd(6'd12, 32'h0, RESP_R1B, 0,0,0,0, st);
+        check_noerr("CMD12 terminates a failed multi-block write (§7.3.3.1)",
+                    st);
+
+        // 4. A write data phase starved of data. This is the defect the
+        //    configuration sweep originally found: with software feeding the
+        //    buffer instead of a master, a host that does not keep up used to
+        //    wedge the core with no recovery short of a soft reset. The branch
+        //    that fixed it was then never exercised again until here.
+        //
+        //    Run with DMA_EN cleared at run time so this reaches the branch in
+        //    EVERY configuration rather than only the PIO build. With a master
+        //    attached the DMA always supplies, which is precisely why the
+        //    reference configuration cannot reach it and did not find the bug.
+        csr_wr(REG_CTRL, CTRL_RUNNING & ~(32'b1 << CTRL_DMA_EN));
+        csr_wr(REG_BLK_COUNT, 32'd1);
+        cmd_issue(6'd24, blk_arg(88), RESP_R1, 1'b1, 1'b1, 1'b0, 1'b0);
+        cmd_wait(6'd24, st);                       // feed it nothing at all
+        check("write data phase starved of data: ERR_DAT_TMO",
+              st[IRQ_ERR_DAT_TMO]);
+        csr_rd(REG_ERR_INFO, rd);
+        check("starved write data records PHASE_DATA",
+              rd[ERR_PHASE_LSB +: 4] === 4'(PHASE_DATA));
+
+        // The core recovers on its own - a data-path reset clears the buffer.
+        // The CARD does not: it is still waiting for the rest of a block it will
+        // never be sent, and nothing the host can issue gets it back, which is a
+        // real limitation of abandoning a write rather than an artefact of the
+        // model. The testbench puts the model straight so the checks that follow
+        // are testing what they claim to.
+        csr_wr(REG_CTRL, CTRL_RUNNING | (32'b1 << CTRL_SRST_DAT));
+        csr_wr(REG_CTRL, CTRL_RUNNING);
+        u_card.resync();
+
+        // ---- a data phase the card was never asked for ---------------------
+        //
+        // The CMD register lets software pair ANY response format with a data
+        // phase. No real SD command pairs a multi-byte response with one, so
+        // these two paths out of the response handler are unreachable through
+        // the driver - but they are reachable through the register, and a core
+        // that hangs when software asks for something the card will not do is a
+        // core that hangs. The card sends no start token, so the correct
+        // outcome is a bounded abort in the token wait, not a wedge.
+        $display("  -- a data phase after a multi-byte response --");
+
+        csr_wr(REG_BLK_COUNT, 32'd1);
+        csr_wr(REG_DMA_ADDR,  DMA_BUF);
+        send_cmd(6'd58, 32'h0, RESP_R3R7, 1'b1, 1'b0, 1'b0, 1'b0, st);
+        check("R3/R7 trailer then a data phase: aborts, does not hang",
+              st[IRQ_ERR_DAT_TMO]);
+        csr_rd(REG_ERR_INFO, rd);
+        check("that abort records the token wait, PHASE_TOKEN",
+              rd[ERR_PHASE_LSB +: 4] === 4'(PHASE_TOKEN));
+
+        csr_wr(REG_BLK_COUNT, 32'd1);
+        csr_wr(REG_DMA_ADDR,  DMA_BUF);
+        send_cmd(6'd12, 32'h0, RESP_R1B, 1'b1, 1'b0, 1'b0, 1'b0, st);
+        check("R1b busy then a data phase: aborts, does not hang",
+              st[IRQ_ERR_DAT_TMO]);
+
+        // Back to a permissive bound for what follows.
+        csr_wr(REG_TIMEOUT, 32'd200000);
+        send_cmd(6'd58, 32'h0, RESP_R3R7, 0,0,0,0, st);
+        check_noerr("recovered: a normal command works after every timeout", st);
+
         // ---- soft reset domains --------------------------------------------
         // Resetting the data path must NOT lose the card's identified state -
         // that is the entire reason the reset is split rather than being one
@@ -704,6 +855,65 @@ localparam bit TRACE_CMD = 1'b0;
         // Recovery: after all of that, a normal command must still work.
         send_cmd(6'd58, 32'h0, RESP_R3R7, 0,0,0,0, st);
         check_noerr("recovered: no error after the failure sequence", st);
+
+        // ---- soft reset from inside a transfer -----------------------------
+        //
+        // The sequencer's escape to idle is ONE statement - `if (srst) state <=
+        // S_IDLE` - and FSM transition coverage counts it once per source state,
+        // eighteen times over. Chasing all eighteen means eighteen
+        // precisely-timed resets to exercise a single line, which is coverage
+        // arithmetic rather than verification.
+        //
+        // What is worth testing is the phases where a reset is actually used. A
+        // driver resets the data path when a transfer has gone wrong, and the
+        // core has to come back usable afterwards. These take it mid-command and
+        // mid-block in both directions, and in each case the card is left
+        // part-way through something - so the model is put straight too, exactly
+        // as in the starved-write case above.
+        $display("  -- soft reset from inside a transfer --");
+
+        // Mid-command, while the frame is still being shifted.
+        cmd_issue(6'd58, 32'h0, RESP_R3R7, 0,0,0,0);
+        csr_wr(REG_CTRL, CTRL_RUNNING | (32'b1 << CTRL_SRST_CMD));
+        cmd_wait(6'd58, st);
+        u_card.resync();
+        send_cmd(6'd58, 32'h0, RESP_R3R7, 0,0,0,0, st);
+        check_noerr("a command reset mid-frame leaves the core usable", st);
+
+        // Mid read-data. DMA_EN is cleared so nothing drains the buffer, which
+        // makes a non-zero FIFO level proof that the data phase is running - the
+        // reset is then known to land inside it rather than before it.
+        csr_wr(REG_CTRL, CTRL_RUNNING & ~(32'b1 << CTRL_DMA_EN));
+        csr_wr(REG_BLK_COUNT, 32'd1);
+        cmd_issue(6'd17, blk_arg(0), RESP_R1, 1'b1, 1'b0, 1'b0, 1'b0);
+        guard = 0;
+        do begin
+            csr_rd(REG_STATUS, rd);
+            guard++;
+        end while ((rd[STAT_LEVEL_MSB:STAT_LEVEL_LSB] == 16'd0) &&
+                   (guard < 100000));
+        check("the read data phase was reached before the reset",
+              guard < 100000);
+        csr_wr(REG_CTRL, (CTRL_RUNNING & ~(32'b1 << CTRL_DMA_EN)) |
+                         (32'b1 << CTRL_SRST_DAT));
+        cmd_wait(6'd17, st);
+        csr_wr(REG_CTRL, CTRL_RUNNING);
+        u_card.resync();
+        send_cmd(6'd58, 32'h0, RESP_R3R7, 0,0,0,0, st);
+        check_noerr("a data reset mid-read leaves the core usable", st);
+
+        // Mid write-data: hand it a few words so the stream starts, then reset.
+        csr_wr(REG_CTRL, CTRL_RUNNING & ~(32'b1 << CTRL_DMA_EN));
+        csr_wr(REG_BLK_COUNT, 32'd1);
+        cmd_issue(6'd24, blk_arg(88), RESP_R1, 1'b1, 1'b1, 1'b0, 1'b0);
+        for (i = 0; i < 8; i++) csr_wr(REG_DATA, 32'hC0DE_0000 + i);
+        csr_wr(REG_CTRL, (CTRL_RUNNING & ~(32'b1 << CTRL_DMA_EN)) |
+                         (32'b1 << CTRL_SRST_DAT));
+        cmd_wait(6'd24, st);
+        csr_wr(REG_CTRL, CTRL_RUNNING);
+        u_card.resync();
+        send_cmd(6'd58, 32'h0, RESP_R3R7, 0,0,0,0, st);
+        check_noerr("a data reset mid-write leaves the core usable", st);
 
         // ---- Avalon conformance ---------------------------------------------
         check("m0 never issued a read with all byteenables clear",
