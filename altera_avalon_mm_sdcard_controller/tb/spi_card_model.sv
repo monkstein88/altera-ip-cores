@@ -97,6 +97,17 @@ module spi_card_model #(
     // it is unbounded in principle and the host must tolerate any length.
     int unsigned busy_bytes;
 
+    // How long the card holds busy after accepting a written block - its
+    // internal programming time, §7.2.4, in byte-times.
+    //
+    // Settable rather than fixed, and defaulting to what it always was, so
+    // nothing in the existing regression shifts. A real card takes 1-4 ms per
+    // block, which at 25 MHz SPI is hundreds of byte-times; four is a token
+    // value that keeps the functional tests quick and tells you nothing about
+    // what the write path costs. set_prog_bytes() is for the one test that
+    // actually wants to know.
+    int unsigned prog_bytes = 4;
+
     always_comb sd_miso = sd_cs_n ? 1'b1 : tx_byte[tx_bit];
 
     // -------------------------------------------------------------------------
@@ -490,7 +501,7 @@ module spi_card_model #(
             tx_q.push_back(dr);
             // §7.2.4: programming starts a byte AFTER the data response, so
             // busy cannot appear immediately.
-            busy_bytes = 4;
+            busy_bytes = prog_bytes;
             wr_buf.delete();
         end
     endtask
@@ -609,6 +620,15 @@ module spi_card_model #(
     // data-path reset clears the controller, not the card. A test that
     // deliberately starves a write therefore has to put the MODEL straight
     // again, or every command after it is swallowed as write data.
+    // Set the internal programming time, in byte-times. Only the post-write busy
+    // uses it; the busy that follows CMD12 or a stop-tran token is response
+    // timing rather than programming and is unaffected.
+    task automatic set_prog_bytes(input int unsigned n);
+        begin
+            prog_bytes = n;
+        end
+    endtask
+
     task automatic resync();
         begin
             // tx_q matters as much as the receive side. A card interrupted

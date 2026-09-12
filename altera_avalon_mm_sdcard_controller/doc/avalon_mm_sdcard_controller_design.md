@@ -75,7 +75,7 @@ CPU. The target here is **>90%**, from four specific mechanisms:
 | Multi-block streaming (CMD18/CMD25) | The card's access latency, paid once per block instead of once per transfer |
 | Hardware busy polling after write blocks | Up to 250 ms per block spent in a CPU poll loop |
 | DMA with a ping-pong block buffer | CPU time, and immunity to interrupt latency — but *not* throughput; see below |
-| **Pre-emptive** busy check, not post-wait | A whole card programming time per block, spent waiting for a card that was already finished |
+| **Pre-emptive** busy check, not post-wait | Up to one card programming time per block — bounded by how long the host takes to prepare the next packet, since that is what the wait overlaps. Unmeasured: the RTL has no post-wait variant to compare against |
 
 ### The memory side is not the bottleneck, and it is worth being clear why
 
@@ -146,11 +146,20 @@ still passing.
 **A reality check on writes.** Published single-block measurements on real cards
 over SPI land around 1 MB/s read and 130–200 kB/s write — far below the line
 rate, because a single-block write pays the card's whole internal programming
-time per 512 bytes. This is a card property, not a controller property, and it
-is the strongest argument in this document for the multi-block path and the
-pre-emptive busy check. A controller that only does single-block writes will
-measure an order of magnitude below its own bus rate no matter how well it is
-built.
+time per 512 bytes. This is a card property, not a controller property.
+
+This paragraph used to go on to call that "the strongest argument in this
+document for the multi-block path". The protocol does not support the step. A
+multi-block write pays the programming time per block too: the card holds busy
+between blocks of a CMD25 stream exactly as it does after a CMD24. Measured
+against the card model with a settable programming time, a four-block stream is
+**1.01×** four single-block writes, and the whole saving is the framing of the
+three commands it avoids.
+
+Where streaming does gain on a real card is in costs this model does not have:
+the per-transfer access latency in the table above, and cards that buffer or
+pre-erase ahead of a declared multi-block write (`ACMD23`, open question 5). Both
+are card behaviour, so both need a real card to measure.
 
 ---
 
@@ -712,6 +721,20 @@ Things deliberately left undecided, to be closed during implementation:
    a bring-up convenience. It is the FIFO's client whenever `USE_DMA` is off,
    which §2's timing budget shows is a legitimate configuration rather than a
    degraded one. It stays, and it is verified as a swept configuration.
-5. **Card-side write performance.** Whether `ACMD23` pre-erase before multi-block
-   write is worth issuing from the driver, and whether the gain is measurable
-   against the model.
+5. ~~**Card-side write performance.**~~ **Deferred — needs a real card.**
+   Whether `ACMD23` pre-erase before multi-block write is worth issuing from the
+   driver, and whether the gain is measurable against the model.
+
+   The second half is answered, and the answer is no. Pre-erase saves card-side
+   erase and allocation work, and the model simulates neither, so any gain it
+   reported would be whatever cost was typed into it. The first half therefore
+   cannot be settled in simulation and is deferred rather than left open.
+
+   Measuring it did settle something adjacent. With a settable programming time
+   in the card model, a four-block stream is **1.01×** four single-block writes,
+   in SPI clocks and in elapsed time, across all five configurations: the saving
+   is the three avoided command frames and nothing more, since programming is
+   paid per block on either path. The design's claim that streaming plus the
+   pre-emptive busy check is "most of the difference between the card's rate and
+   the bus's" rests on the same unmodelled costs as `ACMD23` does, and is now
+   described as an argument rather than a result.

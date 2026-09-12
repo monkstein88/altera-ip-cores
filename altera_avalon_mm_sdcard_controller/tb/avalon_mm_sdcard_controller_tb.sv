@@ -491,6 +491,9 @@ localparam bit TRACE_CMD = 1'b0;
         int unsigned rises_before;
         int unsigned guard;
         real bytes_per_clock;
+        int unsigned clks_single, clks_multi;
+        real wr_gain;
+        realtime t0, t_single, t_multi;
 
         $display("");
         $display("=== avalon_mm_sdcard_controller: full-core regression ===");
@@ -914,6 +917,118 @@ localparam bit TRACE_CMD = 1'b0;
         u_card.resync();
         send_cmd(6'd58, 32'h0, RESP_R3R7, 0,0,0,0, st);
         check_noerr("a data reset mid-write leaves the core usable", st);
+
+        // ---- what the write path is worth -----------------------------------
+        //
+        // The read side has a measured number - 98.1% of line rate - and the
+        // write side had none, because the card's own programming time bounds it
+        // and the model held busy for a token four byte-times. That is fast
+        // enough to keep the functional tests quick and far too fast to say
+        // anything about the two mechanisms the write path is built around:
+        // streaming multiple blocks in hardware, and checking busy PRE-EMPTIVELY
+        // before the next packet rather than waiting after the previous one.
+        //
+        // WHAT THIS MEASURES, AND WHAT IT DOES NOT. The absolute figure is
+        // meaningless - it would be whatever programming time is set below. The
+        // RATIO is not: it is how much of the card's programming time the
+        // multi-block path avoids paying, and that is a property of this design
+        // rather than of the number chosen. Published figures for real cards over
+        // SPI are 130-200 kB/s for single-block writes, an order of magnitude
+        // under the bus, which is the gap this is about.
+        //
+        // 256 byte-times is about 82 us at 25 MHz - the low end of a real card's
+        // 1-4 ms, kept short so the test costs seconds rather than minutes.
+        $display("  -- write path: multi-block against single-block --");
+        u_card.set_prog_bytes(256);
+
+        srcw = new[4*128];
+        for (i = 0; i < 4*128; i++) srcw[i] = 32'h5A5A_0000 + i;
+
+        // Both runs must START from an idle card, or the comparison is not one.
+        // A write leaves the card programming, so whichever run goes second
+        // inherits the other's programming wait inside its measured window - and
+        // with 256 byte-times on the clock that artefact is larger than anything
+        // being measured. It reported multi-block as SLOWER until this was here.
+        //
+        // A benign command absorbs the wait in S_PRE_BUSY, outside the count.
+        send_cmd(6'd58, 32'h0, RESP_R3R7, 0,0,0,0, st);
+
+        // Four separate single-block writes: a command, a response and a full
+        // programming wait each time.
+        //
+        // Counted in SPI clocks AND in elapsed time. The clock count alone cannot
+        // see host preparation: the shifter stops while it waits for data, so a
+        // slow feed costs time without costing clocks. That is exactly the cost
+        // the pre-emptive busy check exists to overlap, so a comparison made only
+        // in clocks would be blind to half of what it claims to measure.
+        // One check after the loop, over the OR of all four statuses, rather
+        // than a check per iteration. Every check in this testbench is a
+        // straight-line call, so the number of call sites IS the number of checks
+        // run - and doc/tools/check_facts.py derives the README's count from
+        // exactly that. A check inside a loop breaks the equivalence silently.
+        t0 = $realtime;
+        rises_before = sclk_rises;
+        rd = '0;
+        for (i = 0; i < 4; i++) begin
+            gotw = new[128];
+            for (guard = 0; guard < 128; guard++) gotw[guard] = srcw[i*128 + guard];
+            do_write(112 + i, 1, 1'b0, gotw, st);
+            rd = rd | st;
+        end
+        clks_single = sclk_rises - rises_before;
+        check_noerr("all four single-block writes complete", rd);
+        t_single    = $realtime - t0;
+
+        // The same four blocks as one streamed transfer, from an idle card again.
+        send_cmd(6'd58, 32'h0, RESP_R3R7, 0,0,0,0, st);
+        t0 = $realtime;
+        rises_before = sclk_rises;
+        do_write(120, 4, 1'b1, srcw, st);
+        check_noerr("the same four blocks as one multi-block write", st);
+        clks_multi = sclk_rises - rises_before;
+        t_multi    = $realtime - t0;
+
+        wr_gain = real'(clks_single) / real'(clks_multi);
+        $display("    4 x 512 bytes, card programming = 256 byte-times");
+        $display("      single-block   %0d SPI clocks   %0.3f ms", clks_single, t_single / 1ms);
+        $display("      multi-block    %0d SPI clocks   %0.3f ms", clks_multi,  t_multi  / 1ms);
+        $display("      multi-block is %0.2fx faster in clocks, %0.2fx in time",
+                 wr_gain, t_single / t_multi);
+
+        // WHAT THIS ACTUALLY SHOWED, which is not what the design claimed.
+        //
+        // Measured: 1.01x. The saving is 232 SPI clocks, 29 byte-times across the
+        // three commands the stream avoids - a 6-byte frame, the model's two
+        // bytes of response latency and the R1, per command, and nothing more.
+        // The card's programming time is paid once per block on either path:
+        // single-block absorbs it in the next command's pre-emptive busy check,
+        // multi-block in S_PRE_BUSY_W between blocks. At 256 byte-times of
+        // programming against ~9 of framing, the framing is all streaming saves.
+        //
+        // The design has claimed streaming plus the pre-emptive check is "most
+        // of the difference between the card's rate and the bus's". If that is
+        // true it rests on two things this model does not have: host preparation
+        // time for the pre-emptive check to overlap with (the DMA has the next
+        // block ready almost at once here), and card-side access and allocation
+        // cost per transfer that a stream pays once. Neither is simulated, so
+        // this test cannot confirm the claim and does not pretend to.
+        //
+        // Elapsed time says the same, 1.01x, in all five configurations including
+        // PIO - so it is not an artefact of counting clocks, which stop while the
+        // shifter waits for data. PIO shows nothing either because this testbench
+        // fills the buffer far faster than the card programs, so the overlap is
+        // complete on both paths. And both paths USE the pre-emptive check: the
+        // RTL has no non-pre-emptive mode, so that mechanism's own contribution
+        // cannot be isolated here at all, only reasoned about.
+        //
+        // The floor is therefore the one thing the protocol guarantees: the
+        // three avoided 6-byte command frames, 3 x 6 x 8 SPI clocks. It started
+        // life as a guessed 1.5x, which the first honest run failed.
+        check("multi-block saves at least the three avoided command frames",
+              clks_single >= clks_multi + 3*6*8);
+
+        u_card.set_prog_bytes(4);          // back to the quick default
+        u_card.resync();
 
         // ---- the PIO window reports what it could not do --------------------
         //

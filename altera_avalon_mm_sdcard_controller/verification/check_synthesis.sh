@@ -65,6 +65,25 @@ MAX_LOGIC_CELLS=2200
 MAX_REGISTERS=1100
 MIN_FMAX_MHZ=100
 
+# --- the configurations to synthesise ----------------------------------------
+# name : parameter overrides : expected memory bits
+#
+# Lint sweeps ten configurations and the simulation sweeps five; this used to
+# synthesise one. That is the configuration least likely to be wrong, which is
+# the wrong one to check alone - the buffer's depth is a parameter, and whether
+# it lands in a memory block is the single thing most worth not losing.
+#
+# The memory expectation is DEPTH_BYTES x 8, exact rather than a threshold.
+# "Some memory was used" would pass a design that put half the buffer in flops;
+# only the exact figure says the whole store is in the block.
+CFGS=(
+    "default:            :8192"
+    "tight:FIFO_DEPTH_BYTES=512:4096"
+    "big:FIFO_DEPTH_BYTES=8192:65536"
+    "nodma:USE_DMA=0:8192"
+    "noburst:M0_BURST_WIDTH=1:8192"
+)
+
 find_quartus () {
     if [ -n "${QUARTUS_ROOT:-}" ] && [ -x "$QUARTUS_ROOT/quartus/bin/quartus_map" ]; then
         echo "$QUARTUS_ROOT"; return 0
@@ -98,111 +117,124 @@ echo ""
 # Compile order matters: the package defines what every other file elaborates
 # against, and the CRC file defines a second package the sequencer uses.
 ORDER=(pkg crc clkgen spi_phy fifo dma seq regs)
-{
-    echo "set_global_assignment -name FAMILY \"$FAMILY\""
-    echo "set_global_assignment -name DEVICE $DEVICE"
-    echo "set_global_assignment -name TOP_LEVEL_ENTITY avalon_mm_sdcard_controller"
-    echo "set_global_assignment -name SDC_FILE syn.sdc"
-    for f in "${ORDER[@]}"; do
-        echo "set_global_assignment -name SYSTEMVERILOG_FILE $ROOT/rtl/avalon_mm_sdcard_controller_$f.sv"
-    done
-    echo "set_global_assignment -name SYSTEMVERILOG_FILE $ROOT/rtl/avalon_mm_sdcard_controller.sv"
-} > "$WORK/syn.qsf"
-
-# The conduit to the card is source-synchronous and closed with input delays in
-# a real project's own constraints; here only the internal paths are analysed, so
-# one clock and the derived uncertainty is the whole constraint.
-{
-    echo "create_clock -name clk -period $CLK_NS [get_ports clk]"
-    echo "derive_clock_uncertainty"
-} > "$WORK/syn.sdc"
 
 fail=0
-step () {
-    local tool="$1" label="$2"
-    if ( cd "$WORK" && "$BIN/$tool" syn > "$tool.log" 2>&1 ); then
-        echo "  PASS  $label"
-    else
-        echo "  FAIL  $label"
-        grep -E '^Error|Error \(' "$WORK/$tool.log" | head -3 | sed 's/^/          /'
+
+# -----------------------------------------------------------------------------
+# One configuration: synthesise, fit, time, and hold the result to the budget.
+# -----------------------------------------------------------------------------
+run_cfg () {
+    local name="$1" params="$2" want_mem="$3"
+    local d="$WORK/$name"
+    rm -rf "$d"; mkdir -p "$d"
+
+    {
+        echo "set_global_assignment -name FAMILY \"$FAMILY\""
+        echo "set_global_assignment -name DEVICE $DEVICE"
+        echo "set_global_assignment -name TOP_LEVEL_ENTITY avalon_mm_sdcard_controller"
+        echo "set_global_assignment -name SDC_FILE syn.sdc"
+        for f in "${ORDER[@]}"; do
+            echo "set_global_assignment -name SYSTEMVERILOG_FILE $ROOT/rtl/avalon_mm_sdcard_controller_$f.sv"
+        done
+        echo "set_global_assignment -name SYSTEMVERILOG_FILE $ROOT/rtl/avalon_mm_sdcard_controller.sv"
+        # Parameter overrides, one per entry, comma separated in CFGS.
+        if [ -n "$params" ]; then
+            local IFS=','
+            for kv in $params; do
+                echo "set_parameter -name ${kv%%=*} ${kv##*=}"
+            done
+        fi
+    } > "$d/syn.qsf"
+
+    # The conduit to the card is source-synchronous and closed with input delays
+    # in a real project's own constraints; here only the internal paths are
+    # analysed, so one clock and the derived uncertainty is the whole constraint.
+    {
+        echo "create_clock -name clk -period $CLK_NS [get_ports clk]"
+        echo "derive_clock_uncertainty"
+    } > "$d/syn.sdc"
+
+    local tool
+    for tool in quartus_map quartus_fit quartus_sta; do
+        if ! ( cd "$d" && "$BIN/$tool" syn > "$tool.log" 2>&1 ); then
+            echo "  FAIL  $name: $tool"
+            grep -E '^Error|Error \(' "$d/$tool.log" | head -3 | sed 's/^/          /'
+            fail=1
+            return 1
+        fi
+    done
+
+    # --- pull the figures out of the reports ---
+    local lc regs mem fmax slack
+    lc=$(rpt_num "$d/syn.fit.rpt"   "Total logic elements")
+    regs=$(rpt_num "$d/syn.fit.rpt" "Total registers")
+    mem=$(rpt_num "$d/syn.fit.rpt"  "Total memory bits")
+    # Anchored to the TABLE title, which starts with '; '. The report opens with
+    # a table of contents listing the same titles unadorned, so an unanchored
+    # match finds that instead and comes back with nothing.
+    fmax=$(grep -A6 -m1 '^; .*Model Fmax Summary' "$d/syn.sta.rpt" \
+           | grep -oE '[0-9]+\.[0-9]+ MHz' | head -1 | cut -d' ' -f1)
+    slack=$(grep -A8 -m1 '^; .*Model Setup Summary' "$d/syn.sta.rpt" \
+            | grep -m1 -E '^; clk ' | sed -E 's/^; clk *; *(-?[0-9.]+).*/\1/')
+
+    printf '  %-9s %6s cells  %5s regs  %6s membits  %7s MHz  %7s ns\n' \
+        "$name" "${lc:-?}" "${regs:-?}" "${mem:-?}" "${fmax:-?}" "${slack:-?}"
+
+    local bad=""
+    num_le "${lc:-}"   "$MAX_LOGIC_CELLS" || bad="$bad cells(${lc:-?}>$MAX_LOGIC_CELLS)"
+    num_le "${regs:-}" "$MAX_REGISTERS"   || bad="$bad regs(${regs:-?}>$MAX_REGISTERS)"
+
+    # Exact, not a threshold. The whole store belongs in the memory block; half
+    # of it in flops would pass any "some memory was used" test.
+    [ "${mem:-x}" = "$want_mem" ] || bad="$bad membits(${mem:-?}!=$want_mem)"
+
+    if [ -z "${fmax:-}" ] || ! awk "BEGIN{exit !($fmax >= $MIN_FMAX_MHZ)}"; then
+        bad="$bad Fmax(${fmax:-?}<$MIN_FMAX_MHZ)"
+    fi
+    if [ -z "${slack:-}" ] || ! awk "BEGIN{exit !($slack >= 0)}"; then
+        bad="$bad slack(${slack:-?})"
+    fi
+
+    if [ -n "$bad" ]; then
+        echo "        FAIL:$bad"
         fail=1
         return 1
     fi
+    return 0
 }
 
-step quartus_map "Analysis & Synthesis"            || { echo ""; exit 1; }
-step quartus_fit "Fitter (place and route)"        || { echo ""; exit 1; }
-step quartus_sta "Timing Analyzer"                 || { echo ""; exit 1; }
-
-# --- pull the figures out of the reports -------------------------------------
 rpt_num () {  # rpt_num <file> <row label>  -> first integer in that row
     grep -m1 -E "^; *$2 " "$1" 2>/dev/null \
         | sed -E 's/.*; *([0-9,]+).*/\1/; s/,//g' | grep -E '^[0-9]+$' || echo ""
 }
 
-LC=$(rpt_num "$WORK/syn.fit.rpt" "Total logic elements")
-REGS=$(rpt_num "$WORK/syn.fit.rpt" "Total registers")
-MEMBITS=$(rpt_num "$WORK/syn.fit.rpt" "Total memory bits")
-# The report pads its table titles with spaces before the closing ';', so match
-# the title text alone rather than assuming the column width.
-# Anchored to the TABLE title, which starts with '; '. The report opens with a
-# table of contents listing the same titles unadorned, so an unanchored match
-# finds that instead and comes back with nothing.
-FMAX=$(grep -A6 -m1 '^; .*Model Fmax Summary' "$WORK/syn.sta.rpt" \
-       | grep -oE '[0-9]+\.[0-9]+ MHz' | head -1 | cut -d' ' -f1)
-SLACK=$(grep -A8 -m1 '^; .*Model Setup Summary' "$WORK/syn.sta.rpt" \
-        | grep -m1 -E '^; clk ' | sed -E 's/^; clk *; *(-?[0-9.]+).*/\1/')
+num_le () { [ -n "$1" ] && [ "$1" -le "$2" ] 2>/dev/null; }
 
-echo ""
-echo "    logic cells      ${LC:-?}"
-echo "    registers        ${REGS:-?}"
-echo "    memory bits      ${MEMBITS:-?}"
-echo "    Fmax             ${FMAX:-?} MHz   (slow 85C corner)"
-echo "    setup slack      ${SLACK:-?} ns    (at ${CLK_NS} ns)"
+echo "  budget: <= $MAX_LOGIC_CELLS cells, <= $MAX_REGISTERS regs,"
+echo "          Fmax >= $MIN_FMAX_MHZ MHz, slack >= 0 at $CLK_NS ns"
 echo ""
 
-# Where it goes, because the total on its own never says what to do about it.
-echo "    by entity:"
-grep -E '^;    \|avalon_mm_sdcard_controller_[a-z_]+:' "$WORK/syn.fit.rpt" \
+for entry in "${CFGS[@]}"; do
+    IFS=':' read -r cname cparams cmem <<< "$entry"
+    # Strip the padding the table alignment adds.
+    cparams="$(echo "$cparams" | tr -d ' ')"
+    run_cfg "$cname" "$cparams" "$cmem"
+done
+
+# --- where the area goes, for the reference configuration --------------------
+# The total on its own never says what to do about it.
+echo ""
+echo "    default, by entity:"
+grep -E '^;    \|avalon_mm_sdcard_controller_[a-z_]+:' "$WORK/default/syn.fit.rpt" \
     | sed -E 's/^; *\|avalon_mm_sdcard_controller_([a-z_0-9]+):[^;]*; *([0-9,]+)[^;]*;.*/\1 \2/' \
     | sed 's/,//g' | sort -k2 -rn \
     | awk '{printf "        %-10s %6d\n", $1, $2}' | head -8
-echo ""
-
-num_ok () { [ -n "$1" ] && [ "$1" -le "$2" ] 2>/dev/null; }
-
-if num_ok "${LC:-}" "$MAX_LOGIC_CELLS"; then
-    echo "  PASS  logic cells within budget ($LC <= $MAX_LOGIC_CELLS)"
-else
-    echo "  FAIL  logic cells over budget (${LC:-?} > $MAX_LOGIC_CELLS)"; fail=1
-fi
-
-if num_ok "${REGS:-}" "$MAX_REGISTERS"; then
-    echo "  PASS  registers within budget ($REGS <= $MAX_REGISTERS)"
-else
-    echo "  FAIL  registers over budget (${REGS:-?} > $MAX_REGISTERS)"; fail=1
-fi
-
-if [ -n "${FMAX:-}" ] && awk "BEGIN{exit !($FMAX >= $MIN_FMAX_MHZ)}"; then
-    echo "  PASS  Fmax at or above floor ($FMAX >= $MIN_FMAX_MHZ MHz)"
-else
-    echo "  FAIL  Fmax below floor (${FMAX:-?} < $MIN_FMAX_MHZ MHz)"; fail=1
-fi
-
-# The clock constraint is now MET, so missing it is a failure rather than a note.
-# It used to fail by 2.629 ns, which was reported and tolerated because the
-# alternative - loosening the constraint - would have hidden the one number a
-# reader most needs. There is nothing to tolerate any more.
-if [ -n "${SLACK:-}" ] && awk "BEGIN{exit !($SLACK >= 0)}"; then
-    echo "  PASS  meets the ${CLK_NS} ns constraint (slack $SLACK ns)"
-else
-    echo "  FAIL  does NOT meet ${CLK_NS} ns (slack ${SLACK:-?} ns)"
-    echo "        Every SPI rate in the register map is derived from a 100 MHz"
-    echo "        system clock, so this is the constraint that matters."
-    fail=1
-fi
 
 echo ""
-if [ $fail -eq 0 ]; then echo "*** PASS ***"; else echo "*** FAIL ***"; fi
+if [ $fail -eq 0 ]; then
+    echo "*** PASS ***"
+else
+    echo "*** FAIL ***"
+fi
 echo ""
 exit $fail

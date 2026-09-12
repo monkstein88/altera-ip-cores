@@ -323,6 +323,21 @@ check("the absent-core paragraph quotes the same check count",
       f"paragraph {m_prose.group(1) if m_prose else '?'}, "
       f"core README {m_core.group(1) if m_core else '?'}")
 
+# The documentation-claim count quoted for that core. It has drifted twice - 193
+# to 199 to 203 to 219 - because nothing compared it against the checker that
+# produces it. check_facts.py needs no simulator and runs in about a second, so
+# run it and read its own total rather than restating the number by hand.
+import subprocess
+_cf = subprocess.run([sys.executable, os.path.join(ROOT, SD, "doc", "tools", "check_facts.py")],
+                     capture_output=True, text=True, cwd=os.path.join(ROOT, SD))
+_m_ran = re.search(r"(\d+) claims (?:re-derived|checked)", _cf.stdout)
+_m_quoted = re.search(r"(\d+) documentation claims", sd_row or "")
+check("the SD card controller's documentation-claim count matches check_facts.py",
+      _m_ran is not None and _m_quoted is not None
+      and _m_ran.group(1) == _m_quoted.group(1),
+      f"top-level {_m_quoted.group(1) if _m_quoted else '?'}, "
+      f"check_facts.py {_m_ran.group(1) if _m_ran else '?'}")
+
 # The Questa column is covered by the generic per-core check above, which is
 # now bidirectional - no SD-specific version is needed.
 

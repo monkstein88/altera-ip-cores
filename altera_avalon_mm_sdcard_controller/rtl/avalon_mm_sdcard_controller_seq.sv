@@ -58,8 +58,14 @@
 // programming time overlaps with the host's preparation and with the DMA
 // refilling the FIFO.
 //
-// On a multi-block write, where the card programs after every block, this is
-// most of the difference between the card's rate and the bus's rate.
+// That is the argument. It is NOT a measured result, and this comment used to
+// state it as one - "most of the difference between the card's rate and the
+// bus's rate" on a multi-block write. Measured against the card model with a
+// realistic programming time, a four-block stream is 1.01x four single-block
+// writes: the programming wait is paid once per block on either path, and both
+// paths come through this check, so there is nothing in the RTL to compare it
+// against. What the check buys depends on host preparation time and card-side
+// costs the model does not simulate. See the README's verification section.
 // =============================================================================
 
 module avalon_mm_sdcard_controller_seq

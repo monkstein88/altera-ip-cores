@@ -11,7 +11,7 @@ driver the BSP picks up by itself.
 
 > **Status: simulation only. This core has never been on a board.**
 >
-> It passes 79 self-checking assertions across three testbenches against a
+> It passes 82 self-checking assertions across three testbenches against a
 > behavioural SD card model — with the full-core suite run in five
 > configurations — plus bound SVA assertions proven live by fault injection,
 > 22 checks on the Platform Designer component and three on the HAL driver.
@@ -71,8 +71,18 @@ loop sends a block, then waits for the card to finish programming. The card is
 then idle while the host prepares the next one. This sequencer instead waits for
 busy to clear *immediately before* the next packet and not at all after the
 previous one, so the card's programming time overlaps with the host's
-preparation and with the DMA refilling the buffer. On a multi-block write that
-is most of the difference between the card's rate and the bus's.
+preparation and with the DMA refilling the buffer.
+
+**How much that is worth has not been demonstrated.** This section used to say it
+was "most of the difference between the card's rate and the bus's" on a
+multi-block write. Measured against the card model with a realistic programming
+time, streaming four blocks is **1.01×** faster than four single-block writes —
+in SPI clocks and in elapsed time, in all five configurations. The saving is
+exactly the framing of the three commands the stream avoids. The programming time
+is paid once per block on either path, and both paths use the pre-emptive check,
+so the RTL has no variant to compare it against. Whatever the real gain is, it
+comes from effects the model does not simulate — see
+[what is and is not proven](#verification-status-what-is-and-is-not-proven).
 
 ### Eight clocks per byte is a measured property, not an aspiration
 
@@ -119,7 +129,7 @@ except a cycle count catches it, which is why the count is an assertion.
          sd_clk / mosi / miso / cs_n
 ```
 
-Nine RTL files, 3352 lines, one per box plus the package and the top level.
+Nine RTL files, 3358 lines, one per box plus the package and the top level.
 Single clock domain throughout — no PLL, no CDC, nothing that behaves
 differently in simulation than on hardware.
 
@@ -322,13 +332,13 @@ full Quartus toolchain tries to build a project.
 | --- | --- | --- |
 | `phy` | 12 | Exactly 8.00 SPI clocks per byte at every divisor; bit-exact loopback; the `SAMPLE_DLY` bound |
 | `fifo` | 5 | Byte↔word round trip both directions, little-endian order, partial-word flush |
-| `core` | 62 | Identification, single and multi-block both directions, CSD/CID, every card-reported failure, `ERR_INFO` contents, every per-state timeout escape, soft reset from inside a transfer, throughput floor, Avalon conformance |
+| `core` | 65 | Identification, single and multi-block both directions, CSD/CID, every card-reported failure, `ERR_INFO` contents, every per-state timeout escape, soft reset from inside a transfer, read throughput floor, the multi-block write saving, Avalon conformance |
 | `check_hw_tcl.tcl` | 22 | The component executes; parameters and ports exist; validation rejects exactly the bad configurations |
 | `check_driver_builds.sh` | 3 | The driver compiles clean under `-Wall -Wextra`; CSD capacity arithmetic for both structure versions; the register header stands alone |
 | `check_assertions_fire.sh` | 4 faults | Each injected into a scratch copy and required to be caught by the assertion meant to catch it |
 | `check_figures.sh` | 19 files | The 9 figures and their generator inputs, each re-rendered and compared byte for byte, because a stale picture is worse than a missing one. Needs `graphviz` for the block diagrams and Node plus a recorded `wave.vcd` for the timing figures; short of those it reports **INCOMPLETE** with a count, rather than passing on what it could not look at |
 | `check_facts.py` | 203 | Every register offset, parameter default, line count and measured figure in these documents, re-derived from the RTL |
-| `check_synthesis.sh` | 7 | The RTL through Quartus for the DE10-Lite part: it synthesises, fits, and meets a 100 MHz clock, with area and Fmax held to a budget so a change that makes the core bigger or slower fails here |
+| `check_synthesis.sh` | 5 configs | The RTL through Quartus for the DE10-Lite part in the default, `tight`, `big`, `nodma` and `noburst` configurations: each synthesises, fits and meets a 100 MHz clock, holds area and Fmax to a budget, and puts **exactly** `FIFO_DEPTH_BYTES` × 8 bits in a memory block — so a buffer that slips back into registers fails by name rather than by growing |
 | `check_qsys.sh` | 7 | The component in **real** Platform Designer: it loads, its interfaces are the expected six, `USE_DMA=0` genuinely removes `m0`, and a system containing it generates |
 | lint | 10 configs | `-Wall` clean across every parameter that changes what is built |
 
@@ -462,9 +472,23 @@ driver compiles.
 | Slack at 100 MHz | **+1.034 ns** — it meets the clock |
 
 `verification/check_synthesis.sh` runs Analysis & Synthesis, the Fitter and the
-Timing Analyzer and holds those figures to a budget, so a change that makes the
-core bigger or slower fails there rather than being noticed whenever somebody
-next looks. `verification/check_qsys.sh` loads the component into real Platform
+Timing Analyzer across five configurations and holds each to a budget, so a
+change that makes the core bigger or slower fails there rather than being noticed
+whenever somebody next looks:
+
+| Configuration | Logic cells | Memory bits | Fmax |
+| --- | --- | --- | --- |
+| default, 1 KB buffer | 1719 | 8 192 | 111.53 MHz |
+| `FIFO_DEPTH_BYTES=512` | 1704 | 4 096 | 108.60 MHz |
+| `FIFO_DEPTH_BYTES=8192` | 1742 | 65 536 | 109.19 MHz |
+| `USE_DMA=0` | 1530 | 8 192 | 120.83 MHz |
+| `M0_BURST_WIDTH=1` | 1692 | 8 192 | 116.51 MHz |
+
+The 8 KB row is worth a second look. `FIFO_DEPTH_BYTES` has always been
+documented as accepting 512 to 8192, and until the buffer was moved into a memory
+block the top of that range **did not fit on the part** — the fitter needed
+66 430 registers against 49 760 available. It is now 23 logic cells more than the
+default. `verification/check_qsys.sh` loads the component into real Platform
 Designer, checks the elaboration callback genuinely removes `m0`, and generates
 a system from it.
 
@@ -480,19 +504,29 @@ record's fallback of restricting `CLKDIV >= 2` is not needed.
   needs a breakout on the GPIO or Arduino header and its own pinout. The card
   model is written to the specification, and real cards deviate from it — which
   is why the protocol layer is in software.
-- **Write throughput has no meaningful measurement.** It is bounded by the
-  card's internal programming time, which the model does not attempt to
-  reproduce faithfully. Published figures for real cards over SPI are 130–200
-  kB/s for single-block writes — an order of magnitude below the bus rate, and a
-  card property rather than a controller one. It is the strongest argument for
-  the multi-block path and the pre-emptive busy check.
+- **The write path's advantage is unproven.** The card model now holds busy for
+  a settable programming time, and with 256 byte-times of it — about 82 µs at
+  25 MHz, the low end of a real card's 1–4 ms — four blocks streamed take 22 824
+  SPI clocks against 23 056 as four single-block writes: **1.01×**. The 232-clock
+  saving is the three avoided command frames with their response latency, and
+  nothing else, because programming is paid per block either way.
+
+  So the multi-block path and the pre-emptive busy check are justified by
+  argument, not by measurement. The argument is that a real card has costs this
+  model does not: per-transfer access and allocation time, which a stream pays
+  once; and host preparation time slow enough for the pre-emptive check to
+  overlap with, which a DMA that has the next block ready at once never provides.
+  Published figures for real cards over SPI are 130–200 kB/s for single-block
+  writes, an order of magnitude below the bus, so the room is there. Whether this
+  design captures it needs a real card, and a variant of the RTL without the
+  pre-emptive check to compare against.
 
 ---
 
 ## Layout
 
 ```
-rtl/          nine SystemVerilog files, 3352 lines
+rtl/          nine SystemVerilog files, 3358 lines
 tb/           card model, memory model, three testbenches, bound SVA
 simulation/verilator/run_sim.sh
 simulation/questa/run_sim.tcl   coverage and non-vacuity

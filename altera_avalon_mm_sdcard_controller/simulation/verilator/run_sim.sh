@@ -240,6 +240,32 @@ if [ "$WHICH" = "all" ] || [ "$WHICH" = "core" ]; then
     done
 fi
 
+# ---------------------------------------------------------------------------
+# Every check actually ran - no more and no fewer than the source contains.
+#
+# doc/tools/check_facts.py derives the README's check counts from the number
+# of check() call sites in the core and fifo testbenches, which is only valid
+# while every check is a straight-line call. A check placed inside a loop runs
+# several times from one call site, the derived count falls short of the real
+# one, and nothing that reads only the source can tell. This runner is the one
+# place that sees both numbers, so the equivalence is enforced here.
+# ---------------------------------------------------------------------------
+static_checks () {
+    grep -cE '^[[:space:]]+(check|check_noerr)\(' "$1"
+}
+for pair in "core_dma:avalon_mm_sdcard_controller_tb.sv" \
+            "fifo:avalon_mm_sdcard_controller_fifo_tb.sv"; do
+    lg="$OBJROOT/run_${pair%%:*}.log"
+    [ -f "$lg" ] || continue
+    ran=$(grep -oE '=== [0-9]+ checks' "$lg" | grep -oE '[0-9]+' | tail -1)
+    src=$(static_checks "$ROOT/tb/${pair#*:}")
+    if [ -n "$ran" ] && [ "$ran" != "$src" ]; then
+        echo "  FAIL  ${pair#*:}: $ran checks ran but the source has $src call sites"
+        echo "        - a check inside a loop? It breaks the README's derived count."
+        fail=1
+    fi
+done
+
 echo
 if [ $fail -eq 0 ]; then echo "ALL TESTBENCHES PASS"; else echo "*** REGRESSION FAILED ***"; fi
 exit $fail

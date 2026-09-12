@@ -233,6 +233,48 @@ check("README's logic-cell figure is within the enforced budget",
 # And that the documents have stopped claiming the things synthesis disproved.
 check("README no longer says there is no Fmax figure",
       "no Fmax figure" not in README)
+# The synthesis sweep. Its configuration list and memory expectations live in the
+# script; the README quotes a table of them. Every memory figure is derivable -
+# FIFO_DEPTH_BYTES x 8, since the whole store belongs in the block - so check the
+# script's expectations against that rule, and the README's table against the
+# script, rather than trusting either.
+cfgs = re.findall(r'^\s*"(\w+):([^:"]*):(\d+)"', SYN, re.M)
+check("the synthesis script declares its configurations", len(cfgs) >= 2)
+for name, params, mem in cfgs:
+    depth = 1024
+    md = re.search(r"FIFO_DEPTH_BYTES=(\d+)", params)
+    if md:
+        depth = int(md.group(1))
+    check(f"synthesis config '{name}' expects exactly the buffer's bits in memory",
+          int(mem) == depth * 8, f"expects {mem}, depth {depth} x 8 = {depth*8}")
+
+m = re.search(r"`check_synthesis\.sh` \| (\d+) configs", README)
+check("README's synthesis configuration count matches the script",
+      m is not None and int(m.group(1)) == len(cfgs),
+      f"README {m.group(1) if m else '?'}, script {len(cfgs)}")
+
+readme_mem = [int(x.replace(" ", "")) for x in
+              re.findall(r"^\| [^|]+\| \d+ \| ([\d ]+) \| [\d.]+ MHz \|$", README, re.M)]
+script_mem = sorted(int(m) for _, _, m in cfgs)
+check("README's synthesis table quotes the script's memory expectations",
+      sorted(readme_mem) == script_mem,
+      f"README {sorted(readme_mem)}, script {script_mem}")
+
+# The write path. A claim was retracted because the measurement contradicted it,
+# so the retraction is pinned: the documents must agree on the figure, and the
+# original sentence must not come back. Matched as the original SENTENCE, since
+# the retractions quote the phrase in order to withdraw it.
+DD = rd("doc/avalon_mm_sdcard_controller_design.md")
+SEQ = rd("rtl/avalon_mm_sdcard_controller_seq.sv")
+check("README and design record agree the write stream is 1.01x",
+      "**1.01×**" in README and "**1.01×**" in DD)
+check("README no longer claims the write path is most of the card/bus gap",
+      "On a multi-block write that\nis most of the difference" not in README)
+check("the sequencer no longer states the write-path gain as a result",
+      "this is\n// most of the difference between the card's rate" not in SEQ)
+check("the design record no longer calls single-block cost the argument for streaming",
+      "is the strongest argument in this document for the multi-block path and the\npre-emptive busy check." not in DD)
+
 # ---------------------------------------------------------------------------
 # 6. Throughput: the two documents must quote the same measurement
 # ---------------------------------------------------------------------------
