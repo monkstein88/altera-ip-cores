@@ -240,7 +240,7 @@ module avalon_mm_sdcard_controller_fifo_sva (
     input logic mem_push,
     input logic mem_pop,
     input logic mem_full,
-    input logic mem_empty,
+    input logic head_v,
     input logic dir_host_to_card,
     input logic b_wr,
     input logic b_rd
@@ -256,8 +256,21 @@ module avalon_mm_sdcard_controller_fifo_sva (
     // count of zero, every single attempt in the sweep vacuous.
     a_no_push_when_full:
         assert property (@(posedge clk) mem_push |-> !mem_full);
+    // A pop is only ever OFFERED when there is a fetched head to pop.
+    //
+    // This used to say `!mem_empty`, which was the right property while the
+    // store was read combinationally. With a synchronous read a word can be in
+    // the store and still not be available - the fetch that makes it readable
+    // has not landed - so `head_v` is the condition that actually matters, and
+    // it is strictly stronger: head_v cannot be set while the store is empty.
+    //
+    // Like the push assertion below, this is a property of the GATING rather
+    // than a hope about the clients. Every consumer is gated on its own empty
+    // flag: the byte side on head_v directly, the DMA on f_empty, and the CSR
+    // DATA window on fifo_w_empty since the register block stopped offering
+    // accesses it could not serve.
     a_no_pop_when_empty:
-        assert property (@(posedge clk) mem_pop |-> !mem_empty);
+        assert property (@(posedge clk) mem_pop |-> head_v);
 
     // The byte port only ever moves in the direction the transfer is going.
     // Writing bytes into a host-to-card transfer, or reading them out of a

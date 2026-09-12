@@ -184,6 +184,55 @@ for suite, path in (("core", "tb/avalon_mm_sdcard_controller_tb.sv"),
           suite_counts.get(suite) == n,
           f"README {suite_counts.get(suite)}, source has {n}")
 
+# The phy suite's count, which the two checks above deliberately skipped because
+# its checks run inside a sweep rather than straight-line. It is still derivable,
+# just not by counting call sites: the testbench sweeps a fixed divisor list and
+# tests the two ENDS of the legal sample-delay range for each, which is two cases
+# where a non-zero delay is legal and one where it is not. The bound is
+# sample_dly <= clkdiv - 2, so a divisor below 3 permits only zero.
+#
+# Deriving it rather than hard-coding 12 means adding a divisor to the sweep
+# updates the expected number by itself, and changing the sweep without touching
+# the README is caught.
+PHY_TB = rd("tb/avalon_mm_sdcard_controller_spi_phy_tb.sv")
+m = re.search(r"divs\s*=\s*'\{([^}]*)\}", PHY_TB)
+check("the phy testbench's divisor sweep is readable from its source",
+      m is not None)
+if m:
+    divs = [int(x) for x in re.findall(r"\d+", m.group(1))]
+    per_div = sum(2 if d >= 3 else 1 for d in divs)
+    n_checks = len(re.findall(r"^\s+check\(", PHY_TB, re.M)) * per_div
+    check("README's `phy` count matches its sweep times its checks",
+          suite_counts.get("phy") == n_checks,
+          f"README {suite_counts.get('phy')}, "
+          f"{len(divs)} divisors give {per_div} cases x "
+          f"{len(re.findall(r'^[ ]+check[(]', PHY_TB, re.M))} checks = {n_checks}")
+
+# The synthesis figures. These are measured numbers now, and measured numbers in
+# prose rot exactly as fast as any other - faster, because a reader has no way to
+# tell. Cross-checked against the budget the synthesis suite ENFORCES, so the
+# documents and the check cannot disagree about what the core costs.
+SYN = rd("verification/check_synthesis.sh")
+for label, pat_doc, pat_syn, cmp in (
+        ("Fmax floor", r"\*\*(\d+)\.\d+ MHz\*\*", r"MIN_FMAX_MHZ=(\d+)", "ge"),
+):
+    md = re.search(pat_doc, README)
+    ms = re.search(pat_syn, SYN)
+    check(f"README's {label} is at or above the enforced floor",
+          md is not None and ms is not None and int(md.group(1)) >= int(ms.group(1)),
+          f"README {md.group(1) if md else '?'}, floor {ms.group(1) if ms else '?'}")
+
+m_cells_doc = re.search(r"Logic cells \| (\d+) /", README)
+m_cells_bud = re.search(r"MAX_LOGIC_CELLS=(\d+)", SYN)
+check("README's logic-cell figure is within the enforced budget",
+      m_cells_doc is not None and m_cells_bud is not None
+      and int(m_cells_doc.group(1)) <= int(m_cells_bud.group(1)),
+      f"README {m_cells_doc.group(1) if m_cells_doc else '?'}, "
+      f"budget {m_cells_bud.group(1) if m_cells_bud else '?'}")
+
+# And that the documents have stopped claiming the things synthesis disproved.
+check("README no longer says there is no Fmax figure",
+      "no Fmax figure" not in README)
 # ---------------------------------------------------------------------------
 # 6. Throughput: the two documents must quote the same measurement
 # ---------------------------------------------------------------------------
@@ -242,6 +291,9 @@ check("README does not claim hardware verification",
 # ---------------------------------------------------------------------------
 UG = rd("doc/avalon_mm_sdcard_controller_user_guide.md")
 BD = rd("doc/avalon_mm_sdcard_controller_block_diagrams.md")
+
+check("the user guide no longer says timing closure is undemonstrated",
+      "no timing closure demonstrated" not in UG)
 
 # The injected-fault count, which both documents quote and neither was checking.
 # It sat at 3 through the commit that made it 4.

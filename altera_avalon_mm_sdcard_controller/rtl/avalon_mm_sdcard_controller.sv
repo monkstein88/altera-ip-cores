@@ -49,7 +49,6 @@
 // =============================================================================
 
 module avalon_mm_sdcard_controller
-    import avalon_mm_sdcard_controller_pkg::*;
 #(
     parameter int unsigned FIFO_DEPTH_BYTES = 1024,
     parameter int unsigned M0_BURST_WIDTH   = 8,
@@ -106,6 +105,16 @@ module avalon_mm_sdcard_controller
     input  logic                        sd_cd_n,
     input  logic                        sd_wp_n
 );
+
+    // Imported HERE, in the module body, and NOT in the module header.
+    // Quartus rejects a package import between the module name and the
+    // parameter list - IEEE 1800-2017 26.4, which its Verilog parser does not
+    // implement - with "syntax error near text: import; expecting ';'". Both
+    // 18.1 and 25.1 Standard refuse it, so this is not a version to wait out.
+    // Any package type needed by a PORT is spelled out with its package
+    // qualifier instead, since nothing is imported by the time ports are
+    // elaborated.
+    import avalon_mm_sdcard_controller_pkg::*;
 
     localparam int unsigned BCW          = $clog2(MAX_BLOCK_BYTES + 1);
     localparam int unsigned BLKCNT_WIDTH = 16;
@@ -288,11 +297,15 @@ module avalon_mm_sdcard_controller
     // -------------------------------------------------------------------------
     // Block buffer
     // -------------------------------------------------------------------------
+    // Bounds DMA read bursts; USE_DMA only. Taken straight from the FIFO in
+    // words rather than recomputed from level_bytes here - see the note on
+    // w_space_words. The byte/word round trip this used to do sat on the
+    // design's critical path, from the FIFO's read pointer into the DMA's
+    // burst sizing.
+    localparam int unsigned FIFO_AW = $clog2(FIFO_DEPTH_BYTES / 4);
     /* verilator lint_off UNUSEDSIGNAL */
-    logic [15:0] fifo_space_words;   // bounds DMA read bursts; USE_DMA only
+    logic [FIFO_AW:0] fifo_space_words;
     /* verilator lint_on UNUSEDSIGNAL */
-    always_comb fifo_space_words =
-        16'((FIFO_DEPTH_BYTES / 4)) - (fifo_level_bytes >> 2);
 
     avalon_mm_sdcard_controller_fifo #(
         .DEPTH_BYTES (FIFO_DEPTH_BYTES)
@@ -305,7 +318,8 @@ module avalon_mm_sdcard_controller
         .w_wr (fifo_w_wr), .w_wdata (fifo_w_wdata),
         .w_rd (fifo_w_rd), .w_rdata (fifo_w_rdata),
         .w_empty (fifo_w_empty), .w_full (fifo_w_full),
-        .level_bytes (fifo_level_bytes)
+        .level_bytes (fifo_level_bytes),
+        .w_space_words (fifo_space_words)
     );
 
     // The FIFO's word port has two possible clients and exactly one at a time:
@@ -339,7 +353,8 @@ module avalon_mm_sdcard_controller
             .len_words (dma_len_words), .abort_req (srst_dat || dma_abort),
             .busy (dma_busy), .done (dma_done), .err (dma_err),
             .f_rd (dma_f_rd), .f_rdata (fifo_w_rdata), .f_empty (fifo_w_empty),
-            .f_wr (dma_f_wr), .f_wdata (dma_f_wdata), .f_space (fifo_space_words),
+            .f_wr (dma_f_wr), .f_wdata (dma_f_wdata),
+            .f_space (BLKCNT_WIDTH'(fifo_space_words)),
             .m0_address (m0_address), .m0_read (m0_read), .m0_write (m0_write),
             .m0_writedata (m0_writedata), .m0_byteenable (m0_byteenable),
             .m0_burstcount (m0_burstcount), .m0_waitrequest (m0_waitrequest),

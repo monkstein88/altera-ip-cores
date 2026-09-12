@@ -57,7 +57,6 @@
 // =============================================================================
 
 module avalon_mm_sdcard_controller_spi_phy
-    import avalon_mm_sdcard_controller_pkg::*;
 #(
     parameter int unsigned CLKDIV_WIDTH = 8
 ) (
@@ -107,6 +106,16 @@ module avalon_mm_sdcard_controller_spi_phy
     output logic                    sd_mosi,
     input  logic                    sd_miso
 );
+
+    // Imported HERE, in the module body, and NOT in the module header.
+    // Quartus rejects a package import between the module name and the
+    // parameter list - IEEE 1800-2017 26.4, which its Verilog parser does not
+    // implement - with "syntax error near text: import; expecting ';'". Both
+    // 18.1 and 25.1 Standard refuse it, so this is not a version to wait out.
+    // Any package type needed by a PORT is spelled out with its package
+    // qualifier instead, since nothing is imported by the time ports are
+    // elaborated.
+    import avalon_mm_sdcard_controller_pkg::*;
 
     // -------------------------------------------------------------------------
     // Clock generation

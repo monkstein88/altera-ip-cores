@@ -132,6 +132,7 @@ vlog -sv +acc ../../tb/avalon_mm_sdcard_controller_fifo_tb.sv
 vlog -sv +acc ../../tb/avalon_mm_sdcard_controller_tb.sv
 
 if {[file exists assert_report.txt]} { file delete -force assert_report.txt }
+if {[file exists cover_report.txt]}  { file delete -force cover_report.txt }
 
 # -----------------------------------------------------------------------------
 # One run of a testbench that takes no parameters.
@@ -208,6 +209,16 @@ run_core   1     1   1024      1  noburst c07.ucdb
 vcover merge coverage.ucdb \
     c01.ucdb c02.ucdb c03.ucdb c04.ucdb c05.ucdb c06.ucdb c07.ucdb
 vcover report -details -output coverage_report.txt coverage.ucdb
+
+# The cover directives, from the MERGED database rather than appended per run.
+#
+# They say an interesting SITUATION was reached - a burst issued, an aborted
+# burst flushed, a command deferred - rather than that nothing went wrong, and
+# only the merge has the whole picture: c_burst_issued cannot fire in the
+# noburst configuration and c_abort_flushes needs a DMA at all, so any single
+# run is missing some of them by construction. Appending per-run reports made
+# exactly that look like a failure.
+vcover report -directive -details -output cover_report.txt coverage.ucdb
 
 # ---- pass/fail, decided from the transcript rather than from exit codes -----
 # A simulator that ran seven configurations and printed six "*** PASS ***" has
@@ -291,6 +302,58 @@ proc check_assertions_reported {} {
     } else {
         puts "ASSERTIONS: every one passed non-vacuously somewhere in the sweep"
     }
+
+    # ---- the cover directives ----
+    #
+    # Same argument as the assertions, one step further. An assertion says
+    # nothing went wrong; a cover directive says a situation was actually
+    # reached. All five are hit today, and nothing was checking that, so a
+    # change that stopped reaching one - an abort path that no longer aborts, a
+    # command that is never deferred - would look exactly like success.
+    set covers {
+        c_runs_at_max_rate c_transfer_completes c_command_deferred
+        c_burst_issued c_abort_flushes
+    }
+    if {![file exists cover_report.txt]} {
+        puts "COVER: cover_report.txt was never written"
+        return 0
+    }
+    set fh [open cover_report.txt r]
+    set ctxt [read $fh]
+    close $fh
+
+    set cmissing {}
+    foreach c $covers {
+        if {[string first $c $ctxt] < 0} { lappend cmissing $c }
+    }
+    if {[llength $cmissing] > 0} {
+        puts "COVER: [llength $cmissing] directive(s) never appeared in the report:"
+        foreach c $cmissing { puts "    $c" }
+        return 0
+    }
+
+    # Zero-count directives, which is the case that matters: present in the
+    # report and never reached.
+    set unhit {}
+    set pending ""
+    foreach line [split $ctxt "\n"] {
+        if {[regexp {/(c_\w+)\s*$} $line -> nm]} {
+            set pending $nm
+        } elseif {$pending ne ""} {
+            if {[regexp {^\s*(\d+)\s} $line -> cnt]} {
+                if {$cnt == 0 && [lsearch -exact $unhit $pending] < 0} {
+                    lappend unhit $pending
+                }
+                set pending ""
+            }
+        }
+    }
+    if {[llength $unhit] > 0} {
+        puts "COVER: [llength $unhit] directive(s) never reached anywhere in the sweep:"
+        foreach c $unhit { puts "    $c" }
+        return 0
+    }
+    puts "COVER: all [llength $covers] directives present and reached"
     return 1
 }
 

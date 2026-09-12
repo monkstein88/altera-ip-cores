@@ -30,6 +30,7 @@ modelsim.ini
 vsim.dbg
 coverage_report.txt
 assert_report.txt
+cover_report.txt
 covhtmlreport/
 # Questa scratch files, named with the pid of the run that made them.
 etch[0-9]*

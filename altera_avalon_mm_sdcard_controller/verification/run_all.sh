@@ -9,7 +9,7 @@
 # this script reports the roll-up. See run() for why "incomplete" is not
 # allowed to look like "passed".
 #
-# Eight suites, deliberately different in kind:
+# Ten suites, deliberately different in kind:
 #
 #   lint          the RTL under -Wall, across every parameter configuration
 #                 that changes what gets built
@@ -26,6 +26,13 @@
 #                 picture is worse than a missing one - a reader has no reason
 #                 to distrust it
 #   facts         every number in the documentation re-derived from source
+#   qsys          the component opened in REAL Platform Designer - loaded,
+#                 elaborated and generated - which the stubbed hw.tcl check
+#                 above cannot do, because a stub agrees with whatever it is told
+#   synthesis     the RTL through Quartus for the DE10-Lite part, with area and
+#                 Fmax checked against a budget - the only suite here that can
+#                 tell you the design is illegal SystemVerilog to its own target
+#                 toolchain, which it was, or what a structural choice costs
 #
 # The last three need no simulator at all, which matters: they catch the dull
 # mechanical faults - a renamed parameter, a port on an interface that does not
@@ -113,6 +120,8 @@ run "assertions actually fire"           "$ROOT/verification/check_assertions_fi
 run "figures match their generators"     "$ROOT/verification/check_figures.sh"
 run "documentation facts"                python3 "$ROOT/doc/tools/check_facts.py"
 run "CRC reference vectors"              python3 "$ROOT/verification/models/crc_reference.py"
+run "synthesis, area and Fmax"           "$ROOT/verification/check_synthesis.sh"
+run "Platform Designer, for real"        "$ROOT/verification/check_qsys.sh"
 
 echo ""
 printf '%s\n' "${summary[@]}"

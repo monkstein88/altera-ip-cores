@@ -24,7 +24,7 @@ own terms — see [Licence](#licence).
 | [`altera_avalon_mm_firewall`](altera_avalon_mm_firewall/README.md) | **Avalon-MM Firewall** · v1.0 · *Bridges and Adapters / Custom* | Burst-capable access-control and fault-isolation firewall for Avalon-MM. Default-deny address windows with per-window read/write/burst permission, whole-burst range checking, downstream timeout detection and an explicit software recovery sequence | **Verified on hardware.** 632 checks, 22 assertions, 11 cover points |
 | [`altera_axi4_lite_firewall`](altera_axi4_lite_firewall/README.md) | **AXI4-Lite Firewall** · v2.0 · *Bridges and Adapters / Custom* | The same idea on AXI4-Lite: single transactions, capture-and-redrive rather than pass-through | **Verified on hardware.** 103 checks, 14 assertions, 6 cover points |
 | [`altera_avalon_mm_sdram_controller`](altera_avalon_mm_sdram_controller/README.md) | **Avalon-MM SDRAM Controller (per-bank rows)** · v1.0 · *Memory Interfaces and Controllers / Custom* | SDR SDRAM controller that keeps one open row *per bank* and treats a read/write turnaround as the datasheet does, rather than as a full row cycle. Drop-in replacement for the vendor core below | **Run on two boards — 8/8 RTL scenarios and 10/10 Nios II checks pass on a Terasic DE0-Nano and on a DE10-Lite, including refresh retention.** 199.8 MB/s on row hits, 99.9% of the bus. 3.6–8.9× the vendor core on mixed and scattered traffic, for 3.8× the logic. 3,039 testbench checks across 19 configurations, four board demonstrations on two parts, 295 documentation claims checked |
-| [`altera_avalon_mm_sdcard_controller`](altera_avalon_mm_sdcard_controller/README.md) | **Avalon-MM SD Card Controller (SPI)** · v1.0 · *Memory Interfaces and Controllers / Custom* | SD card controller in SPI mode. Hardware does the link layer — framing, CRC7/CRC16, tokens, multi-block streaming, pre-emptive busy polling, optional DMA — and a Nios II HAL driver does the card protocol | **Simulation only — never on a board.** 79 checks with the full-core suite run in 5 configurations, 25 assertions, 5 cover points, 22 checks on the Platform Designer component, 199 documentation claims and 9 generated figures checked. **98.1% of SPI line rate**, measured |
+| [`altera_avalon_mm_sdcard_controller`](altera_avalon_mm_sdcard_controller/README.md) | **Avalon-MM SD Card Controller (SPI)** · v1.0 · *Memory Interfaces and Controllers / Custom* | SD card controller in SPI mode. Hardware does the link layer — framing, CRC7/CRC16, tokens, multi-block streaming, pre-emptive busy polling, optional DMA — and a Nios II HAL driver does the card protocol | **Never on a board.** 79 checks with the full-core suite run in 5 configurations, 25 assertions, 5 cover points, 22 checks on the Platform Designer component, 203 documentation claims and 9 generated figures checked. Synthesised, fitted and timed for the DE10-Lite part: **111.53 MHz**, 1719 logic cells, one M9K. **98.1% of SPI line rate**, measured |
 | [`altera_avalon_new_sdram_controller`](altera_avalon_new_sdram_controller/README.md) | **SDRAM Controller Intel FPGA IP** · v20.1 · *Memory Interfaces and Controllers / SDRAM* | Intel's own SDRAM controller, kept here because current Quartus releases no longer ship it | Vendor IP, unhidden so it is usable — see *Provenance*. **Demo verified on hardware:** all 64 MB written and read back at 194 MB/s |
 
 The two firewalls appear in the IP Catalog under **Bridges and Adapters /
@@ -54,7 +54,12 @@ or Arduino header and its own pinout. What it does have is 79 self-checking
 assertions against a card model written to the SD specification — including every
 failure a card can report — run across five configurations, bound SVA assertions
 proven live by fault injection, 22 checks on its Platform Designer component, and
-a measured 98.1% of SPI line rate. Its user guide and block-diagram document are
+a measured 98.1% of SPI line rate. It also now synthesises, fits and meets a
+100 MHz clock on the DE10-Lite's own part at 1719 logic cells and one M9K, and
+its component is loaded into real Platform Designer rather than only against
+stubs — so what is missing is a socket and a card, not a build.
+
+Its user guide and block-diagram document are
 built from that same simulation — every timing figure in them is cut out of a
 recorded VCD rather than drawn, so a figure cannot outlive the RTL it describes.
 All of it in simulation.
@@ -202,8 +207,22 @@ board, all 16 scenarios passing. The **Nios II** examples need Standard 23.1 or
 earlier; 18.1 is what this repository uses and verifies.
 
 The cores' own RTL is plain synthesisable SystemVerilog with no device
-primitives, no vendor attributes and no inferred memory, so it is not tied to a
-family or a release. Only the examples are.
+primitives and no vendor attributes, so it is not tied to a family. Only the
+examples are.
+
+Two qualifications, both learned the hard way. The SD card controller **does**
+infer one memory block — a 1024-byte buffer, 8192 bits — and that is deliberate:
+written to read combinationally instead, the same buffer cost 10 118 cells and
+87% of the core. Inference is portable in a way a primitive or an attribute
+is not, so the family claim survives, but "no inferred memory" was a property
+worth giving up.
+
+And "not tied to a release" is a claim to make only after checking. That same
+core would not compile in **any** Quartus version until recently, because six of
+its modules imported a package in the module header — legal SystemVerilog that
+Quartus implements nowhere, accepted without complaint by both simulators here.
+It is checked now, by `altera_avalon_mm_sdcard_controller/verification/check_synthesis.sh`
+against the real toolchain rather than assumed.
 
 For simulation, all four original cores have an open-source **Verilator**
 regression — 5.050 or newer, because older releases do not implement the SVA the
@@ -214,7 +233,7 @@ assertions use. What differs is what else each one has been run under:
 | `altera_avalon_mm_firewall` | yes | yes — coverage, assertions | yes — functional only, `-DICARUS` skips the SVA bind |
 | `altera_axi4_lite_firewall` | yes | yes — coverage, assertions | yes — same |
 | `altera_avalon_mm_sdram_controller` | yes — 19 configurations, plus Quartus Analysis & Synthesis | yes — 15 of those, coverage, assertion non-vacuity | — |
-| `altera_avalon_mm_sdcard_controller` | yes — 3 testbenches, the full-core one in 5 configurations, with assertions | yes — 7 runs, coverage, assertion non-vacuity | — |
+| `altera_avalon_mm_sdcard_controller` | yes — 3 testbenches, the full-core one in 5 configurations, with assertions, plus Quartus synthesis, fit and timing and a real Platform Designer generate | yes — 7 runs, coverage, assertion non-vacuity, cover directives | — |
 
 The SD card controller additionally carries three checks that need no simulator
 at all: `verification/check_hw_tcl.tcl` executes its Platform Designer component
@@ -226,6 +245,14 @@ against the tracked copy. All three catch the dull mechanical faults — a renam
 parameter, a port added to an interface that does not exist, a typo in the
 driver, a diagram left behind by the RTL it describes — that otherwise survive
 until someone with the full toolchain tries to build a project.
+
+That last clause turned out to be the point. Nobody had tried, and the core's RTL
+did not compile in Quartus at all. So it now also carries two checks that use the
+real toolchain rather than deferring to it: `verification/check_synthesis.sh`
+synthesises, fits and times it for the DE10-Lite part and holds area and Fmax to
+a budget, and `verification/check_qsys.sh` loads the component into real Platform
+Designer and generates a system from it. A stub agrees with whatever the script
+tells it; these two do not.
 
 It also carries `verification/check_assertions_fire.sh`, which injects faults
 into scratch copies of the RTL and requires each to be caught by the assertion
@@ -267,7 +294,9 @@ altera-ip-cores/
 │   ├── doc/                            user guide, block diagrams, generated
 │   │                                   figures — the timing ones cut from a VCD
 │   ├── HAL/ inc/ *_sw.tcl              HAL driver the BSP picks up itself
-│   └── verification/                   hw.tcl, driver, assertion and wave checks
+│   └── verification/                   hw.tcl, driver, assertion and wave checks,
+│                                        plus Quartus synthesis and a real
+│                                        Platform Designer generate
 └── altera_avalon_new_sdram_controller/ Intel's SDRAM controller, unhidden
     └── example/de10_lite_rtl/          plus one hardware demo
 ```

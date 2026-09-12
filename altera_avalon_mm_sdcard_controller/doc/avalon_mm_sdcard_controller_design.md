@@ -678,7 +678,23 @@ Things deliberately left undecided, to be closed during implementation:
    discovered.
 2. ~~`N_CR` bound.~~ **Closed:** 0–8 byte-times for SD cards, 1–8 for MMC. Fixed
    at 8 in hardware, with `TIMEOUT` as the outer bound — no parameter needed.
-3. **`CLKDIV = 1`: functionally settled, timing still open.** A cycle-accurate
+3. ~~**`CLKDIV = 1`: functionally settled, timing still open.**~~ **Closed.**
+   Synthesised, fitted and timed for the DE10-Lite's `10M50DAF484C7G`:
+   **Fmax 111.53 MHz** at the slow 85 °C corner, **+1.034 ns** of slack against
+   a 100 MHz system clock. clk/2 is therefore reachable and the fallback of
+   restricting `CLKDIV >= 2` is not needed. `verification/check_synthesis.sh`
+   holds that as a floor.
+
+   Getting there took two fixes, neither of them in the shifter the question was
+   about. The RTL did not compile in Quartus at all — six modules imported their
+   package in the module header, which Quartus implements in no version — and the
+   first measurement that was possible afterwards came back at **79.18 MHz**,
+   failing by 2.629 ns. The critical path was not the shifter either: it ran from
+   the buffer's read pointer through its occupancy arithmetic into the DMA's
+   burst sizing, converting words to bytes and back on the way. The buffer now
+   reports free space in words directly.
+
+   ~~Original position:~~ **`CLKDIV = 1`: functionally settled, timing still open.** A cycle-accurate
    model of the shifter (`verification/models/spi_phy_model.py`) confirms
    correct operation at clk/2 — exactly 8.00 SPI clocks per byte and bit-exact
    loopback — but only after fixing a real bug it exposed: gating the clock

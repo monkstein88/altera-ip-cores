@@ -119,7 +119,7 @@ except a cycle count catches it, which is why the count is an assertion.
          sd_clk / mosi / miso / cs_n
 ```
 
-Nine RTL files, 3203 lines, one per box plus the package and the top level.
+Nine RTL files, 3352 lines, one per box plus the package and the top level.
 Single clock domain throughout — no PLL, no CDC, nothing that behaves
 differently in simulation than on hardware.
 
@@ -327,7 +327,9 @@ full Quartus toolchain tries to build a project.
 | `check_driver_builds.sh` | 3 | The driver compiles clean under `-Wall -Wextra`; CSD capacity arithmetic for both structure versions; the register header stands alone |
 | `check_assertions_fire.sh` | 4 faults | Each injected into a scratch copy and required to be caught by the assertion meant to catch it |
 | `check_figures.sh` | 19 files | The 9 figures and their generator inputs, each re-rendered and compared byte for byte, because a stale picture is worse than a missing one. Needs `graphviz` for the block diagrams and Node plus a recorded `wave.vcd` for the timing figures; short of those it reports **INCOMPLETE** with a count, rather than passing on what it could not look at |
-| `check_facts.py` | 193 | Every register offset, parameter default, line count and measured figure in these documents, re-derived from the RTL |
+| `check_facts.py` | 203 | Every register offset, parameter default, line count and measured figure in these documents, re-derived from the RTL |
+| `check_synthesis.sh` | 7 | The RTL through Quartus for the DE10-Lite part: it synthesises, fits, and meets a 100 MHz clock, with area and Fmax held to a budget so a change that makes the core bigger or slower fails here |
+| `check_qsys.sh` | 7 | The component in **real** Platform Designer: it loads, its interfaces are the expected six, `USE_DMA=0` genuinely removes `m0`, and a system containing it generates |
 | lint | 10 configs | `-Wall` clean across every parameter that changes what is built |
 
 **The full-core suite runs five times**, and the exit status is the AND across
@@ -449,21 +451,35 @@ host against a memory model with wait states and read latency; the register map;
 the interrupt behaviour; the throughput; the component description; that the
 driver compiles.
 
+**Proven in Quartus**, on the `10M50DAF484C7G` the DE10-Lite carries:
+
+| | |
+| --- | --- |
+| Logic cells | 1719 / 49 760 — **3.5%** |
+| Registers | 888 |
+| Memory | one M9K, 8192 bits |
+| Fmax | **111.53 MHz**, slow 85 °C corner |
+| Slack at 100 MHz | **+1.034 ns** — it meets the clock |
+
+`verification/check_synthesis.sh` runs Analysis & Synthesis, the Fitter and the
+Timing Analyzer and holds those figures to a budget, so a change that makes the
+core bigger or slower fails there rather than being noticed whenever somebody
+next looks. `verification/check_qsys.sh` loads the component into real Platform
+Designer, checks the elaboration callback genuinely removes `m0`, and generates
+a system from it.
+
+**`CLKDIV = 1` is settled.** With Fmax at 111.53 MHz the core meets a 100 MHz
+system clock, so clk/2 — 50 MHz SPI — is reachable on this part. The design
+record's fallback of restricting `CLKDIV >= 2` is not needed.
+
 **Not proven:**
 
-- **Nothing has run on hardware.** No timing closure, no Fmax figure, no
-  resource count, no real card. The DE10-Lite that this repository's other
-  examples target has no microSD socket, so a board demonstration needs a
-  breakout on the GPIO or Arduino header and its own pinout.
-- **`CLKDIV = 1` (50 MHz) is functionally correct but unproven in silicon.**
-  Two system clocks per SPI bit leaves the shifter no slack. If it does not
-  close timing, the honest answer is to make `CLKDIV >= 2` the supported range
-  and document 25 MHz as the ceiling.
-- **No real card has been touched.** The model is written to the specification,
-  and real cards deviate from it — that is why the protocol layer is in software.
-- **The Platform Designer component has not been opened in Quartus.** The Tcl
-  executes and its callbacks behave, but property spellings drift between
-  releases; see the header of the `_hw.tcl`.
+- **Nothing has run on a board, and no real card has been touched.** Synthesis,
+  fitting and timing are all closed on the target part, but that is not the same
+  as a working transfer. The DE10-Lite has no microSD socket, so a demonstration
+  needs a breakout on the GPIO or Arduino header and its own pinout. The card
+  model is written to the specification, and real cards deviate from it — which
+  is why the protocol layer is in software.
 - **Write throughput has no meaningful measurement.** It is bounded by the
   card's internal programming time, which the model does not attempt to
   reproduce faithfully. Published figures for real cards over SPI are 130–200
@@ -476,7 +492,7 @@ driver compiles.
 ## Layout
 
 ```
-rtl/          nine SystemVerilog files, 3203 lines
+rtl/          nine SystemVerilog files, 3352 lines
 tb/           card model, memory model, three testbenches, bound SVA
 simulation/verilator/run_sim.sh
 simulation/questa/run_sim.tcl   coverage and non-vacuity

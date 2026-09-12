@@ -575,7 +575,8 @@ The script records that rather than swapping in a fault that worked.
 non-vacuity reporting.
 
 **It has been run**, against Questa 2024.1, and all seven configurations pass
-with every assertion present and passing non-vacuously somewhere in the sweep.
+with every assertion present and passing non-vacuously somewhere in the sweep,
+and all five cover directives present and reached.
 Treating that first run as part of the work rather than a formality was the
 right call: it found four faults, and the worst was that **none of the
 assertions had ever been running**. The binds sit at compilation-unit scope, so
@@ -599,9 +600,15 @@ README's verification section for the reasoning.
 
 # 10. Limitations and known gaps
 
-- **Never run on a board.** No physical card, no timing closure demonstrated,
-  no board example. This is the largest gap and no amount of simulation closes
-  it.
+- **Never run on a board.** No physical card and no board example. This is the
+  largest gap and no amount of simulation closes it.
+
+  Timing closure is no longer part of it. The core synthesises, fits and meets a
+  100 MHz clock on the DE10-Lite's `10M50DAF484C7G` — Fmax 111.53 MHz at the slow
+  85 °C corner, +1.034 ns of slack, 1719 logic cells and one M9K. That is checked
+  by `verification/check_synthesis.sh` on every run, and the component itself is
+  loaded into real Platform Designer by `verification/check_qsys.sh`. What remains
+  unproven is a transfer to an actual card.
 - **The card model is derived from the specification**, so it cannot reproduce
   the ways real cards deviate from it.
 - **SPI mode only.** No 1-bit or 4-bit native SD, and no path to it in this

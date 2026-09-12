@@ -96,7 +96,6 @@ endpackage : avalon_mm_sdcard_controller_crc_pkg
 // with the stop bit filling bit 0.
 // -----------------------------------------------------------------------------
 module avalon_mm_sdcard_controller_crc7
-    import avalon_mm_sdcard_controller_crc_pkg::*;
 (
     input  logic       clk,
     input  logic       reset_n,
@@ -105,6 +104,16 @@ module avalon_mm_sdcard_controller_crc7
     input  logic [7:0] byte_in,
     output logic [6:0] crc
 );
+
+    // Imported HERE, in the module body, and NOT in the module header.
+    // Quartus rejects a package import between the module name and the
+    // parameter list - IEEE 1800-2017 26.4, which its Verilog parser does not
+    // implement - with "syntax error near text: import; expecting ';'". Both
+    // 18.1 and 25.1 Standard refuse it, so this is not a version to wait out.
+    // Any package type needed by a PORT is spelled out with its package
+    // qualifier instead, since nothing is imported by the time ports are
+    // elaborated.
+    import avalon_mm_sdcard_controller_crc_pkg::*;
 
     always_ff @(posedge clk or negedge reset_n) begin
         if (!reset_n)   crc <= '0;
@@ -127,7 +136,6 @@ endmodule : avalon_mm_sdcard_controller_crc7
 // - there is no second register to get wrong.
 // -----------------------------------------------------------------------------
 module avalon_mm_sdcard_controller_crc16
-    import avalon_mm_sdcard_controller_crc_pkg::*;
 (
     input  logic        clk,
     input  logic        reset_n,
@@ -136,6 +144,16 @@ module avalon_mm_sdcard_controller_crc16
     input  logic [7:0]  byte_in,
     output logic [15:0] crc
 );
+
+    // Imported HERE, in the module body, and NOT in the module header.
+    // Quartus rejects a package import between the module name and the
+    // parameter list - IEEE 1800-2017 26.4, which its Verilog parser does not
+    // implement - with "syntax error near text: import; expecting ';'". Both
+    // 18.1 and 25.1 Standard refuse it, so this is not a version to wait out.
+    // Any package type needed by a PORT is spelled out with its package
+    // qualifier instead, since nothing is imported by the time ports are
+    // elaborated.
+    import avalon_mm_sdcard_controller_crc_pkg::*;
 
     always_ff @(posedge clk or negedge reset_n) begin
         if (!reset_n)   crc <= '0;

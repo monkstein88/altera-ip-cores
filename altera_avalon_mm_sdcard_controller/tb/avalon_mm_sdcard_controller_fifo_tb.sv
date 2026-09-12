@@ -36,6 +36,9 @@ module avalon_mm_sdcard_controller_fifo_tb;
     logic [31:0] w_wdata, w_rdata;
     logic [15:0] level_bytes;
 
+    localparam int unsigned AW = $clog2(DEPTH_BYTES / 4);
+    logic [AW:0] space_words;
+
     avalon_mm_sdcard_controller_fifo #(.DEPTH_BYTES (DEPTH_BYTES)) dut (
         .clk (clk), .reset_n (reset_n), .clear (clear),
         .dir_host_to_card (dir_h2c),
@@ -43,7 +46,8 @@ module avalon_mm_sdcard_controller_fifo_tb;
         .b_empty (b_empty), .b_full (b_full), .flush (flush),
         .w_wr (w_wr), .w_wdata (w_wdata), .w_rd (w_rd), .w_rdata (w_rdata),
         .w_empty (w_empty), .w_full (w_full),
-        .level_bytes (level_bytes)
+        .level_bytes (level_bytes),
+        .w_space_words (space_words)
     );
 
     int unsigned checks_run = 0, checks_fail = 0;

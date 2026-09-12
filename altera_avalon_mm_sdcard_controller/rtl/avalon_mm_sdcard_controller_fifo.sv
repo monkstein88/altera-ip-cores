@@ -44,7 +44,12 @@
 // =============================================================================
 
 module avalon_mm_sdcard_controller_fifo #(
-    parameter int unsigned DEPTH_BYTES = 1024
+    parameter int unsigned DEPTH_BYTES = 1024,
+
+    // Address width of the word store, needed in the PORT list below and so
+    // declared as a parameter rather than the localparam it would otherwise be.
+    // Never overridden - the default is the only correct value.
+    parameter int unsigned AW_PUB = $clog2(DEPTH_BYTES / 4)
 ) (
     input  logic        clk,
     input  logic        reset_n,
@@ -75,7 +80,20 @@ module avalon_mm_sdcard_controller_fifo #(
     output logic        w_full,
 
     // ---- occupancy ---------------------------------------------------------
-    output logic [15:0] level_bytes
+    output logic [15:0] level_bytes,
+
+    // Room left in the store, in WORDS, for the word-side producer.
+    //
+    // Exposed separately from level_bytes rather than derived from it, because
+    // the DMA bounds its read bursts on this and the derivation was on the
+    // critical path: words to bytes here, then bytes back to words in the top
+    // level, then three comparisons in the burst sizing - all to recover a
+    // number the pointers already hold. Straight from the pointers it is one
+    // subtract of AW+1 bits instead of a 16-bit round trip.
+    //
+    // The staging registers are deliberately not counted. This is space in the
+    // STORE, which is what a word-side push consumes, and for that it is exact.
+    output logic [AW_PUB:0] w_space_words
 );
 
     localparam int unsigned DEPTH_WORDS = DEPTH_BYTES / 4;
@@ -92,16 +110,36 @@ module avalon_mm_sdcard_controller_fifo #(
     logic [AW:0]   wptr, rptr;
     logic [AW-1:0] waddr, raddr;
 
-    always_comb begin
-        waddr = wptr[AW-1:0];
-        raddr = rptr[AW-1:0];
-    end
+    // The pop, zero-extended to pointer width once, so the read address and the
+    // pointer advance by the same thing and neither needs a width cast at the
+    // point of use.
+    logic [AW:0]   pop_inc;
 
-    logic mem_empty, mem_full;
-    always_comb begin
-        mem_empty = (wptr == rptr);
-        mem_full  = (wptr[AW-1:0] == rptr[AW-1:0]) && (wptr[AW] != rptr[AW]);
-    end
+    always_comb waddr = wptr[AW-1:0];
+
+    // The read address LOOKS AHEAD past a pop happening this cycle.
+    //
+    // The store is read synchronously so that it maps to a memory block, which
+    // means ram_q lags the address by a cycle. Addressing it with rptr alone
+    // would present the word that was just popped. Adding the pop makes the
+    // fetch land on the NEXT head, so the consumer still sees show-ahead
+    // behaviour - a valid head on the output with no read-enable handshake -
+    // with one register instead of a combinational read of the whole array.
+    always_comb raddr = rptr[AW-1:0] + pop_inc[AW-1:0];
+
+    // The fetched head, and whether it is valid. ram_q is the memory block's
+    // output register; head_v says it currently holds mem[rptr].
+    logic [31:0] ram_q;
+    logic        head_v;
+
+    // No mem_empty any more. "The store holds nothing" stopped being the useful
+    // question once the read became synchronous - what a consumer needs to know
+    // is whether the head has been FETCHED, which is head_v above. The bound
+    // assertion that used to check mem_empty checks head_v instead, and it is
+    // the stronger of the two.
+    logic mem_full;
+    always_comb mem_full = (wptr[AW-1:0] == rptr[AW-1:0]) &&
+                           (wptr[AW] != rptr[AW]);
 
     logic [AW:0] mem_level;
     always_comb mem_level = wptr - rptr;
@@ -129,8 +167,10 @@ module avalon_mm_sdcard_controller_fifo #(
 
     // A byte read needs a word loaded; load one whenever the holding register
     // is empty and the memory has something.
+    // The head has to be IN ram_q, not merely written into the store: a word
+    // written last cycle is not readable until the fetch that follows it lands.
     logic unpack_load;
-    always_comb unpack_load = dir_host_to_card && !unpack_valid && !mem_empty;
+    always_comb unpack_load = dir_host_to_card && !unpack_valid && head_v;
 
     // -------------------------------------------------------------------------
     // Pointer and memory update
@@ -140,6 +180,13 @@ module avalon_mm_sdcard_controller_fifo #(
         mem_push = dir_host_to_card ? w_wr        : pack_commit;
         mem_pop  = dir_host_to_card ? unpack_load : w_rd;
     end
+
+    // A pop only happens if there is a fetched head to pop. Everything that
+    // advances rptr keys off this, so the pointer and the look-ahead address
+    // cannot disagree about whether a word left the queue.
+    logic mem_pop_eff;
+    always_comb mem_pop_eff = mem_pop && head_v;
+    always_comb pop_inc     = {{AW{1'b0}}, mem_pop_eff};
 
     logic [31:0] mem_wdata;
     always_comb begin
@@ -156,25 +203,59 @@ module avalon_mm_sdcard_controller_fifo #(
             wptr <= '0;
             rptr <= '0;
         end else begin
-            if (mem_push && !mem_full)  wptr <= wptr + 1'b1;
-            if (mem_pop  && !mem_empty) rptr <= rptr + 1'b1;
+            if (mem_push && !mem_full) wptr <= wptr + 1'b1;
+            if (mem_pop_eff)           rptr <= rptr + 1'b1;
         end
     end
 
+    // One write port and one SYNCHRONOUS read port, in a single clocked block
+    // with no reset on either - which is what lets this infer a memory block
+    // rather than a register file.
+    //
+    // WHAT THIS COST BEFORE. The read used to be combinational, for one
+    // consistent semantic across both ports, on the reasoning that a store this
+    // small "costs an MLAB rather than a block RAM". MAX 10 has no MLABs - they
+    // are a Stratix and Arria feature - so on the actual target the array became
+    // 8279 registers and a mux, 10118 logic cells, 87% of the entire core, for
+    // 1024 bytes that fit in one M9K with room spare. Nothing in simulation can
+    // see that; verification/check_synthesis.sh is what does.
     always_ff @(posedge clk) begin
         if (mem_push && !mem_full) mem[waddr] <= mem_wdata;
+        ram_q <= mem[raddr];
     end
 
-    // Show-ahead read: w_rdata always presents the head of the queue, valid
-    // whenever w_empty is low, and w_rd pops it.
+    // Does ram_q hold the word at rptr?
     //
-    // A registered read would be the more FPGA-idiomatic choice, but it makes
-    // w_rdata lag raddr by a cycle while the unpack path below reads mem[raddr]
-    // combinationally - two different latencies onto the same array, which is
-    // exactly how off-by-one bugs get built. The store is at most 2048 words,
-    // so a combinational read costs an MLAB rather than a block RAM and buys
-    // one consistent semantic for both ports.
-    always_comb w_rdata = mem[raddr];
+    // Compared against the CURRENT wptr, deliberately, because a word written
+    // this cycle is not readable this cycle - the fetch already issued with the
+    // old contents. Using the post-push pointer would mark the head valid one
+    // cycle early and hand the consumer whatever the location held before.
+    //
+    // This also supplies the fill latency for free: from empty, a push leaves
+    // wptr == rptr for this cycle, so head_v stays low and only rises once the
+    // following fetch has landed.
+    logic [AW:0] rptr_next;
+    always_comb rptr_next = rptr + pop_inc;
+
+    always_ff @(posedge clk or negedge reset_n) begin
+        if (!reset_n)     head_v <= 1'b0;
+        else if (clear)   head_v <= 1'b0;
+        else              head_v <= (wptr != rptr_next);
+    end
+
+    // Show-ahead is preserved: w_rdata always presents the head of the queue,
+    // valid whenever w_empty is low, and w_rd pops it. Both clients rely on
+    // that - the DMA drives m0_writedata straight from it and decides to write
+    // in the same cycle, and the CSR DATA window returns it on a read - so it
+    // is the contract, not an implementation detail.
+    //
+    // What changed is only how the head gets there. It used to be a
+    // combinational read of the array; it is now the memory block's output
+    // register, fetched one cycle ahead using the look-ahead address above. The
+    // two latencies onto one array that the old comment here warned about are
+    // avoided the same way: there is now exactly one read path, and the byte
+    // side takes its word from the same register.
+    always_comb w_rdata = ram_q;
 
     // -------------------------------------------------------------------------
     // Byte side bookkeeping
@@ -205,7 +286,7 @@ module avalon_mm_sdcard_controller_fifo #(
 
             // ---- unpack (host -> card) ----
             if (unpack_load) begin
-                unpack_data  <= mem[raddr];
+                unpack_data  <= ram_q;
                 unpack_valid <= 1'b1;
                 unpack_cnt   <= '0;
             end else if (b_rd && unpack_valid) begin
@@ -248,13 +329,21 @@ module avalon_mm_sdcard_controller_fifo #(
         end else begin
             b_empty = 1'b1;                         // byte side never consumes
             b_full  = mem_full && (pack_cnt == 2'd3);
-            w_empty = mem_empty;                    // word side consumes
+            // `!head_v`, not `mem_empty`. A word in the store that has not yet
+            // been fetched into ram_q is not a word the consumer can have, and
+            // saying otherwise would present whatever ram_q happened to hold -
+            // the same class of mistake the byte side's own flag avoids just
+            // below.
+            w_empty = !head_v;                      // word side consumes
             w_full  = 1'b1;                         // ... and never produces
         end
     end
 
     // Occupancy in bytes, for STATUS. Includes the staging registers so the
     // number software reads matches the number of bytes actually held.
+    // One subtract, AW+1 bits wide, and nothing else.
+    always_comb w_space_words = (AW+1)'(DEPTH_WORDS) - mem_level;
+
     always_comb begin
         level_bytes = 16'(mem_level) * 16'd4
                     + 16'(pack_cnt)

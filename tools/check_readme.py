@@ -326,6 +326,45 @@ check("the absent-core paragraph quotes the same check count",
 # The Questa column is covered by the generic per-core check above, which is
 # now bidirectional - no SD-specific version is needed.
 
+# The synthesis figures, against the core's own README rather than restated from
+# memory. This file quoted a check count and a documentation-claim count that had
+# been wrong for two commits, so numbers about that core get pinned here now.
+# The two documents word these differently - a table row in the core's README, a
+# sentence here - so each needs its own pattern. Comparing the captured numbers is
+# the point, not the phrasing.
+# The phrase "N logic cells" is reserved for the CURRENT figure. Historical
+# numbers - the 10118 the buffer used to cost - are written without it, so that
+# this check can be about every occurrence rather than the first one and still
+# leave room to say what the number used to be.
+#
+# EVERY occurrence in this file, not the first one. Both figures are quoted twice
+# here - once in the What's here row and once in the prose - and a check that
+# looked only at the first would pass while the second drifted. That is precisely
+# how the stale check count survived, so it is not a hypothetical.
+for label, pat_top, pat_core in (
+        ("logic-cell count", r"(\d+) logic cells", r"Logic cells \| (\d+) /"),
+        ("Fmax", r"\*\*(\d+)\.\d+ MHz\*\*", r"\*\*(\d+)\.\d+ MHz\*\*")):
+    tops   = re.findall(pat_top, README)
+    m_core = re.search(pat_core, sd_readme)
+    check(f"the top-level quotes the SD card controller's {label} at all",
+          len(tops) > 0 and m_core is not None)
+    if tops and m_core:
+        bad = sorted({t for t in tops if t != m_core.group(1)})
+        check(f"every {label} the top-level quotes matches the core's README",
+              not bad,
+              f"core README {m_core.group(1)}, top-level also has {', '.join(bad)}")
+
+# The core deliberately infers one memory block, so the blanket claim that no core
+# does must not come back - it cost 10118 logic cells to avoid.
+#
+# Matched as the original SENTENCE rather than as the phrase. The prose that
+# retired the claim quotes it in order to say it was given up, so a bare
+# substring test fails on the very text that fixed it.
+check("the top-level does not claim the cores infer no memory",
+      "no vendor attributes and no inferred memory" not in README)
+check("the top-level says which core infers memory",
+      "infer one memory block" in README)
+
 # ---------------------------------------------------------------------------
 print()
 print("=== check_readme: altera-ip-cores ===")

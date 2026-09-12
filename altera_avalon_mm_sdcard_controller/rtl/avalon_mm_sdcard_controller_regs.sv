@@ -35,7 +35,6 @@
 // =============================================================================
 
 module avalon_mm_sdcard_controller_regs
-    import avalon_mm_sdcard_controller_pkg::*;
 #(
     parameter int unsigned CSR_ADDR_WIDTH  = 5,
     parameter int unsigned ADDR_WIDTH      = 32,
@@ -80,7 +79,7 @@ module avalon_mm_sdcard_controller_regs
     output logic                          cmd_start,
     output logic [5:0]                    cmd_index,
     output logic [31:0]                   cmd_arg,
-    output resp_e                         cmd_resp_type,
+    output avalon_mm_sdcard_controller_pkg::resp_e                         cmd_resp_type,
     output logic                          cmd_data_en,
     output logic                          cmd_data_dir,
     output logic                          cmd_multi,
@@ -98,7 +97,7 @@ module avalon_mm_sdcard_controller_regs
     input  logic [7:0]                    seq_last_r1,
     input  logic [7:0]                    seq_last_datresp,
     input  logic [7:0]                    seq_last_daterr,
-    input  phase_e                        seq_err_phase,
+    input  avalon_mm_sdcard_controller_pkg::phase_e                        seq_err_phase,
 
     input  logic                          dma_busy,
     input  logic                          dma_done,
@@ -116,6 +115,16 @@ module avalon_mm_sdcard_controller_regs
     output logic [31:0]                   pio_wdata,
     input  logic [31:0]                   pio_rdata
 );
+
+    // Imported HERE, in the module body, and NOT in the module header.
+    // Quartus rejects a package import between the module name and the
+    // parameter list - IEEE 1800-2017 26.4, which its Verilog parser does not
+    // implement - with "syntax error near text: import; expecting ';'". Both
+    // 18.1 and 25.1 Standard refuse it, so this is not a version to wait out.
+    // Any package type needed by a PORT is spelled out with its package
+    // qualifier instead, since nothing is imported by the time ports are
+    // elaborated.
+    import avalon_mm_sdcard_controller_pkg::*;
 
     localparam int unsigned BCW = $clog2(MAX_BLOCK_BYTES + 1);
 
