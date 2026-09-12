@@ -105,7 +105,8 @@ module avalon_mm_sdcard_controller_seq_sva (
     input logic        cmd_start,
     input logic        data_done,
     input logic        fifo_b_rd,
-    input logic        fifo_b_empty
+    input logic        fifo_b_empty,
+    input logic [7:0]  err_flags
 );
 
     default disable iff (!reset_n);
@@ -145,6 +146,24 @@ module avalon_mm_sdcard_controller_seq_sva (
     // Completion is reported exactly once per transfer.
     a_done_only_while_busy:
         assert property (@(posedge clk) data_done |-> busy);
+
+    // The error LEVELS must be released before the sequencer goes idle.
+    //
+    // IRQ_STATUS is the sticky record of what went wrong - that is its whole
+    // job - and the CSR sets it from these levels every cycle, with set beating
+    // clear so an event arriving alongside an acknowledgement is not lost. If a
+    // level were still asserted once the sequencer was idle, software could
+    // never clear the register: the write would land and the level would set the
+    // bit straight back. The failure is not a lost error, it is an error that
+    // can never be acknowledged, and the transfer that follows inherits it.
+    //
+    // S_DONE releases them on the branch it takes while the DMA or the shifter
+    // is still draining, so this holds only because S_DONE is never entered with
+    // both already quiet - the shifter free-runs 0xFF right up to the state that
+    // precedes it. That is a fact about ANOTHER module, which is exactly why it
+    // is asserted here rather than left as a comment.
+    a_error_levels_released_before_idle:
+        assert property (@(posedge clk) !busy |-> (err_flags == 8'h00));
 
     c_transfer_completes: cover property (@(posedge clk) data_done);
     c_command_deferred:   cover property (@(posedge clk) cmd_pending);

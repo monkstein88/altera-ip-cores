@@ -11,7 +11,7 @@ driver the BSP picks up by itself.
 
 > **Status: simulation only. This core has never been on a board.**
 >
-> It passes 75 self-checking assertions across three testbenches against a
+> It passes 79 self-checking assertions across three testbenches against a
 > behavioural SD card model — with the full-core suite run in five
 > configurations — plus bound SVA assertions proven live by fault injection,
 > 22 checks on the Platform Designer component and three on the HAL driver.
@@ -119,7 +119,7 @@ except a cycle count catches it, which is why the count is an assertion.
          sd_clk / mosi / miso / cs_n
 ```
 
-Nine RTL files, 3153 lines, one per box plus the package and the top level.
+Nine RTL files, 3203 lines, one per box plus the package and the top level.
 Single clock domain throughout — no PLL, no CDC, nothing that behaves
 differently in simulation than on hardware.
 
@@ -170,6 +170,20 @@ a second command must not corrupt a transfer in flight — but it means software
 that writes without checking loses the command silently. Polling afterwards does
 not catch it either: busy is already clear, so the poll returns immediately for
 a command that never happened. The HAL driver waits for idle before every write.
+
+**A `DATA` access the buffer cannot serve is now reported.** A write with the
+buffer full, or a read with it empty, is refused — which is the only correct
+thing to do, since there is no room for the word or no word to give. It used to
+be refused *silently*, so the only evidence was wrong bytes at the far end of
+the transfer. `IRQ_STATUS.ERR_PIO` (bit 18) says it happened. This was the one
+hazard in the map with no error bit; the analogous case, a `CMD` write while
+busy, is at least documented above.
+
+**Bits 16 and 17 are events, not errors.** The error mask is bits 8–15 and 18,
+deliberately not 8–17. Including the card-detect bits made `STATUS.ERROR`
+assert because a card was fitted — from the first cycle after reset, since an
+already-present card reads as an insertion — and made the driver reset the data
+path on a card event.
 
 **One interrupt mask, not two.** `IRQ_STATUS` records every event
 unconditionally and `IRQ_ENABLE` gates only the pin, so polling always works.
@@ -308,10 +322,10 @@ full Quartus toolchain tries to build a project.
 | --- | --- | --- |
 | `phy` | 12 | Exactly 8.00 SPI clocks per byte at every divisor; bit-exact loopback; the `SAMPLE_DLY` bound |
 | `fifo` | 5 | Byte↔word round trip both directions, little-endian order, partial-word flush |
-| `core` | 58 | Identification, single and multi-block both directions, CSD/CID, every card-reported failure, `ERR_INFO` contents, every per-state timeout escape, soft reset from inside a transfer, throughput floor, Avalon conformance |
+| `core` | 62 | Identification, single and multi-block both directions, CSD/CID, every card-reported failure, `ERR_INFO` contents, every per-state timeout escape, soft reset from inside a transfer, throughput floor, Avalon conformance |
 | `check_hw_tcl.tcl` | 22 | The component executes; parameters and ports exist; validation rejects exactly the bad configurations |
 | `check_driver_builds.sh` | 3 | The driver compiles clean under `-Wall -Wextra`; CSD capacity arithmetic for both structure versions; the register header stands alone |
-| `check_assertions_fire.sh` | 3 faults | Each injected into a scratch copy and required to be caught by the assertion meant to catch it |
+| `check_assertions_fire.sh` | 4 faults | Each injected into a scratch copy and required to be caught by the assertion meant to catch it |
 | `check_figures.sh` | 19 files | The 9 figures and their generator inputs, each re-rendered and compared byte for byte, because a stale picture is worse than a missing one. Needs `graphviz` for the block diagrams and Node plus a recorded `wave.vcd` for the timing figures; short of those it reports **INCOMPLETE** with a count, rather than passing on what it could not look at |
 | `check_facts.py` | 193 | Every register offset, parameter default, line count and measured figure in these documents, re-derived from the RTL |
 | lint | 10 configs | `-Wall` clean across every parameter that changes what is built |
@@ -462,7 +476,7 @@ driver compiles.
 ## Layout
 
 ```
-rtl/          nine SystemVerilog files, 3153 lines
+rtl/          nine SystemVerilog files, 3203 lines
 tb/           card model, memory model, three testbenches, bound SVA
 simulation/verilator/run_sim.sh
 simulation/questa/run_sim.tcl   coverage and non-vacuity

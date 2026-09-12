@@ -234,19 +234,25 @@ for core in ORIGINAL:
     check(f"{core}'s Questa cell matches whether the flow exists",
           questa_claimed == has_flow,
           f"cell {cells[2]!r}, run_sim.tcl present: {has_flow}")
-    # The direction that matters is the other one. Checking only that a cell
-    # saying "never executed" is backed by a file saying the same catches
-    # nothing: the failure mode is a cell that claims the flow HAS been run
-    # against a file that says it has not. So the file is the authority - if it
-    # declares itself unrun, the cell must say so too.
+    # The file is the authority, and the cell must agree with it in BOTH
+    # directions.
+    #
+    # This once guarded only one of them - a cell must not claim an unrun flow
+    # had been run - on the reasoning that overclaiming is the dangerous
+    # direction. It is, but underclaiming is not free: the SD card controller's
+    # flow was run, its own tcl said so, and this table went on calling it
+    # "never executed" for two commits with the whole suite green. A table that
+    # can be wrong in a flattering direction and a table that can be wrong in a
+    # modest one are both just a table that can be wrong.
     if has_flow:
         tcl = rd(os.path.join(core, "simulation", "questa", "run_sim.tcl"))
         unrun = "NOT YET RUN" in tcl or "has NOT been executed" in tcl
-        if unrun:
-            check(f"{core}'s Questa cell does not claim an unrun flow was run",
-                  "never executed" in cells[2] or "not" in cells[2].lower(),
-                  f"the flow says it has not been run; the cell says "
-                  f"{cells[2]!r}")
+        cell_says_unrun = ("never executed" in cells[2]
+                           or "not run" in cells[2].lower())
+        check(f"{core}'s Questa cell agrees with whether the flow has run",
+              unrun == cell_says_unrun,
+              f"flow declares itself unrun: {unrun}; cell says unrun: "
+              f"{cell_says_unrun} ({cells[2]!r})")
 
     verilator_claimed = cells[1] not in ("—", "-", "")
     check(f"{core}'s Verilator cell matches whether the flow exists",
@@ -289,6 +295,36 @@ check("the hardware results table does not list the SD card controller",
       "SD Card Controller |" not in README)
 check("the core's own README agrees it has not been on a board",
       "never been on a board" in rd(f"{SD}/README.md"))
+
+# The check COUNT this file quotes for that core, against the count the core's
+# own README quotes - which its check_facts.py in turn re-derives from the
+# testbench sources. Chaining it that way rather than counting here keeps one
+# definition of the number and still catches a drift at either end.
+#
+# This is not hypothetical tidying. The assertion and cover-point figures in that
+# row were already checked and the surrounding ones were not, so "57 checks" and
+# "193 documentation claims" sat stale through two commits that changed both
+# while the suite reported green - exactly the fault this file exists to prevent.
+sd_readme = rd(f"{SD}/README.md")
+m_core = re.search(r"passes (\d+) self-checking assertions", sd_readme)
+m_top  = re.search(r"(\d+) checks with the full-core suite", sd_row or "")
+check("the SD card controller's check count matches its own README",
+      m_core is not None and m_top is not None
+      and m_core.group(1) == m_top.group(1),
+      f"top-level {m_top.group(1) if m_top else '?'}, "
+      f"core README {m_core.group(1) if m_core else '?'}")
+
+# The same figure appears again in the prose that explains why the core is absent
+# from the hardware table. Two places quoting one number is two places to forget.
+m_prose = re.search(r"What it does have is (\d+) self-checking", README)
+check("the absent-core paragraph quotes the same check count",
+      m_prose is not None and m_core is not None
+      and m_prose.group(1) == m_core.group(1),
+      f"paragraph {m_prose.group(1) if m_prose else '?'}, "
+      f"core README {m_core.group(1) if m_core else '?'}")
+
+# The Questa column is covered by the generic per-core check above, which is
+# now bidirectional - no SD-specific version is needed.
 
 # ---------------------------------------------------------------------------
 print()

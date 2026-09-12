@@ -128,7 +128,23 @@ package avalon_mm_sdcard_controller_pkg;
     localparam int IRQ_CARD_INSERT   = 16;
     localparam int IRQ_CARD_REMOVE   = 17;
 
-    localparam logic [31:0] IRQ_ERR_MASK = 32'h0003_FF00;  // bits 8..17
+    // A DATA access the core could not honour: a write with the buffer full, or
+    // a read with it empty. Both are silent otherwise - the buffer drops a word
+    // it has no room for and returns a stale one it does not have - so the only
+    // evidence software ever gets is corrupt data at the far end. Sits above the
+    // card-detect bits because 8..15 are full: those eight are the sequencer's
+    // err_flags, one for one.
+    localparam int IRQ_ERR_PIO        = 18;
+
+    // The error mask, and the one thing about it that is easy to get wrong.
+    //
+    // It is deliberately NOT bits 8..17. CARD_INSERT and CARD_REMOVE are events,
+    // not faults, and including them made STATUS.ERROR assert because somebody
+    // plugged a card in - from the first cycle after reset, in fact, since
+    // card_present_q resets low and a card that is already fitted reads as an
+    // insertion. It also made the driver's failure test fire on a card event and
+    // reset the data path for no reason.
+    localparam logic [31:0] IRQ_ERR_MASK = 32'h0004_FF00;  // bits 8..15 and 18
 
     // -------------------------------------------------- CLKDIV (word 4, RW) --
     // SPI clock = clk / (2 * CLKDIV), CLKDIV >= 1.

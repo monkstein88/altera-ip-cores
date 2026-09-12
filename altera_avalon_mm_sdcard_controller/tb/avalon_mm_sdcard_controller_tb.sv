@@ -915,6 +915,63 @@ localparam bit TRACE_CMD = 1'b0;
         send_cmd(6'd58, 32'h0, RESP_R3R7, 0,0,0,0, st);
         check_noerr("a data reset mid-write leaves the core usable", st);
 
+        // ---- the PIO window reports what it could not do --------------------
+        //
+        // A DATA write with the buffer full is dropped and a DATA read with it
+        // empty returns a stale word, both without complaint anywhere. That is
+        // silent data corruption whose only evidence is wrong bytes at the far
+        // end, and it is the one hazard in this register map that had no error
+        // bit - the analogous case, a CMD write while busy, is at least
+        // documented.
+        $display("  -- the PIO window reports overflow and underflow --");
+
+        // Underflow: read DATA with nothing in the buffer. No transfer is in
+        // flight, so there is certainly nothing to hand back.
+        csr_wr(REG_CTRL, CTRL_RUNNING | (32'b1 << CTRL_SRST_DAT));
+        csr_wr(REG_CTRL, CTRL_RUNNING);
+        csr_wr(REG_IRQ_STATUS, 32'hFFFF_FFFF);
+        csr_rd(REG_DATA, rd);
+        csr_rd(REG_IRQ_STATUS, st);
+        check("a DATA read with the buffer empty sets ERR_PIO",
+              st[IRQ_ERR_PIO]);
+
+        // Overflow: fill the word side past its depth with no transfer draining
+        // it. FIFO_DEPTH_BYTES/4 words fill it exactly, so one more must fail.
+        csr_wr(REG_CTRL, CTRL_RUNNING & ~(32'b1 << CTRL_DMA_EN));
+        csr_wr(REG_BLK_COUNT, 32'd1);
+        cmd_issue(6'd24, blk_arg(88), RESP_R1, 1'b1, 1'b1, 1'b0, 1'b0);
+        csr_wr(REG_IRQ_STATUS, 32'hFFFF_FFFF);
+        for (i = 0; i < (TB_FIFO_B/4) + 8; i++)
+            csr_wr(REG_DATA, 32'hFEED_FACE);
+        csr_rd(REG_IRQ_STATUS, st);
+        check("a DATA write with the buffer full sets ERR_PIO",
+              st[IRQ_ERR_PIO]);
+        csr_wr(REG_TIMEOUT, 32'd20000);
+        cmd_wait(6'd24, st);
+        csr_wr(REG_CTRL, CTRL_RUNNING | (32'b1 << CTRL_SRST_DAT));
+        csr_wr(REG_CTRL, CTRL_RUNNING);
+        csr_wr(REG_TIMEOUT, 32'd200000);
+        u_card.resync();
+
+        // ---- a card event is not an error -----------------------------------
+        //
+        // IRQ_ERR_MASK used to span bits 8..17, which swept in CARD_INSERT and
+        // CARD_REMOVE. STATUS.ERROR then asserted because a card was fitted -
+        // from the first cycle after reset, since card_present_q resets low and
+        // an already-present card reads as an insertion - and the driver reset
+        // the data path on a card event for no reason.
+        csr_wr(REG_IRQ_STATUS, 32'hFFFF_FFFF);
+        sd_cd_n = 1'b1;                       // removed
+        repeat (4) @(negedge clk);
+        sd_cd_n = 1'b0;                       // and back
+        repeat (4) @(negedge clk);
+        csr_rd(REG_IRQ_STATUS, st);
+        check("a card event is recorded in IRQ_STATUS",
+              st[IRQ_CARD_INSERT] && st[IRQ_CARD_REMOVE]);
+        csr_rd(REG_STATUS, rd);
+        check("a card event does NOT set STATUS.ERROR", rd[STAT_ERROR] === 1'b0);
+        csr_wr(REG_IRQ_STATUS, 32'hFFFF_FFFF);
+
         // ---- Avalon conformance ---------------------------------------------
         check("m0 never issued a read with all byteenables clear",
               !mem_saw_zero_be_read);

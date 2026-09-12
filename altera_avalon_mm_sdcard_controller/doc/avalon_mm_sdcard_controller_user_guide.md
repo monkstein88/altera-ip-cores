@@ -345,6 +345,21 @@ Write 1 to clear. `IRQ_ENABLE` has the same layout.
 | 13 | `ERR_DAT_TOKEN` | The card sent a data error token |
 | 14 | `ERR_WRITE` | The data-response token rejected the block |
 | 15 | `ERR_DMA` | `m0` returned an error response |
+| 16 | `CARD_INSERT` | `sd_cd_n` went low |
+| 17 | `CARD_REMOVE` | `sd_cd_n` went high |
+| 18 | `ERR_PIO` | A `DATA` access the buffer could not serve |
+
+`ERR_PIO` is the one to know about if you use the `DATA` window. A write when the
+buffer is full, or a read when it is empty, is refused — and refusing it is the
+only correct thing to do, since there is no room for the word or no word to give.
+Before this bit existed the refusal was also silent, so the only evidence was
+wrong bytes at the far end of the transfer. It covers using the window in the
+wrong direction for the transfer in flight too, which is the same mistake.
+
+**Bits 16 and 17 are events, not errors.** `STATUS.ERROR` and the driver's error
+mask cover bits 8–15 and 18 only. A mask that included the card-detect bits made
+`STATUS.ERROR` assert because a card was fitted — from the first cycle after
+reset, since an already-present card reads as an insertion.
 
 An interrupt handler must **read `IRQ_STATUS`** rather than infer the cause from
 the pin. During a data phase `DMA_DONE` raises the line repeatedly as bursts
@@ -514,7 +529,7 @@ Everything that can be checked in software alone:
 | Simulation | 3 testbenches, the full-core one in 5 configurations |
 | Platform Designer | `hw.tcl` executed against stubbed Qsys commands — 22 checks |
 | HAL driver | Compiled against stubbed Nios II headers, plus the CSD parse unit-tested |
-| Assertions | 3 faults injected, each required to be caught by the assertion meant to catch it |
+| Assertions | 4 faults injected, each required to be caught by the assertion meant to catch it |
 | Facts | Every number in the documentation re-derived from source |
 | CRC vectors | The polynomials checked against an independent Python model |
 
@@ -537,7 +552,7 @@ why it survived until the PIO configuration was run.
 
 ## 9.2 Assertions, and proving they are alive
 
-24 bound SVA assertions and 5 cover points, in
+25 bound SVA assertions and 5 cover points, in
 `tb/avalon_mm_sdcard_controller_sva.sv`.
 
 They check invariants rather than results. That suits this core: most of its

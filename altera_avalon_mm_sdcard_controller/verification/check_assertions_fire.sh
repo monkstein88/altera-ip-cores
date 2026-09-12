@@ -31,6 +31,9 @@
 #                    its last byte reached the card
 #   idle_in_send     raising tx_idle in a sending state, which makes the shifter
 #                    emit a 0xFF nobody asked for inside a data block
+#   stuck_err_level  holding the error levels asserted into idle, which leaves
+#                    IRQ_STATUS impossible for software to acknowledge - the
+#                    write lands and the level sets the bit straight back
 # =============================================================================
 set -uo pipefail
 
@@ -134,6 +137,19 @@ inject idle_in_send a_send_state_never_idles \
     avalon_mm_sdcard_controller_seq.sv \
     "phy_tx_idle = rx_state;" \
     "phy_tx_idle = rx_state || !tx_want;"
+
+# Stop S_DONE releasing the error levels, so they are still asserted when the
+# sequencer reaches idle. Nothing functional breaks and no test notices: the
+# transfer still completes, the right error is still reported, and the bits still
+# read back. What breaks is only the ability to CLEAR them - the CSR sets
+# IRQ_STATUS from these levels every cycle with set beating clear, so software's
+# acknowledgement is overwritten the moment it lands and every later transfer
+# inherits the error. Precisely the kind of fault an invariant catches and a
+# functional check does not.
+inject stuck_err_level a_error_levels_released_before_idle \
+    avalon_mm_sdcard_controller_seq.sv \
+    "err_flags <= '0;" \
+    "err_flags <= err_flags;"
 
 echo ""
 if [ $fail -eq 0 ]; then echo "*** PASS ***"; else echo "*** FAIL ***"; fi

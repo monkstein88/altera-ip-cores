@@ -51,6 +51,13 @@ PLLJ_PLLSPE_INFO.txt
 # installation. Intel's output, so it is not redistributed here either.
 **/simulation/.gen/
 
+# --- Python bytecode ---
+# tools/check_readme.py and each core's doc/tools/*.py are run directly, so this
+# only appears when one is imported or byte-compiled, but every core's own
+# .gitignore already carries it and the top level had no reason to differ.
+__pycache__/
+*.pyc
+
 # --- OS / editor cruft ---
 .DS_Store
 Thumbs.db

@@ -149,8 +149,12 @@
 #define ALT_SDCARD_IRQ_ERR_DMA_MSK       (0x00008000u)
 #define ALT_SDCARD_IRQ_CARD_INSERT_MSK   (0x00010000u)
 #define ALT_SDCARD_IRQ_CARD_REMOVE_MSK   (0x00020000u)
+#define ALT_SDCARD_IRQ_ERR_PIO_MSK       (0x00040000u)
 
-#define ALT_SDCARD_IRQ_ERR_MSK           (0x0003FF00u)
+/* Bits 8..15 and 18 - NOT 8..17. CARD_INSERT and CARD_REMOVE are events, not
+ * faults, and a mask that swept them in made STATUS.ERROR assert because a card
+ * was fitted, and made this driver reset the data path on a card event. */
+#define ALT_SDCARD_IRQ_ERR_MSK           (0x0004FF00u)
 
 /* ------------------------------------------------------------ CLKDIV ------ */
 /* SPI clock = clk / (2 * CLKDIV). SAMPLE_DLY delays MISO capture by N system

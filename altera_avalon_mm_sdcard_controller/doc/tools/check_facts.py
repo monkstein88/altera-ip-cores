@@ -242,6 +242,18 @@ check("README does not claim hardware verification",
 # ---------------------------------------------------------------------------
 UG = rd("doc/avalon_mm_sdcard_controller_user_guide.md")
 BD = rd("doc/avalon_mm_sdcard_controller_block_diagrams.md")
+
+# The injected-fault count, which both documents quote and neither was checking.
+# It sat at 3 through the commit that made it 4.
+FIRE = rd("verification/check_assertions_fire.sh")
+n_faults = len(re.findall(r"^inject \w", FIRE, re.M))
+for doc, label in ((README, "README"), (UG, "user guide")):
+    m = re.search(r"(\d+) faults?", doc)
+    if m:
+        check(f"{label}'s injected-fault count matches the script",
+              int(m.group(1)) == n_faults,
+              f"{label} {m.group(1)}, script injects {n_faults}")
+
 SVA = rd("tb/avalon_mm_sdcard_controller_sva.sv")
 SEQ = rd("rtl/avalon_mm_sdcard_controller_seq.sv")
 

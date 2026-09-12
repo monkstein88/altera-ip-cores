@@ -46,6 +46,12 @@ static int irq_to_result(alt_u32 st)
         return ALT_SDCARD_ERR_WRITE;
     if (st & ALT_SDCARD_IRQ_ERR_CMD_ILL_MSK)
         return ALT_SDCARD_ERR_UNUSABLE;
+    /* Reported last because it is a fault in this driver's own pacing rather
+     * than anything the card did: a DATA write with the buffer full, or a read
+     * with it empty. Both are dropped silently by the hardware, so if the core
+     * says it happened the data moved through PIO is not trustworthy. */
+    if (st & ALT_SDCARD_IRQ_ERR_PIO_MSK)
+        return ALT_SDCARD_ERR_PIO;
     return ALT_SDCARD_OK;
 }
 
@@ -438,6 +444,45 @@ static alt_u32 block_to_arg(alt_sdcard_dev *dev, alt_u32 block)
     return (dev->type == ALT_SDCARD_TYPE_SDHC) ? block : (block * 512u);
 }
 
+/* Put things back after a failed transfer.
+ *
+ * Resetting the data path clears the CONTROLLER, which is all it claims to do
+ * and all it can do. It does not touch the card, and a failed write leaves the
+ * card in the middle of something:
+ *
+ *   Stopped at a block boundary - a multi-block write that failed between
+ *   blocks - the card is waiting for the next data token, and §7.3.3.1 says the
+ *   host terminates a FAILED stream with CMD12 rather than the stop-tran token.
+ *   That is recoverable, and it is what the CMD12 below is for. Without it every
+ *   command afterwards is swallowed as write data and comes back as a timeout.
+ *
+ *   Stopped MID-BLOCK - the data phase starved, or the core aborted inside it -
+ *   the card is waiting for the rest of a block it will never be sent. Nothing
+ *   the host can issue fixes that: CMD12's own bytes are consumed as data like
+ *   anything else. The card needs the block finished or a power cycle, and this
+ *   driver can do neither. It is a real limitation of abandoning a write, not an
+ *   artefact of how the failure was detected, and it is the strongest argument
+ *   for keeping the buffer fed - which is what IRQ_ERR_PIO now reports on.
+ *
+ * The two cases are indistinguishable from outside the core, so CMD12 is issued
+ * for every failed write. In the recoverable case it costs one command; in the
+ * other it costs one TIMEOUT period, because the card eats it and never answers.
+ * That is bounded, and it is the right trade - the alternative is leaving a
+ * recoverable card wedged to save a wait on an unrecoverable one.
+ *
+ * Reads need none of this. A card streaming a block stops when CS is deasserted
+ * and is addressable again immediately.
+ */
+static void recover(alt_sdcard_dev *dev, int writing)
+{
+    alt_sdcard_reset_datapath(dev);
+
+    if (writing) {
+        (void)alt_sdcard_command(dev, 12, 0, ALT_SDCARD_RESP_R1B, 0, 0, 0);
+        alt_sdcard_reset_datapath(dev);
+    }
+}
+
 static int transfer(alt_sdcard_dev *dev, alt_u32 block, void *buf,
                     alt_u32 count, int writing)
 {
@@ -489,15 +534,13 @@ static int transfer(alt_sdcard_dev *dev, alt_u32 block, void *buf,
 
     r = complete(dev, 0, 0);
     if (r != ALT_SDCARD_OK) {
-        /* A failed transfer can leave the data path mid-block. Clearing it is
-         * cheap and keeps the failure from spreading to the next call. */
-        alt_sdcard_reset_datapath(dev);
+        recover(dev, writing);
         return r;
     }
 
     st = ALT_SDCARD_RD_IRQ_STATUS(dev->base);
     if (st & ALT_SDCARD_IRQ_ERR_MSK) {
-        alt_sdcard_reset_datapath(dev);
+        recover(dev, writing);
         return irq_to_result(st);
     }
 

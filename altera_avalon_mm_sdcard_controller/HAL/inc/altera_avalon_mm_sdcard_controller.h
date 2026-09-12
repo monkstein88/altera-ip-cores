@@ -57,7 +57,8 @@ typedef enum
     ALT_SDCARD_ERR_PARAM     = -6,  /* bad argument from the caller           */
     ALT_SDCARD_ERR_NOT_READY = -7,  /* probe() has not run, or it failed      */
     ALT_SDCARD_ERR_VERSION   = -8,  /* CORE_INFO is not a version we know     */
-    ALT_SDCARD_ERR_PROTECTED = -9   /* write-protect switch is set            */
+    ALT_SDCARD_ERR_PROTECTED = -9,  /* write-protect switch is set            */
+    ALT_SDCARD_ERR_PIO       = -10  /* a DATA access the buffer could not serve*/
 } alt_sdcard_result;
 
 /* -------------------------------------------------------------- card ------ */

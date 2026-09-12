@@ -18,7 +18,7 @@
 #                     coverage is the flow that says which of those states and
 #                     arcs the sweep genuinely visited rather than merely
 #                     compiled.
-#   NON-VACUITY       how many times each of the 24 assertions passed for a real
+#   NON-VACUITY       how many times each of the 25 assertions passed for a real
 #                     reason rather than because its antecedent never held. That
 #                     distinction has already cost this core once:
 #                     verification/check_assertions_fire.sh found that the
@@ -59,7 +59,7 @@
 #     -mfcu -cuname above and the sva_cu top below, and the run reproduces the
 #     original fault exactly - seven configurations printing *** PASS ***, a
 #     zero-byte assertion report, and no complaint from any simulator. The gate
-#     reports RESULT: FAILED and names all 24 missing assertions. A gate that
+#     reports RESULT: FAILED and names all 25 missing assertions. A gate that
 #     has not been shown to fail is worth no more than the assertions it is
 #     there to protect.
 #
@@ -243,6 +243,7 @@ proc check_assertions_reported {} {
         a_pop_only_when_nonempty a_queued_byte_not_dropped a_request_never_dropped
         a_send_state_never_idles a_start_only_when_phy_idle a_tx_we_needs_ready
         a_waitrequest_holds_command a_waitrequest_holds_read a_write_has_data
+        a_error_levels_released_before_idle
     }
 
     set missing {}

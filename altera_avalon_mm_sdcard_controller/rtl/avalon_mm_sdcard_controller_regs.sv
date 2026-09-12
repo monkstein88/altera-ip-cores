@@ -119,6 +119,11 @@ module avalon_mm_sdcard_controller_regs
 
     localparam int unsigned BCW = $clog2(MAX_BLOCK_BYTES + 1);
 
+    // The DATA window's raw request, before it is gated on whether the buffer can
+    // actually take it. Software is free to access DATA at any time, so these
+    // are the only place an impossible access is visible.
+    logic pio_wr_req, pio_rd_req;
+
     logic [31:0] ctrl_q, irq_en_q, irq_st_q, clkdiv_q, timeout_q;
     logic [31:0] arg_q, cmd_q, blksize_q, blkcnt_q, dmaaddr_q, dmactrl_q;
 
@@ -164,12 +169,12 @@ module avalon_mm_sdcard_controller_regs
             blkcnt_q  <= 32'd1;
             dmaaddr_q <= '0;
             dmactrl_q <= '0;
-            cmd_start <= 1'b0;
-            pio_wr    <= 1'b0;
-            pio_wdata <= '0;
+            cmd_start  <= 1'b0;
+            pio_wr_req <= 1'b0;
+            pio_wdata  <= '0;
         end else begin
-            cmd_start <= 1'b0;
-            pio_wr    <= 1'b0;
+            cmd_start  <= 1'b0;
+            pio_wr_req <= 1'b0;
 
             // Self-clearing bits never persist.
             ctrl_q[CTRL_SRST_CMD] <= 1'b0;
@@ -216,8 +221,8 @@ module avalon_mm_sdcard_controller_regs
                     end
 
                     CSR_ADDR_WIDTH'(REG_DATA): begin
-                        pio_wdata <= csr_writedata;
-                        pio_wr    <= 1'b1;
+                        pio_wdata  <= csr_writedata;
+                        pio_wr_req <= 1'b1;
                     end
 
                     default: ;
@@ -243,6 +248,19 @@ module avalon_mm_sdcard_controller_regs
         irq_set[IRQ_ERR_DAT_TOKEN] = seq_err_flags[5];
         irq_set[IRQ_ERR_WRITE]     = seq_err_flags[6];
         irq_set[IRQ_ERR_DMA]       = seq_err_flags[7];
+
+        // A DATA access that could not be served. The FIFO drops a push it has
+        // no room for and hands back a stale word it does not have, in both
+        // cases without complaint, so this is the only thing that turns either
+        // into something software can see.
+        //
+        // Both flags are direction-aware inside the FIFO: the port that is not
+        // producing reports full, and the port that is not consuming reports
+        // empty. So this also catches the DATA window being used in the wrong
+        // direction for the transfer in flight, which is the same class of
+        // software mistake and equally silent.
+        irq_set[IRQ_ERR_PIO]       = (pio_wr_req && fifo_w_full) ||
+                                     (pio_rd_req && fifo_w_empty);
     end
 
     logic card_present_q, card_wp_q;
@@ -279,8 +297,24 @@ module avalon_mm_sdcard_controller_regs
     // on the registered result - popping when the data is returned would be one
     // cycle late and would drop a word on back-to-back reads.
     // -------------------------------------------------------------------------
-    always_comb pio_rd = csr_read && sel &&
-                         (csr_address == CSR_ADDR_WIDTH'(REG_DATA));
+    always_comb pio_rd_req = csr_read && sel &&
+                             (csr_address == CSR_ADDR_WIDTH'(REG_DATA));
+
+    // Never OFFER the buffer an access it cannot serve.
+    //
+    // The buffer already refuses to act on one - it will not move a pointer for
+    // a push when full or a pop when empty - so gating here changes no behaviour
+    // at all: the word is dropped either way. What it changes is whose invariant
+    // it is. An ungated request makes "the store is never pushed while full" a
+    // statement about how carefully SOFTWARE paces itself, which is not a
+    // property the hardware can hold, and an assertion on the buffer saying so
+    // is one an ordinary CSR write from a slow driver can fire. Gated, the
+    // property belongs to this module and is true by construction.
+    //
+    // The access is still reported, through IRQ_ERR_PIO below. Dropping it
+    // quietly was the original fault; refusing it and saying so is the fix.
+    always_comb pio_wr = pio_wr_req && !fifo_w_full;
+    always_comb pio_rd = pio_rd_req && !fifo_w_empty;
 
     logic [31:0] status_w, errinfo_w, coreinfo_w;
 
