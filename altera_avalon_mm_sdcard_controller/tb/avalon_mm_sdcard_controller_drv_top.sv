@@ -66,7 +66,10 @@ module avalon_mm_sdcard_controller_drv_top #(
     output int unsigned sc_blocks_wr,
     // Beats the DMA master completed, so a test can tell data that went
     // through the DMA from data that only looked as if it had.
-    output int unsigned dma_beats
+    output int unsigned dma_beats,
+    // Read blocks the sequencer held the SPI clock for, waiting for room in the
+    // buffer, so a run meant to be slower than the card can show that it was.
+    output int unsigned read_holds
 );
 
     localparam int unsigned BURST_W = 8;
@@ -128,6 +131,19 @@ module avalon_mm_sdcard_controller_drv_top #(
         .wr_beats (mem_wr_beats), .rd_beats (mem_rd_beats),
         .saw_zero_byteenable_read (mem_zero_be)
     );
+
+    // Counted on the hold's rising edge: one per block that had to wait,
+    // however long it waited.
+    logic hold_d;
+    always_ff @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            hold_d     <= 1'b0;
+            read_holds <= 0;
+        end else begin
+            hold_d <= dut.u_seq.rd_hold;
+            if (dut.u_seq.rd_hold && !hold_d) read_holds <= read_holds + 1;
+        end
+    end
 
     // An empty socket floats MISO to its pull-up.
     always_comb sd_miso = (card_sel == 2'd1) ? miso_hc :

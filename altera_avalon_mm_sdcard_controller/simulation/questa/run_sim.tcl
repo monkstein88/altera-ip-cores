@@ -255,6 +255,7 @@ proc check_assertions_reported {} {
         a_send_state_never_idles a_start_only_when_phy_idle a_tx_we_needs_ready
         a_waitrequest_holds_command a_waitrequest_holds_read a_write_has_data
         a_error_levels_released_before_idle a_response_window_after_whole_frame
+        a_no_byte_dropped_on_read a_dma_start_only_when_idle
     }
 
     set missing {}
@@ -307,12 +308,13 @@ proc check_assertions_reported {} {
     #
     # Same argument as the assertions, one step further. An assertion says
     # nothing went wrong; a cover directive says a situation was actually
-    # reached. All five are hit today, and nothing was checking that, so a
+    # reached. All six are hit today, and nothing was checking that, so a
     # change that stopped reaching one - an abort path that no longer aborts, a
-    # command that is never deferred - would look exactly like success.
+    # command that is never deferred, a read block that never has to wait -
+    # would look exactly like success.
     set covers {
         c_runs_at_max_rate c_transfer_completes c_command_deferred
-        c_burst_issued c_abort_flushes
+        c_burst_issued c_abort_flushes c_read_block_held
     }
     if {![file exists cover_report.txt]} {
         puts "COVER: cover_report.txt was never written"

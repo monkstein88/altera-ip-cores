@@ -130,14 +130,42 @@ module avalon_mm_sdcard_controller_tb #(
         .sd_cs_n (sd_cs_n), .sd_cd_n (sd_cd_n), .sd_wp_n (sd_wp_n)
     );
 
+    // ---- memory stall hook --------------------------------------------------
+    //
+    // Once the memory has accepted `stall_at` write beats, it holds waitrequest
+    // for `stall_for` cycles - once per arming. The model's own read and write
+    // are gated with the stall, so a beat the DUT is told to hold is not also
+    // taken. The model's wait states are one cycle; a real memory behind a
+    // bridge, or one another master is hogging, can stall for far longer, and
+    // that is what this reaches.
+    logic        mem_waitrequest, tb_stall;
+    int unsigned stall_at = 0, stall_for = 0;
+    int unsigned stall_left = 0, stall_fired_at = 0, stalls_done = 0;
+
+    always_comb tb_stall = (stall_left != 0) ||
+                           ((stall_for != 0) && (mem_wr_beats == stall_at) &&
+                            (stall_fired_at != stall_at));
+    always_comb m0_waitrequest = mem_waitrequest || tb_stall;
+
+    always_ff @(posedge clk) begin
+        if (stall_left != 0) begin
+            stall_left <= stall_left - 1;
+        end else if (tb_stall) begin
+            stall_left     <= stall_for - 1;
+            stall_fired_at <= stall_at;
+            stalls_done    <= stalls_done + 1;
+        end
+    end
+
     avalon_mm_mem_model #(
         .ADDR_WIDTH (ADDR_W), .BURST_WIDTH (BURST_W),
         .MAX_WAIT (1), .READ_LATENCY (2)
     ) u_mem (
         .clk (clk), .reset_n (reset_n),
-        .address (m0_address), .read (m0_read), .write (m0_write),
+        .address (m0_address),
+        .read (m0_read && !tb_stall), .write (m0_write && !tb_stall),
         .writedata (m0_writedata), .byteenable (m0_byteenable),
-        .burstcount (m0_burstcount), .waitrequest (m0_waitrequest),
+        .burstcount (m0_burstcount), .waitrequest (mem_waitrequest),
         .readdata (m0_readdata), .readdatavalid (m0_readdatavalid),
         .response (m0_response),
         .wr_beats (mem_wr_beats), .rd_beats (mem_rd_beats),
@@ -383,6 +411,13 @@ localparam bit TRACE_CMD = 1'b0;
                            output logic [31:0] st);
         int unsigned i;
         begin
+            // Mark the window first. Reads land in the same place every time,
+            // so without this a read that never wrote a block passes on what the
+            // previous read of the same block left there - which is exactly how
+            // a lost DMA start once hid from a check written to catch it.
+            if (TB_USE_DMA)
+                for (i = 0; i < count * 128; i++)
+                    u_mem.poke(DMA_BUF / 4 + i, 32'hDEAD_BEEF);
             csr_wr(REG_BLK_COUNT, count);
             csr_wr(REG_DMA_ADDR,  DMA_BUF);
             cmd_issue(multi ? 6'd18 : 6'd17, blk_arg(block), RESP_R1,
@@ -603,6 +638,121 @@ localparam bit TRACE_CMD = 1'b0;
             if (expw !== srcw[i]) ok = 1'b0;
         end
         check("CMD25: all three blocks reached the card intact", ok);
+
+        // ---- a read the host cannot keep up with ----------------------------
+        //
+        // Until these existed nothing here drained a read slower than the card
+        // sent it, and a multi-block read that was drained that way lost data
+        // with no error: the core kept clocking into a full buffer and dropped
+        // what did not fit, the CRC16 - checked on the wire - passed, and the
+        // transfer completed. The driver harness showed it by running a slower
+        // processor than its "slow" one.
+        //
+        // Now a block is only clocked in once the buffer can hold all of it and
+        // the DMA is free to take it. Two ways a host falls behind:
+        //
+        //   Software draining the DATA window three times slower than the card,
+        //   with a pause part-way. DMA_EN is cleared at run time so this runs
+        //   in every configuration, as the starved write below does. Six
+        //   blocks is more than the buffer holds at either depth. The third
+        //   check is what makes the first two mean something: through the
+        //   second half of the pause, with the transfer still in progress, the
+        //   SPI clock does not move at all.
+        //
+        //   The memory stalling the DMA - once on the last word of a block,
+        //   for longer than the block's CRC bytes take, which used to lose the
+        //   next block's DMA start; and once for longer than the card takes to
+        //   fill the buffer. Without a master (TB_USE_DMA=0) there is nothing
+        //   to stall and these are plain multi-block reads.
+        $display("  -- a multi-block read the host cannot keep up with --");
+        for (i = 0; i < 6*512; i++) u_card.preload(140*512 + i, 8'((i * 7) + 5));
+        gotw = new[6*128];
+        csr_wr(REG_CTRL, CTRL_RUNNING & ~(32'b1 << CTRL_DMA_EN));
+        csr_wr(REG_BLK_COUNT, 32'd6);
+        cmd_issue(6'd18, blk_arg(140), RESP_R1, 1'b1, 1'b0, 1'b1, 1'b1);
+        begin
+            int unsigned got, rises_at, held_rises;
+            bit          busy_in_pause;
+            logic [31:0] ds, dd;
+
+            got           = 0;
+            held_rises    = 0;
+            busy_in_pause = 1'b0;
+            while (got < 6*128) begin
+                csr_rd(REG_STATUS, ds);
+                if (!ds[STAT_FIFO_EMPTY]) begin
+                    csr_rd(REG_DATA, dd);
+                    gotw[got] = dd;
+                    got++;
+                    // 404 clocks a word, against the card's 128 at CLKDIV 2.
+                    repeat (400) @(negedge clk);
+                    if (got == 200) begin
+                        repeat (50000) @(negedge clk);
+                        rises_at = sclk_rises;
+                        repeat (50000) @(negedge clk);
+                        held_rises = sclk_rises - rises_at;
+                        csr_rd(REG_STATUS, ds);
+                        busy_in_pause = ds[STAT_CMD_BUSY];
+                    end
+                end else if (!ds[STAT_CMD_BUSY]) begin
+                    break;
+                end
+            end
+            cmd_wait(6'd18, st);
+            csr_wr(REG_CTRL, CTRL_RUNNING);
+
+            ok = (got == 6*128);
+            for (i = 0; i < 6*128; i++) begin
+                expw = {u_card.peek(140*512+4*i+3), u_card.peek(140*512+4*i+2),
+                        u_card.peek(140*512+4*i+1), u_card.peek(140*512+4*i+0)};
+                if (gotw[i] !== expw) ok = 1'b0;
+            end
+            check_noerr("a read drained three times slower than the card, with a pause: no error bits",
+                        st);
+            check("...DATA_DONE, and all six blocks arrive intact",
+                  st[IRQ_DATA_DONE] && ok);
+            check("...because the SPI clock stops while the buffer has no room for the next block",
+                  busy_in_pause && (held_rises == 0));
+        end
+
+        $display("  -- a multi-block read while the memory stalls --");
+        for (i = 0; i < 4*512; i++) u_card.preload(150*512 + i, 8'((i * 13) + 1));
+        begin
+            logic [31:0] st1, st2;
+            bit          ok1, ok2;
+
+            gotw = new[4*128];
+
+            // The first block's last word, held for 2000 clocks: its CRC bytes
+            // take 64 at CLKDIV 2.
+            stall_at  = mem_wr_beats + 127;
+            stall_for = 2000;
+            do_read(150, 4, 1'b1, gotw, st1);
+            ok1 = 1'b1;
+            for (i = 0; i < 4*128; i++) begin
+                expw = {u_card.peek(150*512+4*i+3), u_card.peek(150*512+4*i+2),
+                        u_card.peek(150*512+4*i+1), u_card.peek(150*512+4*i+0)};
+                if (gotw[i] !== expw) ok1 = 1'b0;
+            end
+
+            // 150000 clocks inside the second block: a 1024-byte buffer fills
+            // in 32768.
+            stall_at  = mem_wr_beats + 200;
+            stall_for = 150000;
+            do_read(150, 4, 1'b1, gotw, st2);
+            ok2 = 1'b1;
+            for (i = 0; i < 4*128; i++) begin
+                expw = {u_card.peek(150*512+4*i+3), u_card.peek(150*512+4*i+2),
+                        u_card.peek(150*512+4*i+1), u_card.peek(150*512+4*i+0)};
+                if (gotw[i] !== expw) ok2 = 1'b0;
+            end
+            stall_for = 0;
+
+            check_noerr("a read with the memory stalling the DMA: no error bits", st1 | st2);
+            check("...every block intact, after a stall on a block's last word and one longer than the buffer takes to fill",
+                  ok1 && ok2 && (st1[IRQ_DATA_DONE] && st2[IRQ_DATA_DONE]) &&
+                  (!TB_USE_DMA || (stalls_done == 2)));
+        end
 
         // ---- the 16-byte card registers ------------------------------------
         // CMD9 is the only place a card reports its size, and it is the only
@@ -905,6 +1055,26 @@ localparam bit TRACE_CMD = 1'b0;
         // real limitation of abandoning a write rather than an artefact of the
         // model. The testbench puts the model straight so the checks that follow
         // are testing what they claim to.
+        csr_wr(REG_CTRL, CTRL_RUNNING | (32'b1 << CTRL_SRST_DAT));
+        csr_wr(REG_CTRL, CTRL_RUNNING);
+        u_card.resync();
+
+        // 5. The read side of the same thing: a multi-block read nobody drains.
+        //    Three blocks is more than the buffer holds at either depth. The
+        //    core admits what fits, holds the clock for the rest, and gives up
+        //    after TIMEOUT - where it used to clock all three into the buffer,
+        //    drop what did not fit, and report a clean finish. The buffer is
+        //    left holding whole blocks and nothing else, which is what the
+        //    second check reads back.
+        csr_wr(REG_CTRL, CTRL_RUNNING & ~(32'b1 << CTRL_DMA_EN));
+        csr_wr(REG_BLK_COUNT, 32'd3);
+        cmd_issue(6'd18, blk_arg(140), RESP_R1, 1'b1, 1'b0, 1'b1, 1'b1);
+        cmd_wait(6'd18, st);                       // drain nothing at all
+        check("a read nobody drains stops with ERR_DAT_TMO instead of dropping what does not fit",
+              st[IRQ_ERR_DAT_TMO]);
+        csr_rd(REG_STATUS, rd);
+        check("...holding exactly the whole blocks the buffer had room for",
+              rd[STAT_LEVEL_MSB:STAT_LEVEL_LSB] == 16'(FIFO_B));
         csr_wr(REG_CTRL, CTRL_RUNNING | (32'b1 << CTRL_SRST_DAT));
         csr_wr(REG_CTRL, CTRL_RUNNING);
         u_card.resync();

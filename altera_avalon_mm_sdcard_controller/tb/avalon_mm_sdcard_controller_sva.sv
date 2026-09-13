@@ -96,7 +96,8 @@ module avalon_mm_sdcard_controller_seq_sva #(
     // sequencer's scope so a reordered enum cannot leave this checking the
     // wrong states.
     parameter logic [4:0] S_CMD_V       = 5'd0,
-    parameter logic [4:0] S_RESP_WAIT_V = 5'd0
+    parameter logic [4:0] S_RESP_WAIT_V = 5'd0,
+    parameter logic [4:0] S_RD_DATA_V   = 5'd0
 ) (
     input logic        clk,
     input logic        reset_n,
@@ -114,7 +115,12 @@ module avalon_mm_sdcard_controller_seq_sva #(
     input logic        fifo_b_empty,
     input logic [7:0]  err_flags,
     input logic [4:0]  state,
-    input logic [4:0]  state_prev
+    input logic [4:0]  state_prev,
+    input logic        tick,
+    input logic        fifo_b_full,
+    input logic        dma_start,
+    input logic        dma_busy,
+    input logic        rd_hold
 );
 
     default disable iff (!reset_n);
@@ -188,8 +194,29 @@ module avalon_mm_sdcard_controller_seq_sva #(
             ((state == S_RESP_WAIT_V) && (state_prev == S_CMD_V))
                 |-> $past(phy_tx_ready));
 
+    // Every byte of a read block has somewhere to go.
+    //
+    // The buffer's byte port refuses a byte it has no room for, and the
+    // sequencer used to clock one in regardless: the byte was gone, the CRC16
+    // - checked on the wire - still passed, and the transfer finished cleanly.
+    // A block is now only clocked in once the buffer can hold all of it, so no
+    // byte of it can ever find the port full.
+    a_no_byte_dropped_on_read:
+        assert property (@(posedge clk)
+            ((state == S_RD_DATA_V) && tick) |-> !fifo_b_full);
+
+    // A DMA start is only issued to an idle DMA, which only accepts one there.
+    //
+    // A read started the next block's transfer when the previous block ended,
+    // and a memory that held the previous block's last word that long - the
+    // two CRC bytes' worth, 64 clocks at 25 MHz - lost it. The block after
+    // never reached memory and nothing reported it.
+    a_dma_start_only_when_idle:
+        assert property (@(posedge clk) dma_start |-> !dma_busy);
+
     c_transfer_completes: cover property (@(posedge clk) data_done);
     c_command_deferred:   cover property (@(posedge clk) cmd_pending);
+    c_read_block_held:    cover property (@(posedge clk) rd_hold);
 
 endmodule
 
@@ -315,7 +342,8 @@ bind avalon_mm_sdcard_controller_spi_phy
 bind avalon_mm_sdcard_controller_seq
      avalon_mm_sdcard_controller_seq_sva #(
          .S_CMD_V       (S_CMD),
-         .S_RESP_WAIT_V (S_RESP_WAIT)
+         .S_RESP_WAIT_V (S_RESP_WAIT),
+         .S_RD_DATA_V   (S_RD_DATA)
      ) u_sva (.*);
 
 bind avalon_mm_sdcard_controller_dma

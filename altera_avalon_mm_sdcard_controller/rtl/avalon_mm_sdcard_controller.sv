@@ -37,6 +37,13 @@
 //   fifo+dma  decouple the byte stream from memory, so the
 //             shifter never waits for the CPU
 //
+// "Never stall" means never for want of something the core could have had
+// ready. It does not mean clocking a card whose data has nowhere to go: a read
+// block is only clocked in once the buffer can hold all of it and the DMA is
+// free to take it, and until then the clock stops on a byte boundary. On a
+// system that keeps up that costs nothing; on one that does not, the
+// alternative was losing bytes with no error - see the sequencer's header.
+//
 // -----------------------------------------------------------------------------
 // WHAT IS HARDWARE AND WHAT IS NOT
 // -----------------------------------------------------------------------------
@@ -158,6 +165,18 @@ module avalon_mm_sdcard_controller
     logic [31:0] fifo_w_wdata, fifo_w_rdata;
     logic [15:0] fifo_level_bytes;
 
+    // Room left in the buffer's store, in words. Two consumers: the sequencer
+    // admits a read block against it, and the DMA bounds its memory read bursts
+    // on it. Taken straight from the FIFO in words rather than recomputed from
+    // level_bytes - see the note on w_space_words. The byte/word round trip
+    // this used to do sat on the design's critical path, from the FIFO's read
+    // pointer into the DMA's burst sizing.
+    //
+    // Declared here, ahead of the sequencer that uses it: a port connection to
+    // an identifier not yet declared makes an implicit one-bit net.
+    localparam int unsigned FIFO_AW = $clog2(FIFO_DEPTH_BYTES / 4);
+    logic [FIFO_AW:0] fifo_space_words;
+
     // Unused when USE_DMA is off, by design - the sequencer still generates
     // them, there is simply nothing listening.
     /* verilator lint_off UNUSEDSIGNAL */
@@ -263,6 +282,7 @@ module avalon_mm_sdcard_controller
         .fifo_b_full (fifo_b_full), .fifo_b_rd (fifo_b_rd),
         .fifo_b_rdata (fifo_b_rdata), .fifo_b_empty (fifo_b_empty),
         .fifo_flush (fifo_flush),
+        .fifo_space (BLKCNT_WIDTH'(fifo_space_words)),
 
         .dma_start (dma_start), .dma_dir_h2c (dma_dir_h2c),
         .dma_keep_addr (dma_keep_addr), .dma_abort (dma_abort),
@@ -300,15 +320,6 @@ module avalon_mm_sdcard_controller
     // -------------------------------------------------------------------------
     // Block buffer
     // -------------------------------------------------------------------------
-    // Bounds DMA read bursts; USE_DMA only. Taken straight from the FIFO in
-    // words rather than recomputed from level_bytes here - see the note on
-    // w_space_words. The byte/word round trip this used to do sat on the
-    // design's critical path, from the FIFO's read pointer into the DMA's
-    // burst sizing.
-    localparam int unsigned FIFO_AW = $clog2(FIFO_DEPTH_BYTES / 4);
-    /* verilator lint_off UNUSEDSIGNAL */
-    logic [FIFO_AW:0] fifo_space_words;
-    /* verilator lint_on UNUSEDSIGNAL */
 
     avalon_mm_sdcard_controller_fifo #(
         .DEPTH_BYTES (FIFO_DEPTH_BYTES)

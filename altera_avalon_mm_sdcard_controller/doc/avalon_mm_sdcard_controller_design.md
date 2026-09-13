@@ -88,6 +88,13 @@ over-provisioned: even a non-bursting master with 20-cycle latency per word has
 threefold margin, and with the ping-pong buffer software in PIO mode has a whole
 block time to move 128 words, which a Nios II/f does in roughly 15 µs.
 
+That margin is an expectation, not a guarantee, and the design no longer relies
+on it. A processor slower than the card, one that is interrupted for a third of a
+millisecond, or a memory that stalls the DMA for as long, would once have
+overrun the buffer on a multi-block read and lost bytes behind a passing CRC. A
+read block is now only clocked in once the buffer can hold it and the DMA is
+free to take it (§4), so falling behind costs time and nothing else.
+
 So the DMA is **CPU offload, not throughput**. It buys back 10–20% of the
 processor and removes any dependence on interrupt latency; it does not make the
 card faster, because the card was never waiting on memory. Likewise `m0`'s
@@ -209,6 +216,14 @@ shifter wait — for the CPU, for a DMA burst, for a CRC pass, for a software
 busy poll — gives back exactly the throughput SPI mode has too little of to
 spare.
 
+It has one deliberate exception, and it is for correctness rather than speed: a
+read block is only clocked in once the buffer has room for all of it and the DMA
+is free to take it. In SPI mode the host owns the clock and a card simply waits
+while it is stopped, so the sequencer holds it on a byte boundary until then.
+On a host that keeps up the next block is admitted the cycle the last one ends,
+and the exception never costs a clock; on one that does not, the alternative was
+overrunning the buffer and losing bytes with no error.
+
 ```
         csr (Avalon-MM slave)                    m0 (Avalon-MM master)
               |                                          |
@@ -288,7 +303,9 @@ software and one interrupt at the end.
 **`fifo`** — ping-pong buffer, two blocks deep by default. One block is on the
 wire while the other drains to or fills from memory. This is what decouples the
 shifter's constant byte rate from the DMA's bursty one; with a single buffer the
-shifter would stall for the duration of every burst.
+shifter would stall for the duration of every burst. When the other side has not
+kept up, the next read block waits for room rather than overrunning the buffer —
+see the exception above.
 
 **`dma`** — the Avalon-MM master, present only when `USE_DMA`. Moves whole
 blocks in bursts (128 beats covers a 512-byte block in one burst at the default
@@ -650,10 +667,14 @@ gap — the failure mode that costs 25% and is invisible in a functional test.
 
 **The driver runs against the RTL.** `tb/driver/` links the HAL driver, compiled
 unmodified, into the Verilator model with a C++ harness in place of the
-processor, in four builds and on a slow processor. It is the only suite that
-exercises the division of labour this document is built around, and its first
-run found a fault on each side of it: a driver wait timed by a CPU loop, and a
-response window the sequencer opened one byte early at 25 MHz.
+processor, in four builds and on a processor nearly five times slower than the
+card. It is the only suite that exercises the division of labour this document
+is built around, and its first run found a fault on each side of it: a driver
+wait timed by a CPU loop, and a response window the sequencer opened one byte
+early at 25 MHz. Its slow processor was at first faster than the card; run
+genuinely slower, it showed a multi-block read overrunning the buffer and losing
+bytes behind a passing CRC. That, and a DMA start lost to a memory stall, are
+why a read block is now admitted rather than simply received.
 
 ---
 
@@ -740,7 +761,7 @@ Things deliberately left undecided, to be closed during implementation:
    clock settings.
 3. ~~**`CLKDIV = 1`: functionally settled, timing still open.**~~ **Closed.**
    Synthesised, fitted and timed for the DE10-Lite's `10M50DAF484C7G`:
-   **Fmax 108.41 MHz** in Quartus 18.1 at the slow 85 °C corner, **+0.776 ns** of slack against
+   **Fmax 109.51 MHz** in Quartus 18.1 at the slow 85 °C corner, **+0.868 ns** of slack against
    a 100 MHz system clock. clk/2 is therefore reachable and the fallback of
    restricting `CLKDIV >= 2` is not needed. `verification/check_synthesis.sh`
    holds that as a floor.

@@ -889,6 +889,27 @@ int driver_tests(void)
     check("SDSC: the data went through the DMA exactly when the build has one",
           !(bad & RT_DATA_PATH));
 
+    /* A processor slower than the card made reads wait for it.
+     *
+     * The run meant to show that once cost 82 clock cycles per word read
+     * through DATA - a STATUS read and a DATA read at 41 each - against the
+     * card's 128 at the run divider, so it was never slower than the card at
+     * all, and a core that dropped every byte it had no room for passed it.
+     * The same core with a processor slower still returned OK from a 5-block
+     * read with the wrong data. So a run whose processor takes at least twice
+     * the card's time per word must see blocks held, and with reads of 4, 5
+     * and 8 blocks against a 256-word buffer, one at twice cannot avoid it. */
+    {
+        unsigned cpu_per_word  = 2u * (sim_cpu_cycles() + 1u);
+        unsigned card_per_word = 4u * 8u * 2u * (unsigned)sdcard.clkdiv_run;
+        int      slow = !sim_cfg_dma() && (cpu_per_word >= 2u * card_per_word);
+
+        printf("  -- read through DATA: %u clocks a word, card %u; %u blocks held --\n",
+               cpu_per_word, card_per_word, sim_read_holds());
+        check("a processor at least twice slower than the card makes reads wait rather than lose data",
+              !slow || sim_read_holds() > 0u);
+    }
+
     printf("  === %d checks, %d failures ===\n", checks_run, checks_fail);
     if (checks_fail == 0) printf("  *** PASS ***\n");
     return checks_fail ? 1 : 0;

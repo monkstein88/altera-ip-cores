@@ -11,11 +11,11 @@ driver the BSP picks up by itself.
 
 > **Status: simulation only. This core has never been on a board.**
 >
-> It passes 91 self-checking assertions across three testbenches against a
+> It passes 98 self-checking assertions across three testbenches against a
 > behavioural SD card model — with the full-core suite run in five
 > configurations — plus bound SVA assertions proven live by fault injection,
 > 22 checks on the Platform Designer component, and the HAL driver itself run
-> against the RTL: 97 checks, in four builds. None of that is a substitute for
+> against the RTL: 98 checks, in four builds. None of that is a substitute for
 > hardware, and the DE10-Lite this repository's other examples target has no
 > microSD socket — see
 > [Verification status](#verification-status--what-is-and-is-not-proven).
@@ -66,6 +66,15 @@ Everything structural in this core serves one goal:
 | Hardware busy polling, **pre-emptive** | A whole card programming time per block |
 | CRC computed byte-by-byte during the transfer | A second pass over every block |
 | FIFO + DMA | Not throughput — CPU time, and immunity to interrupt latency |
+
+**"Never stall" has one deliberate exception.** A read block is only clocked in
+once the buffer has room for all of it and the DMA is free to take it; until
+then the SPI clock stops on a byte boundary, and the card waits for it. On a
+system that keeps up, the next block is admitted the moment the last one ends,
+so this costs nothing — the throughput measured below is the same 16 696 clocks
+it was before. On one that does not keep up, the alternative was losing data
+without an error: see
+[A read the host cannot keep up with](#a-read-the-host-cannot-keep-up-with).
 
 The one that is least obvious is the **pre-emptive busy check**. The naive write
 loop sends a block, then waits for the card to finish programming. The card is
@@ -130,7 +139,7 @@ except a cycle count catches it, which is why the count is an assertion.
          sd_clk / mosi / miso / cs_n
 ```
 
-Nine RTL files, 3439 lines, one per box plus the package and the top level.
+Nine RTL files, 3558 lines, one per box plus the package and the top level.
 Single clock domain throughout — no PLL, no CDC, nothing that behaves
 differently in simulation than on hardware.
 
@@ -407,13 +416,13 @@ full Quartus toolchain tries to build a project.
 | --- | --- | --- |
 | `phy` | 18 | Exactly 8.00 SPI clocks per byte at every divisor; bit-exact loopback; the `SAMPLE_DLY` bound; every received byte paired with the byte sent alongside it |
 | `fifo` | 5 | Byte↔word round trip both directions, little-endian order, partial-word flush |
-| `core` | 68 | Identification, single and multi-block both directions, CSD/CID, every card-reported failure, `ERR_INFO` contents, every per-state timeout escape, soft reset from inside a transfer, the response window at five clock settings, read throughput floor, the multi-block write saving, Avalon conformance |
-| `driver` | 97 | The HAL driver itself against the RTL, in four builds and on a slow processor: identification on first use, both capacity classes, CRC retries, card removal and swaps with and without a switch, interrupts, misaligned buffers, transfer splitting, the FatFs glue |
+| `core` | 75 | Identification, single and multi-block both directions, CSD/CID, every card-reported failure, `ERR_INFO` contents, every per-state timeout escape, soft reset from inside a transfer, the response window at five clock settings, a multi-block read drained slower than the card, stalled by the memory and never drained at all, read throughput floor, the multi-block write saving, Avalon conformance |
+| `driver` | 98 | The HAL driver itself against the RTL, in four builds and on a processor nearly five times slower than the card: identification on first use, both capacity classes, CRC retries, card removal and swaps with and without a switch, interrupts, misaligned buffers, transfer splitting, the FatFs glue |
 | `check_hw_tcl.tcl` | 22 | The component executes; parameters and ports exist; validation rejects exactly the bad configurations |
 | `check_driver_builds.sh` | 4 | The driver compiles clean under `-Wall -Wextra`; CSD capacity arithmetic for both structure versions; the FatFs glue compiles clean with 32- and 64-bit sector numbers; the register header stands alone |
-| `check_assertions_fire.sh` | 5 faults | Each injected into a scratch copy and required to be caught by the assertion meant to catch it |
+| `check_assertions_fire.sh` | 7 faults | Each injected into a scratch copy and required to be caught by the assertion meant to catch it |
 | `check_figures.sh` | 19 files | The 9 figures and their generator inputs, each re-rendered and compared byte for byte, because a stale picture is worse than a missing one. Needs `graphviz` for the block diagrams, a recorded `wave.vcd` for the timing figures, and Node with the WaveDrom module to render their SVGs — without the renderer it still compares their JSON; short of those it reports **INCOMPLETE** with a count, rather than passing on what it could not look at, and never FAIL for a tool that is missing |
-| `check_facts.py` | 261 | Every register offset, parameter default, line count and measured figure in these documents, re-derived from the RTL |
+| `check_facts.py` | 276 | Every register offset, parameter default, line count and measured figure in these documents, re-derived from the RTL |
 | `check_synthesis.sh` | 5 configs | The RTL through Quartus for the DE10-Lite part in the default, `tight`, `big`, `nodma` and `noburst` configurations: each synthesises, fits and meets a 100 MHz clock, holds area and Fmax to a budget, and puts **exactly** `FIFO_DEPTH_BYTES` × 8 bits in a memory block — so a buffer that slips back into registers fails by name rather than by growing |
 | `check_qsys.sh` | 7 | The component in **real** Platform Designer: it loads, its interfaces are the expected six, `USE_DMA=0` genuinely removes `m0`, and a system containing it generates |
 | lint | 10 configs | `-Wall` clean across every parameter that changes what is built |
@@ -475,7 +484,7 @@ swapped between calls or in the middle of one; with the DMA, the master reads
 and writes the driver's own buffers. It runs under Verilator only.
 
 It runs in four builds — with and without the DMA, with and without a
-card-detect switch — and again with a slow processor. Its first run found two
+card-detect switch — and again with a processor slower than the card. Its first run found two
 faults that every suite above had passed:
 
 - **The driver's power-up wait was a CPU loop.** 200 000 empty iterations: a few
@@ -517,6 +526,58 @@ call. The sweep now catches all 38.
 That work led to a last RTL change. `RESP0` and `RESP1` are cleared when a
 command starts, where they used to keep the previous command's response — which
 is how a response read in the wrong format could pass unnoticed.
+
+### A read the host cannot keep up with
+
+Weighing whether to copy the University Program SD core's memory-mapped block
+buffer came down to its one real benefit: software sets the pace, so the card
+can never outrun it. The obvious question was whether this core's `DATA` window
+can be outrun. It could, and nothing reported it. So could the DMA.
+
+- **A multi-block read kept clocking into a full buffer.** The buffer refuses a
+  byte it has no room for, and the sequencer went on to the next one. The CRC16
+  is checked on the bytes as they come off the wire, not on what the buffer
+  kept, so it passed, and the driver returned `ALT_SDCARD_OK` with the wrong
+  data. The harness's "slow processor" never got near it: 40 extra clock cycles
+  per bus access is 82 per word read through `DATA`, and the card delivers one every
+  128 at the driver's run divider. At 242 per word a 5-block read came back OK
+  and wrong; at 182 an 8-block read overflowed. A fast processor that pauses for
+  about 33 000 clocks — a third of a millisecond at 100 MHz — in a read of three
+  or more blocks does the same, and a 512-byte buffer exposes reads of two.
+- **A lost DMA start.** A read started the next block's DMA transfer when the
+  previous block ended, and the DMA only accepts a start while it is idle. A
+  memory that held the last word of a block for as long as the two CRC bytes
+  take — 64 clocks at 25 MHz — lost the start, and the block after it never
+  reached memory. This was the reference configuration: a 300-clock stall, and
+  the read finished with `DATA_DONE`, no error bits and a stale block.
+
+One rule fixes both. In SPI mode the host owns the clock, and a card sending a
+block waits while it is stopped. So a read block is now **admitted** before it
+is clocked in: only once the buffer has room for all of it and the DMA — when it
+is the client — is idle, and its DMA transfer starts at that moment. Until then
+the sequencer holds the SPI clock, stopping on a byte boundary. The start token
+may already be on the wire when the hold begins, so the hold covers the data
+state as well as the token wait. A hold that outlasts `TIMEOUT` ends in
+`ERR_DAT_TMO`, exactly as a starved write does. In the normal case the next block
+is admitted the cycle the last one ends, so the read throughput is unchanged at
+16 696 clocks for four blocks, and so are the timing figures.
+
+The core suite gained seven checks, in every configuration. It drains a 6-block
+read three times slower than the card with a pause, and requires the SPI clock
+not to move through the second half of that pause. It stalls the memory on a
+block's last word and, separately, for longer than the card takes to fill the
+buffer. And it issues a read that nobody drains, which must end in
+`ERR_DAT_TMO` holding exactly the whole blocks that fit. On the previous RTL
+four of those checks fail in the DMA builds and three in `pio`, where there is
+no memory to stall — and the slow read's "no error bits" check passes there,
+which is the silent part. Each half of the fix, removed on its own, fails its
+own checks. Two assertions state the invariants, `a_no_byte_dropped_on_read` and
+`a_dma_start_only_when_idle`, and each is proven by a fault injection. A cover
+point, `c_read_block_held`, shows Questa reaching the hold.
+
+The harness's slow run now takes 300 extra clock cycles per bus access, 602 per word,
+and a new check requires a run at twice the card's time per word or slower to
+see read blocks held: that run holds 12. On the previous RTL it fails.
 
 The FatFs glue is linked in too, against stand-ins for FatFs's two headers, so
 the suite needs no copy of FatFs. It was also run once against **FatFs R0.15
@@ -576,7 +637,7 @@ the most serious was in the flow itself:
   it. The model now stalls the first beat of every command.
 
 What it left open has since been worked through. The sequencer reaches **all 20
-of its states and 40 of its 58 transitions**, and the 18 that remain are
+of its states and 41 of its 58 transitions**, and the 17 that remain are
 accounted for rather than merely unreached:
 
 - **Sixteen are one statement.** `if (srst) state <= S_IDLE` is counted once per
@@ -585,18 +646,18 @@ accounted for rather than merely unreached:
   the core has to come back usable. Reaching the other thirteen means thirteen
   precisely-timed resets to exercise a single line, which is coverage
   arithmetic rather than verification.
-- **Two are defensive and structurally unreachable.** The timeouts in
-  `S_RD_DATA` and `S_WR_CRC` cannot fire as the sequencer is wired. A receive
-  state free-runs the shifter, so a byte lands every eight SPI clocks and the
-  no-progress counter is cleared before it can expire; and the CRC state's two
-  bytes come from a register with no buffer dependency, so it cannot be starved
-  at all. Both are kept, and both now say so at the branch, because the
-  guarantee each rests on lives in a different module.
+- **One is defensive and structurally unreachable.** The timeout in `S_WR_CRC`
+  cannot fire as the sequencer is wired: the CRC state's two bytes come from a
+  register with no buffer dependency, so it cannot be starved. It is kept, and
+  says so at the branch. The timeout in `S_RD_DATA` used to be listed with it,
+  on the grounds that a receive state free-runs the shifter so a byte always
+  lands. That stopped being true when a read block could be held for the host,
+  and a read that nobody drains now reaches it.
 
-The four timeout escapes that **are** reachable are now tested, each checked for
-the `phase_e` it reports: busy before a command, busy between the blocks of a
-multi-block write, an R1b whose busy never lifts, and a write data phase starved
-of data. That last one is the sequel to a defect this core already had — the
+The five timeout escapes that **are** reachable are now tested: busy before a
+command, busy between the blocks of a multi-block write, an R1b whose busy never
+lifts, and a write data phase starved of data — each checked for the `phase_e`
+it reports — and a read that nobody drains. That last one is the sequel to a defect this core already had — the
 configuration sweep once found that neither data-streaming state checked its
 timeout at all — and until now nothing exercised the fix.
 
@@ -607,7 +668,8 @@ card model, including every failure the card can report; the Avalon-MM agent and
 host against a memory model with wait states and read latency; the register map;
 the interrupt behaviour; the throughput; the component description; the HAL
 driver running against the RTL, with and without the DMA and a card-detect
-switch, through card removals and swaps; and the FatFs glue as FatFs calls it.
+switch, through card removals and swaps; reads that software or the memory
+cannot keep up with; and the FatFs glue as FatFs calls it.
 
 **Proven in Quartus**, on the `10M50DAF484C7G` the DE10-Lite carries, with
 Quartus Prime 18.1 Standard — the release the hardware examples will be built
@@ -615,11 +677,11 @@ with:
 
 | | |
 | --- | --- |
-| Logic cells | 1715 / 49 760 — **3.4%** |
-| Registers | 898 |
+| Logic cells | 1774 / 49 760 — **3.6%** |
+| Registers | 899 |
 | Memory | one M9K, 8192 bits |
-| Fmax | **108.41 MHz**, slow 85 °C corner |
-| Slack at 100 MHz | **+0.776 ns** — it meets the clock |
+| Fmax | **109.51 MHz**, slow 85 °C corner |
+| Slack at 100 MHz | **+0.868 ns** — it meets the clock |
 
 `verification/check_synthesis.sh` runs Analysis & Synthesis, the Fitter and the
 Timing Analyzer across five configurations and holds each to a budget, so a
@@ -628,31 +690,29 @@ whenever somebody next looks:
 
 | Configuration | Logic cells | Memory bits | Fmax |
 | --- | --- | --- | --- |
-| default, 1 KB buffer | 1715 | 8 192 | 108.41 MHz |
-| `FIFO_DEPTH_BYTES=512` | 1712 | 4 096 | 117.03 MHz |
-| `FIFO_DEPTH_BYTES=8192` | 1751 | 65 536 | 103.58 MHz |
-| `USE_DMA=0` | 1518 | 8 192 | 119.80 MHz |
-| `M0_BURST_WIDTH=1` | 1700 | 8 192 | 117.72 MHz |
+| default, 1 KB buffer | 1774 | 8 192 | 109.51 MHz |
+| `FIFO_DEPTH_BYTES=512` | 1753 | 4 096 | 117.76 MHz |
+| `FIFO_DEPTH_BYTES=8192` | 1788 | 65 536 | 107.35 MHz |
+| `USE_DMA=0` | 1571 | 8 192 | 116.86 MHz |
+| `M0_BURST_WIDTH=1` | 1729 | 8 192 | 113.66 MHz |
 
-The fixes described under
-[Running the driver against the RTL](#running-the-driver-against-the-rtl) cost
-13 logic cells and 10 registers in the default build: the same release measures
-the previous RTL at 1702 cells, 888 registers and 112.01 MHz. Fmax moved by
-between −4 and +2 MHz across the five builds, in both directions, for changes of
-a dozen cells. That is the fitter's placement rather than the logic, and it is
-why the check holds a floor rather than a figure. The figures this table carried
-before were Quartus 25.1 Standard's, which for the same RTL are a few MHz
-higher.
+Admitting read blocks, described under
+[A read the host cannot keep up with](#a-read-the-host-cannot-keep-up-with),
+cost 59 logic cells and one register in the default build: the same release
+measures the previous RTL at 1715 cells, 898 registers and 108.41 MHz. Across
+the five builds it added 29 to 59 cells, and Fmax moved by between −4 and
++4 MHz, in both directions. That is the fitter's placement rather than the
+logic, and it is why the check holds a floor rather than a figure.
 
 The 8 KB row is worth a second look. `FIFO_DEPTH_BYTES` has always been
 documented as accepting 512 to 8192, and until the buffer was moved into a memory
 block the top of that range **did not fit on the part** — the fitter needed
-66 430 registers against 49 760 available. It is now 36 logic cells more than the
+66 430 registers against 49 760 available. It is now 14 logic cells more than the
 default. `verification/check_qsys.sh` loads the component into real Platform
 Designer, checks the elaboration callback genuinely removes `m0`, and generates
 a system from it.
 
-**`CLKDIV = 1` is settled.** With Fmax at 108.41 MHz the core meets a 100 MHz
+**`CLKDIV = 1` is settled.** With Fmax at 109.51 MHz the core meets a 100 MHz
 system clock, so clk/2 — 50 MHz SPI — is reachable on this part. The design
 record's fallback of restricting `CLKDIV >= 2` is not needed.
 
@@ -686,7 +746,7 @@ record's fallback of restricting `CLKDIV >= 2` is not needed.
 ## Layout
 
 ```
-rtl/          nine SystemVerilog files, 3439 lines
+rtl/          nine SystemVerilog files, 3558 lines
 tb/           card model, memory model, three testbenches, bound SVA,
               and driver/: the HAL driver run against the RTL
 simulation/verilator/run_sim.sh

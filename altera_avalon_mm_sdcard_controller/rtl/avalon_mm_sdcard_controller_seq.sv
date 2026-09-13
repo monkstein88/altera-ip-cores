@@ -74,6 +74,40 @@
 // paths come through this check, so there is nothing in the RTL to compare it
 // against. What the check buys depends on host preparation time and card-side
 // costs the model does not simulate. See the README's verification section.
+//
+// -----------------------------------------------------------------------------
+// A READ BLOCK IS ADMITTED, NOT JUST RECEIVED
+// -----------------------------------------------------------------------------
+// In SPI mode the host owns the clock, and a card sending a block simply waits
+// while it is stopped. So a block is only clocked in once the buffer has room
+// for ALL of it and the DMA - when it is the buffer's client - is free to take
+// it. Until then `phy_run` is held low in the token and data states, and the
+// shifter stops at the next byte boundary. The block's DMA transfer is started
+// at the moment it is admitted, not when the previous block ends.
+//
+// Both halves replace a fault that corrupted data without an error:
+//
+//   A multi-block read kept clocking into a full buffer and dropped what did
+//   not fit. The CRC16 is checked on the bytes as they come off the wire, not
+//   on what the buffer kept, so it passed and the transfer completed cleanly.
+//   Software draining the DATA window slower than the card sent, or a pause of
+//   a few hundred microseconds, was enough; so was a memory that stalled the
+//   DMA that long.
+//
+//   The DMA was started for the next block when the previous one ended, and it
+//   only accepts a start while idle. A memory that held the last word of a
+//   block for as long as the two CRC bytes take - 64 system clocks at 25 MHz -
+//   lost the start, and the block after it never reached memory.
+//
+// Neither costs a clock in the normal case: the buffer has room and the DMA
+// has finished long before a block's CRC bytes are through, so the next block
+// is admitted in the same cycle it would have started anyway. The one subtlety
+// is the byte already in flight when the hold begins. The shifter loads a byte
+// at the boundary, which at small CLKDIV is before the tick that ends the
+// previous one, so one more byte completes after `run` drops. Between blocks
+// that byte may be the next start token - a card may send it straight after
+// the CRC - which is why the hold spans S_RD_DATA as well as S_RD_TOKEN: the
+// token is taken, and the data behind it waits.
 // =============================================================================
 
 module avalon_mm_sdcard_controller_seq
@@ -144,6 +178,10 @@ module avalon_mm_sdcard_controller_seq
     input  logic [7:0]                  fifo_b_rdata,
     input  logic                        fifo_b_empty,
     output logic                        fifo_flush,
+
+    // Room left in the buffer's store, in words. What a read block is admitted
+    // against - see "A READ BLOCK IS ADMITTED" above.
+    input  logic [BLKCNT_WIDTH-1:0]     fifo_space,
 
     // ---- DMA ---------------------------------------------------------------
     output logic                        dma_start,
@@ -218,6 +256,8 @@ module avalon_mm_sdcard_controller_seq
     logic                       stopping;      // this command is the auto CMD12
     logic                       stuff_q;       // next response byte is CMD12's stuff byte
     logic                       cmd_pending;   // request held until the shifter drains
+    logic                       rd_room;       // this read block is admitted
+    logic                       rd_hold;       // ...and is not: SPI clock held
     logic                       multi_q, dir_q, autostop_q, data_q;
     logic [5:0]                 index_q;
     logic [31:0]                arg_q;
@@ -388,7 +428,11 @@ module avalon_mm_sdcard_controller_seq
         // shifter's prefetch is actually transmitted. Dropping it at the end of
         // the last sending state strands that byte: the shifter will not load
         // from the prefetch without `run`.
-        phy_run     = (state != S_IDLE);
+        //
+        // It is held low while a read block waits to be admitted. Only the
+        // token and data states hold: S_BLOCK_END and S_DAT_START are where
+        // admission is decided, and last one cycle each.
+        phy_run     = (state != S_IDLE) && !rd_hold;
     end
 
     // Pop the FIFO exactly when a write-data byte is accepted by the shifter.
@@ -437,11 +481,38 @@ module avalon_mm_sdcard_controller_seq
     // is real DSP or LUT cost on a MAX 10 for no benefit. Pulsing the DMA once
     // per block and having it CONTINUE its address (dma_keep_addr) gives the
     // same contiguous transfer with an increment instead of a multiply.
+    logic [BLKCNT_WIDTH-1:0] blk_words;
+
     always_comb begin
         dma_dir_h2c   = dir_q;
         fifo_dir_h2c  = dir_q;
-        dma_len_words = (BLKCNT_WIDTH'(blk_size) + BLKCNT_WIDTH'(3)) >> 2;
+        blk_words     = (BLKCNT_WIDTH'(blk_size) + BLKCNT_WIDTH'(3)) >> 2;
+        dma_len_words = blk_words;
     end
+
+    // -------------------------------------------------------------------------
+    // Read admission - see "A READ BLOCK IS ADMITTED" in the header.
+    //
+    // Room is counted in words of the store, and a block needs ceil(size/4) of
+    // them: its whole words plus the partial one `flush` commits at the end.
+    // In S_BLOCK_END that flush is still on its way in - fifo_flush is high in
+    // this very cycle and the store's write pointer moves at its end - so a
+    // block length that is not a multiple of four asks for one word more there.
+    //
+    // `!dma_busy` is what stops a start being lost. The DMA is idle whenever it
+    // is not the client (DMA_EN clear, or no DMA built), so on that path the
+    // condition is room alone.
+    // -------------------------------------------------------------------------
+    logic                    rd_admit;
+    logic [BLKCNT_WIDTH-1:0] rd_need;
+
+    always_comb begin
+        rd_need  = blk_words +
+                   BLKCNT_WIDTH'((state == S_BLOCK_END) && (blk_size[1:0] != 2'b00));
+        rd_admit = (fifo_space >= rd_need) && !dma_busy;
+    end
+
+    always_comb rd_hold = !rd_room && ((state == S_RD_TOKEN) || (state == S_RD_DATA));
 
     // -------------------------------------------------------------------------
     // Main sequencer
@@ -458,6 +529,7 @@ module avalon_mm_sdcard_controller_seq
             stopping     <= 1'b0;
             stuff_q      <= 1'b0;
             cmd_pending  <= 1'b0;
+            rd_room      <= 1'b0;
             multi_q      <= 1'b0;
             dir_q        <= 1'b0;
             autostop_q   <= 1'b0;
@@ -733,18 +805,42 @@ module avalon_mm_sdcard_controller_seq
                         state <= dir_q ? S_WR_TOKEN : S_RD_TOKEN;
 
                         // Card->host: the DMA drains the FIFO as bytes land, so
-                        // it starts here rather than up front. (Host->card
-                        // started at S_IDLE, because that direction must have
-                        // data ready BEFORE the block begins.)
+                        // it starts when the block is admitted rather than up
+                        // front. (Host->card started at S_IDLE, because that
+                        // direction must have data ready BEFORE the block
+                        // begins.) The buffer was cleared when the command was
+                        // latched and the DMA finished the previous transfer
+                        // before S_IDLE, so the first block is admitted here
+                        // unless BLK_SIZE is larger than the buffer.
                         if (!dir_q) begin
-                            dma_start     <= 1'b1;
                             dma_keep_addr <= 1'b0;
+                            rd_room       <= rd_admit;
+                            if (rd_admit) dma_start <= 1'b1;
                         end
                     end
 
                     // ---- read path --------------------------------------
+                    //
+                    // Both states admit a block that was held, and both are
+                    // bounded while holding: with the clock stopped no tick
+                    // arrives, so the token wait's own timeout - checked on a
+                    // tick, since the shifter otherwise free-runs here - would
+                    // never be reached. A hold that times out means nothing
+                    // drained the buffer for TIMEOUT cycles: software abandoned
+                    // the DATA window, or the memory stopped answering the DMA.
+                    // It records the phase it held in, exactly as a write
+                    // starved of data records PHASE_DATA.
                     S_RD_TOKEN: begin
-                        if (tick) begin
+                        if (!rd_room && rd_admit) begin
+                            rd_room   <= 1'b1;
+                            dma_start <= 1'b1;
+                        end
+
+                        if (!tick && !rd_room && (tmo >= timeout)) begin
+                            err_flags[E_DAT_TMO] <= 1'b1;
+                            err_phase <= PHASE_TOKEN;
+                            state     <= S_ABORT;
+                        end else if (tick) begin
                             if (rx_is_start_tok) begin
                                 byte_cnt       <= '0;
                                 crc16_rx_clear <= 1'b1;
@@ -776,18 +872,19 @@ module avalon_mm_sdcard_controller_seq
                     // until the PIO path was simulated: there, software feeding
                     // the buffer too slowly, or not at all, wedges the core with
                     // no recovery short of a soft reset.
-                    // The timeout below is DEFENSIVE and cannot fire as this
-                    // module is wired. S_RD_DATA is a receive state, so it
-                    // raises tx_idle and the shifter free-runs 0xFF - a tick
-                    // therefore arrives every byte and clears tmo, and a full
-                    // FIFO drops bytes rather than stalling. Questa's FSM
-                    // coverage reports the arc to S_ABORT as unreached for
-                    // exactly that reason, and no directed test can reach it
-                    // without artificially shrinking TIMEOUT mid-block. It stays
-                    // because the guarantee it rests on lives in another module:
-                    // if the shifter ever stopped free-running on receive, this
-                    // is the only thing between that and a wedged core.
+                    //
+                    // On the read side this timeout was once DEFENSIVE and
+                    // unreachable: the shifter free-ran 0xFF, a tick arrived
+                    // every byte, and a full buffer dropped bytes rather than
+                    // stopping the clock. It is reachable now, and for the same
+                    // reason as the write side: a block held here - its start
+                    // token already taken, see the header - waits on the host.
                     S_RD_DATA: begin
+                        if (!rd_room && rd_admit) begin
+                            rd_room   <= 1'b1;
+                            dma_start <= 1'b1;
+                        end
+
                         if (tick) begin
                             tmo <= '0;
                             if (byte_cnt == BCW'(blk_size - 1)) begin
@@ -961,8 +1058,19 @@ module avalon_mm_sdcard_controller_seq
                             // Another block's worth of DMA, continuing from
                             // where the last one stopped rather than reloading
                             // the base address.
-                            dma_start     <= 1'b1;
+                            //
+                            // A write starts it now: the DMA filled the buffer
+                            // with the previous block before a byte of it could
+                            // be sent, so it is idle. A read starts it when the
+                            // next block is admitted, which is normally now too
+                            // - and otherwise is what used to lose it.
                             dma_keep_addr <= 1'b1;
+                            if (dir_q) begin
+                                dma_start <= 1'b1;
+                            end else begin
+                                rd_room   <= rd_admit;
+                                if (rd_admit) dma_start <= 1'b1;
+                            end
 
                             // Next block. On the write side the pre-emptive
                             // busy check runs first; on the read side the card

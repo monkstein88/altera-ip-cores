@@ -251,6 +251,7 @@ unsigned sim_card_blocks_written(int which)
 }
 
 unsigned sim_dma_beats(void) { return top->dma_beats; }
+unsigned sim_read_holds(void) { return top->read_holds; }
 
 unsigned sim_cpu_cycles(void) { return cpu_cycles; }
 

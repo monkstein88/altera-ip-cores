@@ -66,10 +66,10 @@ nothing about it has been measured on hardware. What it has is:
 | | |
 |---|---|
 | Testbenches | 3 — shifter, FIFO, full core — plus the HAL driver run against the RTL |
-| Checks | 91 in the three testbenches, 97 in the driver harness |
-| Configurations swept | 5 for the full core (`dma`, `pio`, `sdsc`, `tight`, `noburst`); 4 for the driver, plus a slow processor |
-| Bound SVA assertions | 26, plus 5 cover points |
-| Assertion fault injections | 5 — each required to be caught |
+| Checks | 98 in the three testbenches, 98 in the driver harness |
+| Configurations swept | 5 for the full core (`dma`, `pio`, `sdsc`, `tight`, `noburst`); 4 for the driver, plus a processor slower than the card |
+| Bound SVA assertions | 28, plus 6 cover points |
+| Assertion fault injections | 7 — each required to be caught |
 | Platform Designer component checks | 22 |
 | HAL driver build checks | 4 |
 | Lint configurations | 10 |
@@ -271,6 +271,12 @@ target, or none to spare. What changes is the *deadline*: with no master keeping
 the buffer moving, software has to service the `DATA` window fast enough that
 the shifter is never starved, and the data-phase stall timeout is what catches
 it when it is not.
+
+A read has no deadline. A read block is only clocked in once the buffer has
+room for all of it, so software that drains the window slower than the card
+sends makes the transfer slower, not wrong: the core stops the SPI clock between
+blocks and the card waits. A read that nobody drains at all ends in
+`ERR_DAT_TMO` once `TIMEOUT` has passed with no room.
 
 That path is tested rather than assumed — `pio` is one of the five
 configurations the regression sweeps, and it is the only one in which those
@@ -541,7 +547,9 @@ pieces.
 With `USE_DMA = 0` the driver moves every word through the `DATA` window while
 the transfer runs. It has to: on a write the sequencer reaches the data phase
 about ten byte-times after the command goes out, and a buffer still empty then
-stalls the shifter.
+stalls the shifter. A read can be drained as slowly as the processor needs — the
+core holds the clock until the buffer has room for the next block — but not
+abandoned: after `TIMEOUT` with no room it gives up with `ERR_DAT_TMO`.
 
 ## 7.5 FatFs
 
@@ -605,7 +613,7 @@ Everything that can be checked in software alone:
 | Simulation | 3 testbenches, the full-core one in 5 configurations, and the HAL driver run against the RTL in 4 builds |
 | Platform Designer | `hw.tcl` executed against stubbed Qsys commands — 22 checks |
 | HAL driver | Compiled against stubbed Nios II headers, the FatFs glue with it, plus the CSD parse unit-tested |
-| Assertions | 5 faults injected, each required to be caught by the assertion meant to catch it |
+| Assertions | 7 faults injected, each required to be caught by the assertion meant to catch it |
 | Facts | Every number in the documentation re-derived from source |
 | CRC vectors | The polynomials checked against an independent Python model |
 
@@ -628,7 +636,7 @@ why it survived until the PIO configuration was run.
 
 ## 9.2 Assertions, and proving they are alive
 
-26 bound SVA assertions and 5 cover points, in
+28 bound SVA assertions and 6 cover points, in
 `tb/avalon_mm_sdcard_controller_sva.sv`.
 
 They check invariants rather than results. That suits this core: most of its
@@ -637,7 +645,7 @@ bits, a transfer declared complete with a byte still in the shifter — and each
 one breaks an invariant you can state in a line.
 
 A passing assertion proves nothing by itself, so
-`verification/check_assertions_fire.sh` injects five faults into scratch copies
+`verification/check_assertions_fire.sh` injects seven faults into scratch copies
 of the RTL and requires each to be caught by the assertion meant to catch it.
 
 The first fault it tried turned out to be **unreachable**. `S_PRE_BUSY` clocks
@@ -653,8 +661,8 @@ unmodified, linked into the Verilator model, with a small C++ harness standing i
 for the processor — each register access is one Avalon-MM transfer, and nothing
 else moves simulated time. Two cards, one of each capacity class, can be swapped
 in the socket between calls or in the middle of one. It runs with and without the
-DMA and a card-detect switch, and on a slow processor, 97 checks each time, and
-it calls the FatFs glue the way FatFs does.
+DMA and a card-detect switch, and on a processor nearly five times slower than
+the card, 98 checks each time, and it calls the FatFs glue the way FatFs does.
 
 Its first run found two faults every other suite had passed. The driver's
 power-up clocks were timed by a CPU loop rather than by anything the bus can
@@ -664,6 +672,16 @@ read could take the card's data for its response. Both are fixed and each has a
 test that fails without the fix; the README's verification section has the
 detail.
 
+Its "slow processor" was not slow: 82 clock cycles per word read through `DATA`,
+against the card's 128. Run slower than the card, it showed that a multi-block
+read kept clocking into a full buffer and lost the bytes that did not fit, while
+the CRC — checked on the wire — passed and the driver returned `ALT_SDCARD_OK`.
+A memory stalling the DMA on a block's last word lost the next block's DMA start
+the same quietly. Both are fixed by admitting a read block only once the buffer
+has room for it and the DMA is free, and the README's section
+*A read the host cannot keep up with* has the detail. The slow run now takes 602
+clock cycles per word, and must see blocks held.
+
 ## 9.4 Questa
 
 `simulation/questa/run_sim.tcl` runs the same sweep with coverage and
@@ -671,7 +689,7 @@ non-vacuity reporting.
 
 **It has been run**, against Questa 2024.1, and all seven configurations pass
 with every assertion present and passing non-vacuously somewhere in the sweep,
-and all five cover directives present and reached.
+and all six cover directives present and reached.
 Treating that first run as part of the work rather than a formality was the
 right call: it found four faults, and the worst was that **none of the
 assertions had ever been running**. The binds sit at compilation-unit scope, so
@@ -684,12 +702,14 @@ It also found RTL that `vopt` rejected outright and Verilator linted clean, one
 assertion whose consequent was the literal `1'b1` and which therefore could
 never fail, and a memory model that never backpressured a read command.
 
-The sequencer now reaches all 20 of its states and 40 of its 58 transitions.
-The 18 remaining are accounted for: 16 are the single `if (srst)` statement
+The sequencer now reaches all 20 of its states and 41 of its 58 transitions.
+The 17 remaining are accounted for: 16 are the single `if (srst)` statement
 counted once per source state, of which the three that matter are tested; and
-two are defensive timeouts in `S_RD_DATA` and `S_WR_CRC` that cannot fire as the
-sequencer is wired, since neither state can be starved of a byte. See the
-README's verification section for the reasoning.
+one is the defensive timeout in `S_WR_CRC`, which cannot fire as the sequencer is
+wired, since that state cannot be starved of a byte. The timeout in `S_RD_DATA`
+was listed beside it until a read block could be held for the host; a read that
+nobody drains now reaches it. See the README's verification section for the
+reasoning.
 
 ---
 
@@ -700,7 +720,7 @@ README's verification section for the reasoning.
 
   Timing closure is no longer part of it. The core synthesises, fits and meets a
   100 MHz clock on the DE10-Lite's `10M50DAF484C7G` in Quartus Prime 18.1 — Fmax
-  108.41 MHz at the slow 85 °C corner, +0.776 ns of slack, 1715 logic cells and
+  109.51 MHz at the slow 85 °C corner, +0.868 ns of slack, 1774 logic cells and
   one M9K. That is checked
   by `verification/check_synthesis.sh` on every run, and the component itself is
   loaded into real Platform Designer by `verification/check_qsys.sh`. What remains

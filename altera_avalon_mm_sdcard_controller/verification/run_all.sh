@@ -19,7 +19,7 @@
 #                 Qsys commands
 #   driver        the HAL driver and its FatFs glue compiled against stubbed
 #                 headers
-#   assertions    three faults injected into scratch copies of the RTL, each
+#   assertions    seven faults injected into scratch copies of the RTL, each
 #                 required to be caught by the assertion meant to catch it -
 #                 because an assertion that cannot fail passes just as
 #                 convincingly as one doing real work

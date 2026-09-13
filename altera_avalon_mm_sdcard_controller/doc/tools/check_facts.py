@@ -621,7 +621,77 @@ check("the README records the response-window fault the harness found",
 check("the design record no longer says the stuff byte was simply handled",
       "`AUTO_STOP` handles this in hardware." not in DESIGN)
 
-# --- 9.12 this script's own total, as the README's verification table quotes it ---
+# --- 9.12 a read the host cannot keep up with ---
+#
+# The harness's "slow processor" was faster than the card, which is why a core
+# that dropped bytes behind a passing CRC passed it. How slow the run is follows
+# from two numbers in two files - the runner's per-access cost and the driver's
+# run divider - so derive it rather than trust the comment beside either: a
+# word read through DATA is a STATUS read and a DATA read, and the card sends
+# one every 4 x 8 x 2 x CLKDIV clocks. The harness only insists on held blocks
+# at twice the card's time or slower, so the slow run has to be at least that.
+RUNSIM = rd("simulation/verilator/run_sim.sh")
+HALH = rd("HAL/inc/altera_avalon_mm_sdcard_controller.h")
+m_slow = re.search(r"^SLOW_CPU=(\d+)$", RUNSIM, re.M)
+m_div = re.search(r"(\d+)u,\s*/\* 25 MHz", HALH)
+cpu_word = 2 * (int(m_slow.group(1)) + 1) if m_slow else 0
+card_word = 4 * 8 * 2 * int(m_div.group(1)) if m_div else 0
+check("the slow driver run really is at least twice slower than the card",
+      m_slow is not None and m_div is not None and card_word > 0
+      and cpu_word >= 2 * card_word,
+      f"{cpu_word} clocks a word against the card's {card_word}")
+check("the slow driver run passes its per-access cost to the harness",
+      '"+cpu=$SLOW_CPU"' in RUNSIM)
+m = re.search(r"takes (\d+) extra clock cycles per bus access, (\d+) per word", README)
+check("README quotes the slow run's per-access and per-word cost",
+      m is not None and m_slow is not None
+      and int(m.group(1)) == int(m_slow.group(1)) and int(m.group(2)) == cpu_word,
+      f"README {m.groups() if m else '?'}, derived ({m_slow.group(1) if m_slow else '?'}, {cpu_word})")
+check("the driver harness still requires held blocks from a processor that slow",
+      "sim_read_holds() > 0u" in DRV_TESTS)
+check("the sequencer holds the SPI clock for a read block it has not admitted",
+      "phy_run     = (state != S_IDLE) && !rd_hold;" in SEQ)
+check("the README records the two faults a slower host found",
+      "kept clocking into a full buffer" in README and "A lost DMA start" in README)
+
+# The default build's synthesis figures are measured once and quoted by hand in
+# the README, the user guide, the design record and the synthesis script. Nothing
+# here can re-measure them without Quartus, but they can be held to agreeing:
+# after a change to the RTL, one of five places not updated is how a stale
+# figure survives.
+m_c = re.search(r"^\| Logic cells \| (\d+) / ", README, re.M)
+m_r = re.search(r"^\| Registers \| (\d+) \|", README, re.M)
+m_f = re.search(r"^\| Fmax \| \*\*([\d.]+) MHz\*\*", README, re.M)
+m_s = re.search(r"^\| Slack at 100 MHz \| \*\*\+([\d.]+) ns\*\*", README, re.M)
+check("README's synthesis summary is readable",
+      None not in (m_c, m_r, m_f, m_s))
+if None not in (m_c, m_r, m_f, m_s):
+    cells, regs, fmax, slack = m_c.group(1), m_r.group(1), m_f.group(1), m_s.group(1)
+    check("README's default synthesis row matches its summary",
+          re.search(rf"^\| default, 1 KB buffer \| {cells} \| [\d ]+ \| {re.escape(fmax)} MHz \|$",
+                    README, re.M) is not None)
+    check("README's CLKDIV = 1 paragraph quotes the same Fmax",
+          f"With Fmax at {fmax} MHz" in README)
+    check("the user guide quotes the same default synthesis figures",
+          re.search(rf"{re.escape(fmax)} MHz at the slow 85 °C corner, \+{re.escape(slack)} ns of"
+                    rf"\s+slack, {cells} logic cells", UG) is not None)
+    check("the design record quotes the same Fmax and slack",
+          re.search(rf"\*\*Fmax {re.escape(fmax)} MHz\*\* in Quartus 18\.1 at the slow 85 °C corner, "
+                    rf"\*\*\+{re.escape(slack)} ns\*\*", DESIGN) is not None)
+    check("the synthesis script's comment quotes the same default figures",
+          f"Measured in 18.1: {cells} cells, {regs} registers, {fmax} MHz" in SYN)
+
+# The transition count is quoted in two documents, with the remainder beside it.
+m_rt = re.search(r"all 20\s+of its states and (\d+) of its (\d+) transitions\*\*, and the (\d+) that remain",
+                 README)
+m_ut = re.search(r"all 20 of its states and (\d+) of its (\d+) transitions\.\s+The (\d+) remaining",
+                 UG)
+check("README and user guide quote the same sequencer transition coverage",
+      m_rt is not None and m_ut is not None and m_rt.groups() == m_ut.groups())
+check("the uncovered transition count is the total less the covered",
+      m_rt is not None and int(m_rt.group(3)) == int(m_rt.group(2)) - int(m_rt.group(1)))
+
+# --- 9.13 this script's own total, as the README's verification table quotes it ---
 #
 # Last, so the count is final: it includes this check. The table said 203 for
 # three commits while the script grew past 240, because the one number about

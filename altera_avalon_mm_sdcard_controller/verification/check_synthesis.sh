@@ -55,8 +55,8 @@ CLK_NS=10.000
 # --- budgets -----------------------------------------------------------------
 # Logic cells for the whole core, and separately for the buffer, because the
 # buffer has been most of the core and that is the thing worth watching.
-# Measured in 18.1: 1715 cells, 898 registers, 108.41 MHz; the 8 KB buffer
-# build is the closest to the floor, at 103.58 MHz. The headroom is for the
+# Measured in 18.1: 1774 cells, 899 registers, 109.51 MHz; the 8 KB buffer
+# build is the closest to the floor, at 107.35 MHz. The headroom is for the
 # parameter variations and for ordinary fitter noise, not for drift - Fmax has
 # moved by several MHz, both ways, for a change of a dozen cells.
 #

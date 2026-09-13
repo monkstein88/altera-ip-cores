@@ -37,6 +37,12 @@
 #   frame_any_tick   counting every receive tick as a byte of the command
 #                    frame, which opened the response window a byte early at
 #                    25 MHz - the defect the driver harness found
+#   read_not_held    clocking a read block in whether or not the buffer has
+#                    room for it, which dropped bytes behind a passing CRC when
+#                    the host drained slower than the card sent
+#   start_while_busy starting a read block's DMA transfer while the DMA is still
+#                    finishing the previous one, which lost the start when the
+#                    memory stalled on a block's last word
 # =============================================================================
 set -uo pipefail
 
@@ -164,6 +170,23 @@ inject frame_any_tick a_response_window_after_whole_frame \
     avalon_mm_sdcard_controller_seq.sv \
     "if (tick && phy_rx_tx_queued) begin" \
     "if (tick) begin"
+
+# Stop holding the clock for a read block that has not been admitted. The
+# admission bookkeeping still runs; only the clock ignores it, which is the
+# core as it was. The regression's slow drain fills the buffer within a block or
+# two, and the first byte with nowhere to go fires the assertion.
+inject read_not_held a_no_byte_dropped_on_read \
+    avalon_mm_sdcard_controller_seq.sv \
+    "phy_run     = (state != S_IDLE) && !rd_hold;" \
+    "phy_run     = (state != S_IDLE);"
+
+# Admit a read block on room alone, so its DMA start can go out while the DMA
+# is still moving the previous block. Only a memory stall reaches it: the
+# regression holds one block's last word for 2000 clocks.
+inject start_while_busy a_dma_start_only_when_idle \
+    avalon_mm_sdcard_controller_seq.sv \
+    "rd_admit = (fifo_space >= rd_need) && !dma_busy;" \
+    "rd_admit = (fifo_space >= rd_need);"
 
 echo ""
 if [ $fail -eq 0 ]; then echo "*** PASS ***"; else echo "*** FAIL ***"; fi

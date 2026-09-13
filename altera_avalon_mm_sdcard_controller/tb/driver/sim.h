@@ -44,6 +44,8 @@ unsigned sim_faults_applied(int which);
 unsigned sim_card_cmds(int which);
 unsigned sim_card_blocks_written(int which);
 unsigned sim_dma_beats(void);
+/* Read blocks the core held the SPI clock for until the buffer had room. */
+unsigned sim_read_holds(void);
 unsigned sim_card_peek(int which, unsigned byte_addr);
 void     sim_card_poke(int which, unsigned byte_addr, unsigned data);
 
