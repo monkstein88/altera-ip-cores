@@ -5,11 +5,13 @@
 #   ./run_sim.sh          run everything
 #   ./run_sim.sh -c       clean the build directories first
 #   ./run_sim.sh phy      run only the shifter unit testbench
+#                         (likewise fifo, core, driver)
 #
-# Exit status is 0 only if every check in every testbench passes. Verilator
-# returns non-zero on an assertion failure or $fatal by itself, but each log is
-# also grepped for the result marker, so a simulator that swallows the status
-# cannot hide a failure.
+# Exit status is 0 only if every check in every testbench passes, 1 if any
+# failed, and 2 if nothing failed but a build could not run on this host (the
+# driver harness's DMA builds need Linux x86-64). Verilator returns non-zero on
+# an assertion failure or $fatal by itself, but each log is also grepped for the
+# result marker, so a simulator that swallows the status cannot hide a failure.
 # =============================================================================
 set -uo pipefail
 
@@ -155,6 +157,7 @@ WAIVE=(
 )
 
 fail=0
+partial=0
 
 run_tb () {
     local name="$1" top="$2"; shift 2
@@ -241,6 +244,135 @@ if [ "$WHICH" = "all" ] || [ "$WHICH" = "core" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# The HAL driver, run against the RTL.
+#
+# Every suite above drives the registers from SystemVerilog written to do what
+# the driver does. This one runs the driver itself - HAL/src compiled with gcc,
+# unmodified - with tb/driver/sim_main.cpp standing in for the processor: each
+# IORD/IOWR is one Avalon-MM transfer on the csr slave, and nothing else moves
+# simulated time. See tb/driver/driver_tests.c for what it checks.
+#
+# Its first run found two faults that every suite above had passed: the
+# driver's power-up wait was a CPU spin loop that gave the card no clocks at
+# all, and the sequencer opened the response window one byte early at 25 MHz.
+#
+#   pio_cd     no DMA, card-detect switch
+#   dma_cd     DMA, switch - the DMA master dereferences the driver's own
+#              buffers, so the buffer handling is the real thing
+#   pio_nocd   no switch: card changes only show up as a card that stops
+#              answering. Transfers are split every 3 blocks
+#              (ALT_SDCARD_MAX_BLOCKS_PER_TRANSFER), so the splitting - and
+#              the auto CMD12 between the pieces - runs on ordinary sizes; and
+#              FatFs's sector number is 64 bits wide, as FF_LBA64 makes it.
+#   dma_nocd   DMA, no switch
+#   slow_cpu   pio_cd's build again with 40 clock cycles per bus access, where
+#              the PIO data path is fed slower than the card moves bytes
+#
+# The FatFs disk I/O glue in software/fatfs is linked into every build, compiled
+# against stand-ins for FatFs's two headers (tb/driver/fatfs_stub), and called
+# the way FatFs calls it.
+# ---------------------------------------------------------------------------
+DRIVER_CFGS=(
+    "pio_cd:0:1:"
+    "dma_cd:1:1:"
+    "pio_nocd:0:0:-DALT_SDCARD_MAX_BLOCKS_PER_TRANSFER=3u -DSDCARD_STUB_LBA64"
+    "dma_nocd:1:0:"
+)
+
+# Runs one harness binary and classifies the result. Exit 2 from the harness is
+# its own "cannot run here", which is neither a pass nor a failure.
+run_driver_bin () {
+    local name="$1" bin="$2" log="$3"; shift 3
+    echo "=== driver_$name ==="
+    "$bin" "$@" >> "$log" 2>&1
+    local rc=$?
+    grep -E 'checks,|NOT RUN' "$log" | sed 's/^/  /'
+    if [ $rc -eq 2 ] && grep -q 'NOT RUN' "$log"; then
+        echo "  NOT RUN on this host"
+        partial=1
+    elif [ $rc -ne 0 ] || ! grep -q '\*\*\* PASS \*\*\*' "$log"; then
+        echo "  FAILED - see $log"
+        fail=1
+    else
+        echo "  PASS"
+    fi
+}
+
+build_driver () {
+    local name="$1" dma="$2" cd="$3" cdefs="$4"
+    local obj="$OBJROOT/obj_dir_driver_$name"
+    local log="$OBJROOT/run_driver_$name.log"
+    local CINC=(-I "$ROOT/tb/driver/stubs" -I "$ROOT/tb/driver"
+                -I "$ROOT/tb/driver/fatfs_stub"
+                -I "$ROOT/HAL/inc" -I "$ROOT/inc")
+    local CSRC=("driver:$ROOT/HAL/src/altera_avalon_mm_sdcard_controller.c"
+                "tests:$ROOT/tb/driver/driver_tests.c"
+                "diskio:$ROOT/software/fatfs/diskio_altera_sdcard.c")
+    local c
+
+    mkdir -p "$obj"
+    : > "$log"
+    # The C sources are compiled here, outside Verilator's makefile, which
+    # therefore does not know the executable depends on them: an object that
+    # changed does not relink it, and the run tests the PREVIOUS driver. That
+    # happened while this section was being written. Removing the executable is
+    # what makes the link unconditional.
+    rm -f "$obj/simx"
+    # -Werror: the driver is held to "clean under -Wall -Wextra" elsewhere, and
+    # the harness must not be the place a warning is allowed to hide.
+    for c in "${CSRC[@]}"; do
+        # $cdefs is deliberately unquoted: it is a list of -D options.
+        # shellcheck disable=SC2086
+        if ! gcc -std=c99 -O1 -g -Wall -Wextra -Werror $cdefs "${CINC[@]}" \
+                -c -o "$obj/${c%%:*}.o" "${c#*:}" >> "$log" 2>&1; then
+            echo "=== driver_$name ==="
+            echo "  BUILD FAILED (${c#*:}) - see $log"
+            grep -E 'error|warning' "$log" | head -5
+            fail=1
+            return 1
+        fi
+    done
+
+    verilator --cc --exe --build --assert -j "$(nproc)" -Wall \
+        "${PCHFIX[@]}" "${WAIVE[@]}" +define+SDCARD_DPI_MEM \
+        -GUSE_DMA="$dma" -GUSE_CARD_DETECT="$cd" \
+        -CFLAGS "$CXXSTD -DSDCARD_CFG_DMA=$dma -DSDCARD_CFG_CD=$cd -I$ROOT/tb/driver -I$ROOT/tb/driver/stubs" \
+        -LDFLAGS "-no-pie -pthread" \
+        --Mdir "$obj" -o simx \
+        "${RTL[@]}" \
+        "$ROOT/tb/avalon_mm_sdcard_controller_sva.sv" \
+        "$ROOT/tb/spi_card_model.sv" \
+        "$ROOT/tb/avalon_mm_mem_model.sv" \
+        "$ROOT/tb/avalon_mm_sdcard_controller_drv_top.sv" \
+        "$ROOT/tb/driver/sim_main.cpp" \
+        "$obj/driver.o" "$obj/tests.o" "$obj/diskio.o" \
+        --top-module avalon_mm_sdcard_controller_drv_top >> "$log" 2>&1
+    if [ $? -ne 0 ]; then
+        echo "=== driver_$name ==="
+        echo "  BUILD FAILED - see $log"
+        grep -E '^%Error|error:' "$log" | head -5
+        fail=1
+        return 1
+    fi
+    return 0
+}
+
+if [ "$WHICH" = "all" ] || [ "$WHICH" = "driver" ]; then
+    for entry in "${DRIVER_CFGS[@]}"; do
+        IFS=: read -r name dma cd cdefs <<< "$entry"
+        if build_driver "$name" "$dma" "$cd" "$cdefs"; then
+            run_driver_bin "$name" "$OBJROOT/obj_dir_driver_$name/simx" \
+                "$OBJROOT/run_driver_$name.log"
+        fi
+    done
+    if [ -x "$OBJROOT/obj_dir_driver_pio_cd/simx" ]; then
+        : > "$OBJROOT/run_driver_slow_cpu.log"
+        run_driver_bin slow_cpu "$OBJROOT/obj_dir_driver_pio_cd/simx" \
+            "$OBJROOT/run_driver_slow_cpu.log" +cpu=40
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Every check actually ran - no more and no fewer than the source contains.
 #
 # doc/tools/check_facts.py derives the README's check counts from the number
@@ -253,12 +385,14 @@ fi
 static_checks () {
     grep -cE '^[[:space:]]+(check|check_noerr)\(' "$1"
 }
-for pair in "core_dma:avalon_mm_sdcard_controller_tb.sv" \
-            "fifo:avalon_mm_sdcard_controller_fifo_tb.sv"; do
+for pair in "core_dma:tb/avalon_mm_sdcard_controller_tb.sv" \
+            "fifo:tb/avalon_mm_sdcard_controller_fifo_tb.sv" \
+            "driver_pio_cd:tb/driver/driver_tests.c" \
+            "driver_dma_nocd:tb/driver/driver_tests.c"; do
     lg="$OBJROOT/run_${pair%%:*}.log"
     [ -f "$lg" ] || continue
     ran=$(grep -oE '=== [0-9]+ checks' "$lg" | grep -oE '[0-9]+' | tail -1)
-    src=$(static_checks "$ROOT/tb/${pair#*:}")
+    src=$(static_checks "$ROOT/${pair#*:}")
     if [ -n "$ran" ] && [ "$ran" != "$src" ]; then
         echo "  FAIL  ${pair#*:}: $ran checks ran but the source has $src call sites"
         echo "        - a check inside a loop? It breaks the README's derived count."
@@ -267,5 +401,12 @@ for pair in "core_dma:avalon_mm_sdcard_controller_tb.sv" \
 done
 
 echo
-if [ $fail -eq 0 ]; then echo "ALL TESTBENCHES PASS"; else echo "*** REGRESSION FAILED ***"; fi
-exit $fail
+if [ $fail -ne 0 ]; then
+    echo "*** REGRESSION FAILED ***"
+    exit 1
+elif [ $partial -ne 0 ]; then
+    echo "ALL TESTBENCHES THAT RAN PASS - BUT SOME COULD NOT RUN ON THIS HOST"
+    exit 2
+fi
+echo "ALL TESTBENCHES PASS"
+exit 0

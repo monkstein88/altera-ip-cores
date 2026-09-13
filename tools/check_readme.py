@@ -25,16 +25,20 @@ file holding 24 and 5. Nothing caught it, because nothing was looking.
 This script looks. It does not try to check prose - most of what this README
 says is judgement, and a checker that pretends otherwise would be theatre. It
 checks the things that are mechanically derivable and that go stale silently:
-counts, file existence, and links.
+counts, file existence, links and the headings their anchors name, and the
+directories the layout tree draws.
 
 -----------------------------------------------------------------------------
 WHAT IT DOES NOT CHECK
 -----------------------------------------------------------------------------
 Measured results - throughput, Fmax, board pass counts - are not re-derivable
 from the tree. They came from hardware runs and from simulations whose logs are
-not tracked. Each core's own check_facts.py holds those against that core's
-README, which is the right place for them; this script deliberately does not
-duplicate that and does not pretend to verify them.
+not tracked, and this script does not pretend to re-measure them.
+
+What it does do, for the figures this file repeats from a core's own README -
+the SD card controller's check count, documentation-claim count, logic cells
+and Fmax - is require the two documents to agree. That core's check_facts.py
+holds its README to the source, so agreement here chains through to it.
 """
 
 import os
@@ -112,6 +116,37 @@ for target in re.findall(r"\]\(([^)#][^)]*)\)", README):
     if not path:
         continue
     check(f"link resolves: {path}", os.path.exists(os.path.join(ROOT, path)))
+
+
+# And every anchor names a heading that exists, here or in the file linked to.
+# A link to a missing anchor still opens the page, at the top, so nobody reports
+# it - which is how the SD card controller's README carried two links to a
+# heading whose em dash GitHub turns into a double hyphen.
+def heading_slugs(path):
+    """GitHub's anchors: lower case, punctuation other than - and _ dropped,
+    spaces to hyphens, repeats numbered."""
+    slugs, seen, in_code = set(), {}, False
+    for ln in open(path, encoding="utf-8"):
+        if ln.startswith("```"):
+            in_code = not in_code
+            continue
+        m = None if in_code else re.match(r"^#{1,6}\s+(.*?)\s*$", ln)
+        if not m:
+            continue
+        t = re.sub(r"[^\w\- ]", "", m.group(1).lower()).replace(" ", "-")
+        n = seen.get(t, 0)
+        seen[t] = n + 1
+        slugs.add(t if n == 0 else f"{t}-{n}")
+    return slugs
+
+
+for target in re.findall(r"\]\(([^)\s]*#[^)\s]+)\)", README):
+    if target.startswith(("http://", "https://", "mailto:")):
+        continue
+    path, frag = target.split("#", 1)
+    doc = os.path.join(ROOT, path) if path else os.path.join(ROOT, "README.md")
+    if doc.endswith(".md") and os.path.exists(doc):
+        check(f"anchor names a heading: {target}", frag in heading_slugs(doc))
 
 # ---------------------------------------------------------------------------
 # 3. Assertion and cover-point counts in the status cells
@@ -266,17 +301,27 @@ for core in ORIGINAL:
 tree = re.search(r"## Layout\s*\n+```\n(.*?)```", README, re.S)
 check("the README has a layout tree", tree is not None)
 if tree:
+    # Every directory the tree draws, the nested ones included, resolved against
+    # the top-level entry above it. Only the NAME column is read: the text after
+    # it is description, and a slash in prose is not a path.
+    parent = None
     for line in tree.group(1).splitlines():
-        m = re.search(r"([A-Za-z0-9_][A-Za-z0-9_./]*)/\s", line)
-        if not m:
+        body = line.lstrip("│├└─ ")
+        if not body or line.startswith("altera-ip-cores/"):
             continue
-        name = m.group(1)
-        # Only top-level core directories are unambiguous from the tree's
-        # drawing characters; nested entries are indented under whichever core
-        # precedes them and are not worth reconstructing here.
-        if name in ALL_CORES:
-            check(f"the layout tree names a real directory: {name}",
-                  os.path.isdir(os.path.join(ROOT, name)))
+        name_col = re.split(r"\s{2,}", body, maxsplit=1)[0]
+        dirs = re.findall(r"([A-Za-z0-9_][A-Za-z0-9_./\-]*)/(?=\s|$)", name_col)
+        if not dirs:
+            continue
+        top_level = re.match(r"^[├└]── ", line) is not None
+        if top_level:
+            parent = dirs[0]
+            check(f"the layout tree names a real directory: {parent}",
+                  os.path.isdir(os.path.join(ROOT, parent)))
+        elif parent:
+            for d in dirs:
+                check(f"the layout tree names a real directory: {parent}/{d}",
+                      os.path.isdir(os.path.join(ROOT, parent, d)))
 
 # ---------------------------------------------------------------------------
 # 7. Honesty about the SD card controller

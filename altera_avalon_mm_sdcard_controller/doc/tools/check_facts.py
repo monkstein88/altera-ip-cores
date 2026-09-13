@@ -150,6 +150,12 @@ quoted_lines = re.search(r"(\d{3,5})\s+lines", README)
 check("README's RTL line count matches the files on disk",
       quoted_lines is not None and int(quoted_lines.group(1)) == rtl_lines,
       f"README says {quoted_lines.group(1) if quoted_lines else '?'}, actual {rtl_lines}")
+# The layout block quotes it a second time, and the check above reads only the
+# first occurrence - which is how 3358 outlived the change that made it wrong.
+m = re.search(r"nine SystemVerilog files, (\d+) lines", README)
+check("README's layout block quotes the same RTL line count",
+      m is not None and int(m.group(1)) == rtl_lines,
+      f"layout says {m.group(1) if m else '?'}, actual {rtl_lines}")
 check("there are nine RTL files, as the README says",
       rtl_files == 9, f"found {rtl_files}")
 
@@ -161,7 +167,8 @@ check("there are nine RTL files, as the README says",
 # suite added without updating the total is caught.
 rows = re.findall(r"^\|\s*`?(\w+[\w.]*)`?\s*\|\s*(\d+)\s*\|", README, re.M)
 suite_counts = {n: int(c) for n, c in rows if n in
-                ("phy", "fifo", "core", "check_hw_tcl.tcl", "check_driver_builds.sh")}
+                ("phy", "fifo", "core", "driver", "check_hw_tcl.tcl",
+                 "check_driver_builds.sh")}
 sim_total = sum(v for k, v in suite_counts.items() if k in ("phy", "fifo", "core"))
 m = re.search(r"passes (\d+) self-checking assertions", README)
 check("README's headline assertion count equals the sum of its own suite table",
@@ -183,6 +190,27 @@ for suite, path in (("core", "tb/avalon_mm_sdcard_controller_tb.sv"),
     check(f"README's `{suite}` count matches that testbench's own checks",
           suite_counts.get(suite) == n,
           f"README {suite_counts.get(suite)}, source has {n}")
+
+# The driver harness. Its checks are straight-line calls too - helpers that run
+# the same steps for several cards return what went wrong, and each check is
+# made once at its call site - so the call sites are the count, which
+# simulation/verilator/run_sim.sh also compares against every run.
+DRV_TESTS = rd("tb/driver/driver_tests.c")
+n_drv = len(re.findall(r"^\s+check\(", DRV_TESTS, re.M))
+check("README's `driver` count matches the harness's own checks",
+      suite_counts.get("driver") == n_drv,
+      f"README {suite_counts.get('driver')}, source has {n_drv}")
+m = re.search(r"run\s+(?:>\s*)?against the RTL: (\d+) checks", README)
+check("README's status note quotes the driver harness's check count",
+      m is not None and int(m.group(1)) == n_drv,
+      f"status note {m.group(1) if m else '?'}, source has {n_drv}")
+
+# The build check's own count, from the PASS lines it can print.
+DRVB = rd("verification/check_driver_builds.sh")
+n_build = len(re.findall(r'echo "  PASS  ', DRVB))
+check("README's `check_driver_builds.sh` count matches the script",
+      suite_counts.get("check_driver_builds.sh") == n_build,
+      f"README {suite_counts.get('check_driver_builds.sh')}, script {n_build}")
 
 # The phy suite's count, which the two checks above deliberately skipped because
 # its checks run inside a sweep rather than straight-line. It is still derivable,
@@ -229,6 +257,16 @@ check("README's logic-cell figure is within the enforced budget",
       and int(m_cells_doc.group(1)) <= int(m_cells_bud.group(1)),
       f"README {m_cells_doc.group(1) if m_cells_doc else '?'}, "
       f"budget {m_cells_bud.group(1) if m_cells_bud else '?'}")
+
+# The figures are one Quartus release's. The script picks 18.1 first because the
+# hardware examples are built with it, and the README must name the release its
+# numbers came from.
+mq = re.search(r"for q in (\S+)", SYN)
+check("the synthesis check prefers Quartus 18.1",
+      mq is not None and "18.1" in mq.group(1),
+      f"first candidate {mq.group(1) if mq else '?'}")
+check("README names the Quartus release its synthesis figures came from",
+      "Quartus Prime 18.1 Standard" in README)
 
 # And that the documents have stopped claiming the things synthesis disproved.
 check("README no longer says there is no Fmax figure",
@@ -351,6 +389,23 @@ for doc, label in ((README, "README"), (UG, "user guide")):
 SVA = rd("tb/avalon_mm_sdcard_controller_sva.sv")
 SEQ = rd("rtl/avalon_mm_sdcard_controller_seq.sv")
 
+# The user guide's status table, which quoted 3 injections, 24 assertions and
+# "57 distinct checks" through several commits because no check read it.
+m = re.search(r"\| Assertion fault injections \| (\d+)", UG)
+check("the user guide's status table quotes the injected-fault count",
+      m is not None and int(m.group(1)) == n_faults,
+      f"table {m.group(1) if m else '?'}, script injects {n_faults}")
+m = re.search(r"\| HAL driver build checks \| (\d+)", UG)
+check("the user guide's status table quotes the driver build checks",
+      m is not None and int(m.group(1)) == n_build,
+      f"table {m.group(1) if m else '?'}, script {n_build}")
+m = re.search(r"(\d+) in the three testbenches, (\d+) in the driver harness", UG)
+check("the user guide's status table quotes both check totals",
+      m is not None and int(m.group(2)) == n_drv
+      and int(m.group(1)) == suite_counts.get("phy", -1)
+         + suite_counts.get("fifo", -1) + suite_counts.get("core", -1),
+      f"table says {m.groups() if m else '?'}")
+
 # --- 9.1 register map ---
 #
 # Only the user guide's table now. The block-diagram document used to carry the
@@ -420,6 +475,22 @@ check("the user guide's assertion count matches the SVA file",
 check("the user guide's cover-point count matches the SVA file",
       f"{n_cover} cover points" in UG,
       f"file has {n_cover} cover points")
+m = re.search(r"\| Bound SVA assertions \| (\d+), plus (\d+) cover points", UG)
+check("the user guide's status table quotes the assertion and cover counts",
+      m is not None and int(m.group(1)) == n_assert and int(m.group(2)) == n_cover,
+      f"table {m.groups() if m else '?'}, file {n_assert}/{n_cover}")
+
+# The Questa verdict requires every assertion by name. A name added to the SVA
+# file and not to that list is an assertion Questa is never required to see -
+# the exact failure the list exists to prevent.
+QTCL = rd("simulation/questa/run_sim.tcl")
+sva_names = set(re.findall(r"^\s*(a_\w+):", SVA, re.M))
+mq = re.search(r"set expected \{(.*?)\}", QTCL, re.S)
+q_names = set(mq.group(1).split()) if mq else set()
+check("the Questa flow requires exactly the assertions the SVA file declares",
+      sva_names == q_names and len(sva_names) == n_assert,
+      f"only in SVA: {sorted(sva_names - q_names)}, "
+      f"only in Questa list: {sorted(q_names - sva_names)}")
 
 # --- 9.4 parameter defaults and ranges, taken from the component ---
 for pname, default in re.findall(
@@ -497,6 +568,68 @@ check("the README records that the assertions were not running",
       "never run" in README.lower() or "had ever run" in README.lower())
 check("the README records the sequencer transition coverage gap",
       "58 transitions" in README)
+
+# --- 9.10 every relative link in the README resolves ---
+#
+# The top-level checker does this for the repository's front page; this core's
+# own README had nothing, and it now links into the source tree.
+for target in re.findall(r"\]\(([^)#][^)]*)\)", README):
+    if target.startswith(("http://", "https://", "mailto:")):
+        continue
+    path = target.split("#", 1)[0]
+    check(f"README link resolves: {path}",
+          os.path.exists(os.path.join(ROOT, path)))
+
+# --- 9.10a every anchor names a heading that exists ---
+#
+# A link to a missing anchor opens the page at the top and nobody reports it.
+# Two in this README pointed at "Verification status - what is and is not
+# proven" with one hyphen where GitHub makes the em dash two.
+def heading_slugs(path):
+    slugs, seen, in_code = set(), {}, False
+    for ln in open(path, encoding="utf-8"):
+        if ln.startswith("```"):
+            in_code = not in_code
+            continue
+        m = None if in_code else re.match(r"^#{1,6}\s+(.*?)\s*$", ln)
+        if not m:
+            continue
+        t = re.sub(r"[^\w\- ]", "", m.group(1).lower()).replace(" ", "-")
+        n = seen.get(t, 0)
+        seen[t] = n + 1
+        slugs.add(t if n == 0 else f"{t}-{n}")
+    return slugs
+
+
+for rel in ("README.md", "doc/avalon_mm_sdcard_controller_user_guide.md",
+            "doc/avalon_mm_sdcard_controller_block_diagrams.md",
+            "doc/avalon_mm_sdcard_controller_design.md"):
+    src = os.path.join(ROOT, rel)
+    for target in re.findall(r"\]\(([^)\s]*#[^)\s]+)\)", rd(rel)):
+        if target.startswith(("http://", "https://", "mailto:")):
+            continue
+        path, frag = target.split("#", 1)
+        doc = os.path.normpath(os.path.join(os.path.dirname(src), path)) \
+            if path else src
+        if doc.endswith(".md") and os.path.exists(doc):
+            check(f"{rel}: anchor names a heading: {target}",
+                  frag in heading_slugs(doc))
+
+# --- 9.11 what the driver harness found must stay recorded ---
+check("the README records the response-window fault the harness found",
+      "opened the response window a byte early" in README)
+check("the design record no longer says the stuff byte was simply handled",
+      "`AUTO_STOP` handles this in hardware." not in DESIGN)
+
+# --- 9.12 this script's own total, as the README's verification table quotes it ---
+#
+# Last, so the count is final: it includes this check. The table said 203 for
+# three commits while the script grew past 240, because the one number about
+# this script was the one number it did not check.
+m = re.search(r"^\| `check_facts\.py` \| (\d+) \|", README, re.M)
+check("README's verification table quotes this script's own claim count",
+      m is not None and int(m.group(1)) == checks + 1,
+      f"table {m.group(1) if m else '?'}, script {checks + 1}")
 
 # ---------------------------------------------------------------------------
 print()

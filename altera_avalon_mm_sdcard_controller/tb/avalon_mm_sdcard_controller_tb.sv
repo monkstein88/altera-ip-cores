@@ -105,7 +105,7 @@ module avalon_mm_sdcard_controller_tb #(
     logic inj_write_err      = 1'b0;
     logic inj_busy_forever   = 1'b0;
 
-    int unsigned card_cmds, card_blocks_rd, card_blocks_wr;
+    int unsigned card_cmds, card_blocks_rd, card_blocks_wr, card_faults;
     logic [5:0]  card_last_cmd;
     logic        card_last_crc_ok;
 
@@ -153,9 +153,11 @@ module avalon_mm_sdcard_controller_tb #(
         .inj_bad_data_crc (inj_bad_data_crc),
         .inj_write_crc_err (inj_write_crc_err), .inj_write_err (inj_write_err),
         .inj_busy_forever (inj_busy_forever),
+        .inserted (1'b1),
         .cmds_seen (card_cmds), .blocks_read (card_blocks_rd),
         .blocks_written (card_blocks_wr),
-        .last_cmd (card_last_cmd), .last_cmd_crc_ok (card_last_crc_ok)
+        .last_cmd (card_last_cmd), .last_cmd_crc_ok (card_last_crc_ok),
+        .faults_applied (card_faults)
     );
 
     // -------------------------------------------------------------------------
@@ -638,6 +640,111 @@ localparam bit TRACE_CMD = 1'b0;
         csr_rd(REG_RESP1, rd);
         check("bus still synchronised after a truncated response",
               rd[31:24] === (TB_HIGH_CAPACITY ? 8'hC0 : 8'h80));
+
+        // ---- the response window, at every clock setting ---------------------
+        //
+        // Which transmitted byte a receive tick pairs with, at the start of a
+        // command frame, depends on CLKDIV and SAMPLE_DLY. The response window
+        // has to open on the first byte after the frame at all of them. Until
+        // this section existed nothing here ran a command anywhere but 400 kHz
+        // and 25 MHz with no delay - and at 25 MHz the window opened a byte
+        // early, which no functional check saw because an idle card sends 0xFF
+        // there.
+        //
+        // Three things are checked. At all five settings: the specification's
+        // maximum N_CR of 8 byte-times is accepted, and 9 is not, so the window
+        // is exactly as wide as it should be rather than widened to hide an
+        // offset. At the four fast ones: an auto CMD12 stopping a card that is
+        // still streaming data shaped like an R1 with Illegal Command and CRC
+        // Error set does not read that data as its response - neither the byte
+        // sent alongside the CRC byte nor the stuff byte after it. (At 400 kHz a
+        // block is a million clocks, past the busy guard, and the setting adds
+        // nothing the fifth fast one does not: its byte pairing is the same.)
+        //
+        // The settings are chosen for the pairing, not for coverage of the
+        // numbers. CLKDIV 1 and 2 with no delay, and 6 with the largest legal
+        // delay, are where the first tick of a frame belongs to a byte of idle
+        // fill; 8 with no delay and 125 are where it belongs to the frame.
+        $display("  -- response window at every divisor and sample delay --");
+        begin
+            int unsigned rw_div [5];
+            int unsigned rw_dly [5];
+            bit          ncr8_ok, ncr9_tmo, stop_ok;
+            logic [31:0] rw_st;
+
+            rw_div = '{1, 2, 6, 8, 125};
+            rw_dly = '{0, 0, 4, 0, 7};     // each at or below CLKDIV - 2
+            ncr8_ok  = 1'b1;
+            ncr9_tmo = 1'b1;
+            stop_ok  = 1'b1;
+
+            // Block 200 holds the data, and block 201 - which the card goes on
+            // streaming after the transfer's last block - is 0x0C throughout:
+            // bit 7 clear, Illegal Command and CRC Error set.
+            for (i = 0; i < 512; i++) begin
+                u_card.preload(200*512 + i, 8'((i * 11) + 3));
+                u_card.preload(201*512 + i, 8'h0C);
+            end
+            gotw = new[128];
+
+            for (int unsigned k = 0; k < 5; k++) begin
+                csr_wr(REG_CLKDIV, rw_div[k] | (rw_dly[k] << CLKDIV_SMPL_LSB));
+                // CLKDIV writes are ignored while the core is busy, and a write
+                // that did not land would test the previous setting twice.
+                csr_rd(REG_CLKDIV, rd);
+                if (rd !== (rw_div[k] | (rw_dly[k] << CLKDIV_SMPL_LSB))) begin
+                    $display("    CLKDIV=%0d dly=%0d did not take: reads %08x",
+                             rw_div[k], rw_dly[k], rd);
+                    ncr8_ok = 1'b0;
+                end
+
+                u_card.set_ncr_bytes(8);
+                send_cmd(6'd58, 32'h0, RESP_R3R7, 0,0,0,0, rw_st);
+                csr_rd(REG_RESP1, rd);
+                if (((rw_st & IRQ_ERR_MASK) != '0) ||
+                    (rd[31:24] !== (TB_HIGH_CAPACITY ? 8'hC0 : 8'h80))) begin
+                    $display("    N_CR=8 at CLKDIV=%0d dly=%0d: status %08x OCR %08x",
+                             rw_div[k], rw_dly[k], rw_st, rd);
+                    ncr8_ok = 1'b0;
+                end
+
+                u_card.set_ncr_bytes(9);
+                send_cmd(6'd58, 32'h0, RESP_R3R7, 0,0,0,0, rw_st);
+                if (!rw_st[IRQ_ERR_CMD_TMO]) begin
+                    $display("    N_CR=9 at CLKDIV=%0d dly=%0d: status %08x",
+                             rw_div[k], rw_dly[k], rw_st);
+                    ncr9_tmo = 1'b0;
+                end
+                // The card sends its late response anyway, after the host has
+                // given up; left queued it would answer the next command.
+                u_card.resync();
+                u_card.set_ncr_bytes(2);
+
+                if (rw_div[k] < 100) begin
+                    do_read(200, 1, 1'b1, gotw, rw_st);
+                    ok = ((rw_st & IRQ_ERR_MASK) == '0) && rw_st[IRQ_DATA_DONE];
+                    for (i = 0; i < 128; i++) begin
+                        expw = {u_card.peek(200*512+4*i+3), u_card.peek(200*512+4*i+2),
+                                u_card.peek(200*512+4*i+1), u_card.peek(200*512+4*i+0)};
+                        if (gotw[i] !== expw) ok = 1'b0;
+                    end
+                    if (!ok) begin
+                        $display("    stopped stream at CLKDIV=%0d dly=%0d: status %08x",
+                                 rw_div[k], rw_dly[k], rw_st);
+                        stop_ok = 1'b0;
+                    end
+                end
+            end
+
+            check("N_CR = 8, the specification's maximum, is accepted at every divisor and sample delay",
+                  ncr8_ok);
+            check("N_CR = 9 times out at every one: the window is exactly 0 to 8 byte-times",
+                  ncr9_tmo);
+            check("auto CMD12 never takes a streaming card's data for its R1, at the fast settings",
+                  stop_ok);
+
+            csr_wr(REG_CLKDIV, 32'd2);
+        end
 
         // ---- failure paths --------------------------------------------------
         $display("  -- failure paths --");

@@ -13,8 +13,14 @@
 // SPI is full duplex, so every byte shifted out produces exactly one byte
 // shifted in. This machine therefore advances on `rx_valid` and nothing else -
 // even in states where the received byte is discarded. That gives one tick per
-// byte for both directions and removes any need to reason separately about
-// transmit and receive progress.
+// byte for both directions.
+//
+// It does NOT tell you which transmitted byte a tick belongs to, and this
+// header once claimed it removed the need to reason about that. At the start of
+// a sending state the pairing depends on CLKDIV and SAMPLE_DLY - see the
+// shifter's "WHICH BYTE WENT OUT WITH THIS ONE" - so the one count whose
+// position matters, the command frame ahead of the response window, counts
+// only ticks the shifter tags as carrying a queued byte (S_CMD).
 //
 // While a state is sending, it queues the next byte whenever `tx_ready` is
 // high; the shifter's one-deep prefetch then rolls straight into it at the byte
@@ -33,10 +39,12 @@
 //    driver detects card version in the first place. See S_RESP.
 //
 // 2. THE STUFF BYTE AFTER CMD12 (§7.2.3). One byte must be discarded before
-//    CMD12's R1 response is read. S_RESP_WAIT handles it by construction -
-//    it skips every 0xFF until a byte with bit 7 clear - but only because the
-//    stuff byte is not a valid response; it is called out here because a
-//    fixed-length response reader would break on it.
+//    CMD12's R1 response is read. It used to be "handled by construction",
+//    on the reasoning that S_RESP_WAIT skips 0xFF and the stuff byte is 0xFF.
+//    It need not be: a card stopping a read stream may put data bits in it,
+//    and data with bit 7 clear is a plausible R1. It is now discarded
+//    unconditionally for every CMD12, which is what the widely used SPI
+//    hosts do - see S_RESP_WAIT.
 //
 // 3. THE WRITE ENDS ONE BYTE LATE (§7.2.4). The card's internal programming
 //    begins a byte AFTER the data response token, so eight clocks must be
@@ -115,6 +123,7 @@ module avalon_mm_sdcard_controller_seq
     input  logic                        phy_tx_ready,
     input  logic [7:0]                  phy_rx_data,
     input  logic                        phy_rx_valid,
+    input  logic                        phy_rx_tx_queued,
 
     // The shifter is byte-atomic: when a transaction ends it keeps clocking
     // until the byte in flight completes. That trailing byte is wanted - §7.2.4
@@ -207,6 +216,7 @@ module avalon_mm_sdcard_controller_seq
     logic [TIMEOUT_WIDTH-1:0]   tmo;
     logic [3:0]                 ncr_cnt;
     logic                       stopping;      // this command is the auto CMD12
+    logic                       stuff_q;       // next response byte is CMD12's stuff byte
     logic                       cmd_pending;   // request held until the shifter drains
     logic                       multi_q, dir_q, autostop_q, data_q;
     logic [5:0]                 index_q;
@@ -446,6 +456,7 @@ module avalon_mm_sdcard_controller_seq
             tmo          <= '0;
             ncr_cnt      <= '0;
             stopping     <= 1'b0;
+            stuff_q      <= 1'b0;
             cmd_pending  <= 1'b0;
             multi_q      <= 1'b0;
             dir_q        <= 1'b0;
@@ -522,6 +533,13 @@ module avalon_mm_sdcard_controller_seq
                             stopping   <= 1'b0;
                             err_flags  <= '0;
                             err_phase  <= PHASE_IDLE;
+                            // RESP0 and RESP1 describe THIS command. Left
+                            // alone, a command that timed out reported the
+                            // previous R1, and one with no trailer the previous
+                            // command's OCR - which is how a response read in
+                            // the wrong format could pass unnoticed.
+                            resp0      <= '0;
+                            resp1      <= '0;
                             byte_cnt   <= '0;
                             ncr_cnt    <= '0;
                             crc7_clear <= 1'b1;
@@ -589,12 +607,18 @@ module avalon_mm_sdcard_controller_seq
                     end
 
                     // -----------------------------------------------------
+                    // Six bytes out - counted on ticks that carried one of them.
+                    // A tick paired with idle fill, which the shifter sends
+                    // ahead of the frame at some CLKDIV and SAMPLE_DLY
+                    // settings, is not part of the frame and must not bring
+                    // the response window forward.
                     S_CMD: begin
-                        if (tick) begin
+                        if (tick && phy_rx_tx_queued) begin
                             if (byte_cnt == BCW'(5)) begin
                                 byte_cnt <= '0;
                                 ncr_cnt  <= '0;
                                 tmo      <= '0;
+                                stuff_q  <= (index_q == 6'd12);
                                 state    <= S_RESP_WAIT;
                             end else begin
                                 byte_cnt <= byte_cnt + BCW'(1);
@@ -603,11 +627,19 @@ module avalon_mm_sdcard_controller_seq
                     end
 
                     // -----------------------------------------------------
-                    // N_CR is 0-8 byte-times. The response is the first byte
-                    // with bit 7 clear; everything before it is 0xFF, including
-                    // the stuff byte that follows CMD12.
+                    // N_CR is 0-8 byte-times, counted from the first byte after
+                    // the frame. The response is the first byte with bit 7
+                    // clear; everything before it is 0xFF.
+                    //
+                    // Except after CMD12, where the first byte is the stuff
+                    // byte (§7.2.3), and is dropped unread. A card stopping a
+                    // read stream is entitled to leave data bits in it - Linux's
+                    // mmc_spi says so in as many words - and does not count it
+                    // against N_CR.
                     S_RESP_WAIT: begin
-                        if (tick) begin
+                        if (tick && stuff_q) begin
+                            stuff_q <= 1'b0;
+                        end else if (tick) begin
                             if (rx_is_resp) begin
                                 last_r1 <= phy_rx_data;
                                 resp0   <= {24'h0, phy_rx_data};
@@ -903,9 +935,8 @@ module avalon_mm_sdcard_controller_seq
                                 // than starting a data phase.
                                 //
                                 // §7.2.3: the byte immediately after CMD12 is a
-                                // stuff byte. S_RESP_WAIT discards it for free,
-                                // because it skips everything until a byte with
-                                // bit 7 clear and the stuff byte is 0xFF.
+                                // stuff byte. S_CMD marks it, because index_q
+                                // is 12, and S_RESP_WAIT drops it unread.
                                 stopping  <= 1'b1;
                                 index_q   <= 6'd12;
                                 arg_q     <= 32'h0;

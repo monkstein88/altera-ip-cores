@@ -29,8 +29,52 @@
  * in the worst case (the specification allows a full second for ACMD41), it can
  * fail for reasons the application needs to know about, and there may be no
  * card in the socket. Doing it before main() would mean an application that
- * cannot boot without a card present. Call alt_sdcard_probe() when you are
- * ready to use the card.
+ * cannot boot without a card present.
+ *
+ * ---------------------------------------------------------------------------
+ * USING IT
+ * ---------------------------------------------------------------------------
+ * The block calls identify the card themselves the first time they need to, so
+ * the shortest correct program is a read:
+ *
+ *     alt_sdcard_read_blocks(&sdcard, 0, buf, 1);
+ *
+ * alt_sdcard_probe() does the same thing explicitly, for an application that
+ * wants the identification - and its failure - at a moment of its choosing.
+ *
+ * ---------------------------------------------------------------------------
+ * CARD CHANGES
+ * ---------------------------------------------------------------------------
+ * A card can be pulled and another fitted between any two calls, and the new
+ * one may be a different capacity class - which changes the unit a block
+ * number is sent in. So the driver never carries an identification across a
+ * change it can see:
+ *
+ *   - with a card-detect switch, the latched CARD_INSERT / CARD_REMOVE events
+ *     and the switch itself are checked at the start of every call, including
+ *     events an interrupt handler has already acknowledged;
+ *   - without one, a card that stops answering is taken to be gone - a card
+ *     swapped in behind the driver's back is still in SD mode and cannot
+ *     answer - and alt_sdcard_poll() asks the card directly.
+ *
+ * The call that discovers a change fails with ALT_SDCARD_ERR_CHANGED, or
+ * ALT_SDCARD_ERR_NO_CARD if the socket is empty, and the next call identifies
+ * whatever is there. Failing once is deliberate: a caller holding anything it
+ * learned from the old card - a filesystem's allocation tables, say - must not
+ * have its next write land on the new card. `generation` counts successful
+ * identifications, for callers that would rather compare than catch the error;
+ * the FatFs glue in software/fatfs uses exactly that.
+ *
+ * ---------------------------------------------------------------------------
+ * RETRIES
+ * ---------------------------------------------------------------------------
+ * A CRC error means the link corrupted something, not that the card refused:
+ * a command whose CRC fails is not executed, a block whose CRC16 fails is
+ * read again, and a written block the card rejected on CRC was never
+ * programmed. Those are retried, up to `retries` times, inside the block calls,
+ * alt_sdcard_probe() and alt_sdcard_poll(). Nothing else is. A timeout, a
+ * card-reported error or a write the card refused for any other reason is
+ * returned to the caller at once, and alt_sdcard_command() retries nothing.
  * ===========================================================================*/
 
 #ifndef __ALTERA_AVALON_MM_SDCARD_CONTROLLER_H__
@@ -49,7 +93,8 @@ extern "C" {
 typedef enum
 {
     ALT_SDCARD_OK            =  0,
-    ALT_SDCARD_ERR_NO_CARD   = -1,  /* card-detect says the socket is empty   */
+    ALT_SDCARD_ERR_NO_CARD   = -1,  /* card-detect says the socket is empty,
+                                       or without it nothing answered CMD0    */
     ALT_SDCARD_ERR_TIMEOUT   = -2,  /* the card stopped answering             */
     ALT_SDCARD_ERR_CRC       = -3,  /* command or data CRC rejected           */
     ALT_SDCARD_ERR_UNUSABLE  = -4,  /* not an SD card, or wrong voltage       */
@@ -58,8 +103,17 @@ typedef enum
     ALT_SDCARD_ERR_NOT_READY = -7,  /* probe() has not run, or it failed      */
     ALT_SDCARD_ERR_VERSION   = -8,  /* CORE_INFO is not a version we know     */
     ALT_SDCARD_ERR_PROTECTED = -9,  /* write-protect switch is set            */
-    ALT_SDCARD_ERR_PIO       = -10  /* a DATA access the buffer could not serve*/
+    ALT_SDCARD_ERR_PIO       = -10, /* a DATA access the buffer could not serve*/
+    ALT_SDCARD_ERR_CHANGED   = -11  /* the card was removed or replaced since
+                                       it was identified; call again          */
 } alt_sdcard_result;
+
+/* Instances alt_sdcard_instance() can find. */
+#define ALT_SDCARD_MAX_INSTANCES (4u)
+
+/* For alt_sdcard_command(): pick the response format from the command index,
+ * so a caller need not know that CMD13 answers R2 and CMD38 R1b. */
+#define ALT_SDCARD_RESP_AUTO     (0xFFFFFFFFu)
 
 /* -------------------------------------------------------------- card ------ */
 
@@ -107,6 +161,15 @@ typedef struct alt_sdcard_dev_s
     /* ---- optional application callback, called from the ISR ---- */
     void           (*on_event)(struct alt_sdcard_dev_s *dev, alt_u32 irq_status);
     volatile alt_u32 last_irq_status;
+
+    /* ---- card changes and retries. Appended here, at the end, because
+     *      _INSTANCE initialises this structure by position: a field inserted
+     *      anywhere else would silently shift every value after it ---- */
+    alt_u32          retries;             /* extra attempts after a CRC error   */
+    alt_u32          generation;          /* successful identifications so far  */
+    volatile alt_u32 isr_card_events;     /* card-detect edges the ISR took     */
+    alt_u32          card_events_seen;    /* ...of which already acted upon     */
+    volatile alt_u32 isr_status;          /* other bits the ISR acknowledged    */
 } alt_sdcard_dev;
 
 /* -----------------------------------------------------------------------
@@ -133,7 +196,9 @@ typedef struct alt_sdcard_dev_s
         0u, 0u, 0, 0,                                                         \
         0u, 0u, 0u, 0u,                                                       \
         (void (*)(struct alt_sdcard_dev_s *, alt_u32))0,                      \
-        0u                                                                    \
+        0u,                                                                   \
+        2u,            /* retries */                                          \
+        0u, 0u, 0u, 0u                                                        \
     }
 
 #define ALTERA_AVALON_MM_SDCARD_CONTROLLER_INIT(name, dev)                    \
@@ -148,20 +213,63 @@ typedef struct alt_sdcard_dev_s
 int alt_sdcard_init(alt_sdcard_dev *dev);
 
 /* Run the identification sequence and leave the card ready for block access.
- * Safe to call again to re-probe after a card change. */
+ * The block calls do this themselves when they need to; call it directly to
+ * choose when it happens, or to re-identify on demand. */
 int alt_sdcard_probe(alt_sdcard_dev *dev);
 
 /* Block access. `block` is a 512-byte block number in both cases - the driver
  * converts to a byte address for standard-capacity cards, which is the whole
  * reason the caller does not have to care which kind of card is fitted.
  *
- * `buf` must be 32-bit aligned when the DMA is in use. */
+ * Any buffer works. A word-aligned one is moved by the DMA in a single
+ * multi-block stream; a misaligned one, which the DMA cannot address, goes a
+ * block at a time through a bounce buffer on the stack - correct, and slower.
+ * Either way the buffer must be memory the DMA master can reach. */
 int alt_sdcard_read_blocks (alt_sdcard_dev *dev, alt_u32 block,
                             void *buf, alt_u32 count);
 int alt_sdcard_write_blocks(alt_sdcard_dev *dev, alt_u32 block,
                             const void *buf, alt_u32 count);
 
-/* Raw command access, for anything the block API does not cover. */
+/* Has anything changed that the driver can see without asking the card?
+ *
+ *   ALT_SDCARD_OK            a card is identified, and nothing says otherwise
+ *   ALT_SDCARD_ERR_NO_CARD   the socket is empty (card-detect builds only)
+ *   ALT_SDCARD_ERR_CHANGED   the identified card was removed or replaced -
+ *                            reported once; it is forgotten, as the next block
+ *                            call would forget it
+ *   ALT_SDCARD_ERR_NOT_READY a card may be present, but none is identified
+ *
+ * Sends nothing: it reads the socket switch and consumes the latched
+ * insert/remove events, so it is cheap enough to call before every operation,
+ * which is what a filesystem does. Without a switch there is nothing to read,
+ * and it reports only what an earlier transfer already found out. */
+int alt_sdcard_check(alt_sdcard_dev *dev);
+
+/* alt_sdcard_check(), and then - if a card is identified - is it answering?
+ *
+ * Returns what alt_sdcard_check() does, or the result of CMD13 when that
+ * found nothing wrong: any failure means the card stopped answering, and it is
+ * no longer considered identified. Without a card-detect switch this is the
+ * only way to find out before a transfer does. The hardware's pre-emptive busy
+ * check means it also returns only once a write in progress has been
+ * programmed. Never identifies a card itself. */
+int alt_sdcard_poll(alt_sdcard_dev *dev);
+
+/* Successful identifications since init. Changes exactly when a different
+ * card - or the same one, re-identified - is behind the block calls. */
+alt_u32 alt_sdcard_generation(alt_sdcard_dev *dev);
+
+/* The n-th instance in alt_sys_init() order, or 0. For code that is not handed
+ * a device - a filesystem glue layer, say - in a system with one controller. */
+alt_sdcard_dev *alt_sdcard_instance(unsigned n);
+
+/* Raw command access, for anything the block API does not cover.
+ *
+ * `resp_type` is one of ALT_SDCARD_RESP_R1 / _R1B / _R2 / _R3R7, or
+ * ALT_SDCARD_RESP_AUTO to take it from the command index. Nothing is retried
+ * here: after CMD55, repeating a failed application command would send it
+ * again as the ordinary command with the same number, which for ACMD23 and
+ * ACMD42 is a different command altogether. */
 int alt_sdcard_command(alt_sdcard_dev *dev, alt_u8 index, alt_u32 arg,
                        alt_u32 resp_type, alt_u32 extra_cmd_bits,
                        alt_u32 *resp0, alt_u32 *resp1);
@@ -177,7 +285,14 @@ alt_u32 alt_sdcard_block_count(alt_sdcard_dev *dev);
 /* Clear a wedged data path without losing the card's initialised state. */
 void alt_sdcard_reset_datapath(alt_sdcard_dev *dev);
 
-/* Install a callback invoked from the ISR with the latched IRQ_STATUS. */
+/* Install a callback invoked from the ISR with the bits that raised it.
+ *
+ * On a core with card detect and a connected interrupt, installing a handler
+ * enables the CARD_INSERT and CARD_REMOVE interrupts, and removing it (0)
+ * disables them: a handler for events that can never arrive is a handler that
+ * silently does nothing. Other sources stay as the application set them. The
+ * ISR acknowledges only enabled bits, so enabling one never hides it from the
+ * driver's own completion polling. */
 void alt_sdcard_set_event_handler(alt_sdcard_dev *dev,
         void (*handler)(alt_sdcard_dev *dev, alt_u32 irq_status));
 

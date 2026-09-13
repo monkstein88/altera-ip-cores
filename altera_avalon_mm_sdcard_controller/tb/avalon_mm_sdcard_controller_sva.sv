@@ -91,7 +91,13 @@ endmodule
 // -----------------------------------------------------------------------------
 // The sequencer
 // -----------------------------------------------------------------------------
-module avalon_mm_sdcard_controller_seq_sva (
+module avalon_mm_sdcard_controller_seq_sva #(
+    // The sequencer's own state encodings, passed in by the bind from the
+    // sequencer's scope so a reordered enum cannot leave this checking the
+    // wrong states.
+    parameter logic [4:0] S_CMD_V       = 5'd0,
+    parameter logic [4:0] S_RESP_WAIT_V = 5'd0
+) (
     input logic        clk,
     input logic        reset_n,
     input logic        busy,
@@ -106,7 +112,9 @@ module avalon_mm_sdcard_controller_seq_sva (
     input logic        data_done,
     input logic        fifo_b_rd,
     input logic        fifo_b_empty,
-    input logic [7:0]  err_flags
+    input logic [7:0]  err_flags,
+    input logic [4:0]  state,
+    input logic [4:0]  state_prev
 );
 
     default disable iff (!reset_n);
@@ -164,6 +172,21 @@ module avalon_mm_sdcard_controller_seq_sva (
     // is asserted here rather than left as a comment.
     a_error_levels_released_before_idle:
         assert property (@(posedge clk) !busy |-> (err_flags == 8'h00));
+
+    // The response window opens only once the whole command frame has left
+    // the prefetch - the CRC byte loaded and nothing queued behind it.
+    //
+    // Counting six receive ticks and assuming they were the six frame bytes
+    // broke this at 25 MHz: the first tick belonged to a byte of idle fill, the
+    // window opened while the CRC was still waiting in the prefetch, and a
+    // byte the card sent before it had even seen the CRC was taken as the
+    // first candidate response. Every functional test passed, because on an
+    // idle card that byte is 0xFF - until a card still streaming data was
+    // stopped by CMD12.
+    a_response_window_after_whole_frame:
+        assert property (@(posedge clk)
+            ((state == S_RESP_WAIT_V) && (state_prev == S_CMD_V))
+                |-> $past(phy_tx_ready));
 
     c_transfer_completes: cover property (@(posedge clk) data_done);
     c_command_deferred:   cover property (@(posedge clk) cmd_pending);
@@ -290,7 +313,10 @@ bind avalon_mm_sdcard_controller_spi_phy
      avalon_mm_sdcard_controller_spi_phy_sva u_sva (.*);
 
 bind avalon_mm_sdcard_controller_seq
-     avalon_mm_sdcard_controller_seq_sva u_sva (.*);
+     avalon_mm_sdcard_controller_seq_sva #(
+         .S_CMD_V       (S_CMD),
+         .S_RESP_WAIT_V (S_RESP_WAIT)
+     ) u_sva (.*);
 
 bind avalon_mm_sdcard_controller_dma
      avalon_mm_sdcard_controller_dma_sva #(.M0_BURST_WIDTH (M0_BURST_WIDTH)) u_sva (.*);

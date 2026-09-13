@@ -18,6 +18,9 @@
 //   CRC        CRC7 on commands (checked), CRC16 on data (checked and generated)
 //   timing     N_CR of 0-8 byte-times, busy on MISO after a write
 //   capacity   SDSC byte addressing and SDHC/SDXC block addressing
+//   power-up   removable: >=74 clocks with CS high before it listens
+//              (§6.4.1.1), SD mode until CMD0 selects SPI (§7.2.1), and
+//              only the identification commands while in idle state
 //
 // -----------------------------------------------------------------------------
 // IT MUST BE ABLE TO MISBEHAVE
@@ -46,14 +49,37 @@
 // =============================================================================
 
 module spi_card_model #(
-    parameter bit          HIGH_CAPACITY = 1'b1,   // SDHC: block addressing
-    parameter int unsigned NCR_BYTES     = 2,      // response latency, 0..8
-    parameter bit          TRACE         = 1'b0    // log every command handled
+    parameter bit          HIGH_CAPACITY   = 1'b1,   // SDHC: block addressing
+    parameter int unsigned NCR_BYTES       = 2,      // response latency, 0..8
+    parameter bit          TRACE           = 1'b0,   // log every command handled
+    // ACMD41 polls answered "still initialising" before the card reports
+    // ready. A real card takes tens to hundreds; one keeps the RTL suites quick,
+    // and the driver harness raises it so the driver's poll loop really loops.
+    parameter int unsigned ACMD41_POLLS    = 1,
+    // Clocks with CS high the card needs after power-up before it will listen.
+    // §6.4.1.1 requires at least 74 of the host, and a card is entitled to
+    // ignore everything until it has had them.
+    parameter int unsigned POWER_UP_CLOCKS = 74,
+    // Enforce the initialisation sequence at all: the power-up clocks, CMD0 to
+    // leave SD mode, and ACMD41 before anything but identification. On for
+    // every suite that verifies behaviour. Off only for the waveform capture,
+    // which records the CONTROLLER's timing and sends CMD17 straight after
+    // CMD0 to keep the figures short.
+    parameter bit          ENFORCE_INIT    = 1'b1,
+    // CID serial number, so two cards in one test can be told apart.
+    parameter logic [31:0] CID_SERIAL      = 32'hDEAD_BEEF
 ) (
     input  logic sd_clk,
     input  logic sd_cs_n,
     input  logic sd_mosi,
     output logic sd_miso,
+
+    // ---- the socket ---------------------------------------------------------
+    // Low: no card. The line floats to its pull-up and nothing is decoded.
+    // Removal is a power cycle - protocol state is lost and the next insertion
+    // starts again from SD mode with no power-up clocks counted - but the
+    // memory is flash, and survives it.
+    input  logic inserted,
 
     // ---- fault injection ---------------------------------------------------
     input  logic inj_no_response,     // swallow the next command entirely
@@ -70,7 +96,11 @@ module spi_card_model #(
     output int unsigned blocks_read,
     output int unsigned blocks_written,
     output logic [5:0]  last_cmd,
-    output logic        last_cmd_crc_ok
+    output logic        last_cmd_crc_ok,
+    // Incremented every time an inj_* input actually changes what the card
+    // does, so a test can release a fault after exactly one use - and can tell
+    // an injection that bit from one that was never consulted.
+    output int unsigned faults_applied
 );
 
     // -------------------------------------------------------------------------
@@ -81,6 +111,9 @@ module spi_card_model #(
     logic        acmd_next;                 // CMD55 seen, next command is ACMD
     logic        crc_on;                    // CMD59
     logic [31:0] block_len;
+    logic        spi_mode;                  // CMD0 with CS low seen since power-up
+    int unsigned pwr_clocks;                // CS-high clocks since power-up
+    int unsigned acmd41_polls;              // ACMD41s answered since CMD0
 
     // -------------------------------------------------------------------------
     // Byte-level plumbing
@@ -97,6 +130,11 @@ module spi_card_model #(
     // it is unbounded in principle and the host must tolerate any length.
     int unsigned busy_bytes;
 
+    // Response latency in byte-times, N_CR. Starts at the NCR_BYTES parameter
+    // and is settable, so one card can be taken to both ends of the range the
+    // specification allows - and one byte past it - in a single run.
+    int unsigned ncr_bytes = NCR_BYTES;
+
     // How long the card holds busy after accepting a written block - its
     // internal programming time, §7.2.4, in byte-times.
     //
@@ -108,7 +146,7 @@ module spi_card_model #(
     // actually wants to know.
     int unsigned prog_bytes = 4;
 
-    always_comb sd_miso = sd_cs_n ? 1'b1 : tx_byte[tx_bit];
+    always_comb sd_miso = (sd_cs_n || !inserted) ? 1'b1 : tx_byte[tx_bit];
 
     // -------------------------------------------------------------------------
     // CRC helpers - the same polynomials the RTL uses, written independently
@@ -144,8 +182,8 @@ module spi_card_model #(
     // -------------------------------------------------------------------------
     // Transmit: MISO changes on the falling edge
     // -------------------------------------------------------------------------
-    always @(negedge sd_clk or posedge sd_cs_n) begin
-        if (sd_cs_n) begin
+    always @(negedge sd_clk or posedge sd_cs_n or negedge inserted) begin
+        if (sd_cs_n || !inserted) begin
             // A card that is still programming does not stop being busy because
             // it was deselected. §7.2.4's programming is internal, so on
             // reselection the card resumes holding MISO low until it finishes.
@@ -157,7 +195,7 @@ module spi_card_model #(
             // handed it a free 0xFF that said "ready". The whole mechanism was
             // being tested against a card that could not express the condition
             // it exists to absorb.
-            tx_byte <= (busy_bytes > 0) ? 8'h00 : 8'hFF;
+            tx_byte <= (inserted && (busy_bytes > 0)) ? 8'h00 : 8'hFF;
             tx_bit  <= 3'd7;
         end else begin
             if (tx_bit == 3'd0) begin
@@ -199,17 +237,29 @@ module spi_card_model #(
     // following command, and the model reports the host as out of sync when it
     // is the model that is late.
     logic byte_done;
-    always_comb byte_done = !sd_cs_n && (rx_bit == 3'd7);
+    always_comb byte_done = !sd_cs_n && inserted && (rx_bit == 3'd7);
     always_comb rx_byte   = {rx_sr[6:0], sd_mosi};
 
-    always @(posedge sd_clk or posedge sd_cs_n) begin
-        if (sd_cs_n) begin
+    always @(posedge sd_clk or posedge sd_cs_n or negedge inserted) begin
+        if (sd_cs_n || !inserted) begin
             rx_bit <= 3'd0;
             rx_sr  <= '0;
         end else begin
             rx_sr  <= {rx_sr[6:0], sd_mosi};
             rx_bit <= rx_bit + 3'd1;
         end
+    end
+
+    // Power-up clocks. Counted only with CS HIGH, which is what §6.4.1.1 asks
+    // for, and only while the card is in the socket.
+    always @(posedge sd_clk) begin
+        if (inserted && sd_cs_n && (pwr_clocks < POWER_UP_CLOCKS))
+            pwr_clocks = pwr_clocks + 1;
+    end
+
+    // Removal is a power cycle. Everything but the flash goes.
+    always @(negedge inserted) begin
+        power_off();
     end
 
     // -------------------------------------------------------------------------
@@ -306,8 +356,10 @@ module spi_card_model #(
             c[3]  = 8'h53; c[4] = 8'h44;       // product name "SDMDL"
             c[5]  = 8'h4D; c[6] = 8'h44; c[7] = 8'h4C;
             c[8]  = 8'h10;                     // revision
-            c[9]  = 8'hDE; c[10] = 8'hAD;      // serial
-            c[11] = 8'hBE; c[12] = 8'hEF;
+            c[9]  = CID_SERIAL[31:24];         // serial
+            c[10] = CID_SERIAL[23:16];
+            c[11] = CID_SERIAL[15:8];
+            c[12] = CID_SERIAL[7:0];
             c[13] = 8'h01; c[14] = 8'h5A;      // manufacturing date
             head = new[15];
             for (k = 0; k < 15; k++) head[k] = c[k];
@@ -318,7 +370,7 @@ module spi_card_model #(
     task automatic push_r1(input logic [7:0] r1);
         int k;
         begin
-            for (k = 0; k < int'(NCR_BYTES); k++) tx_q.push_back(8'hFF);
+            for (k = 0; k < int'(ncr_bytes); k++) tx_q.push_back(8'hFF);
             tx_q.push_back(r1);
         end
     endtask
@@ -331,6 +383,7 @@ module spi_card_model #(
             if (is_idle)        r[0] = 1'b1;
             if (inj_r1_illegal) r[2] = 1'b1;
             if (inj_r1_crc)     r[3] = 1'b1;
+            if (inj_r1_illegal || inj_r1_crc) faults_applied++;
             return r;
         end
     endfunction
@@ -343,13 +396,17 @@ module spi_card_model #(
             if (inj_read_err_token) begin
                 // §7.3.3.3: upper nibble zero. Sent INSTEAD of a data packet.
                 tx_q.push_back(8'h01);
+                faults_applied++;
                 return;
             end
             blk = new[len];
             for (k = 0; k < len; k++)
                 blk[k] = card_mem.exists(addr + k) ? card_mem[addr + k] : 8'hFF;
             c = crc16_of(blk);
-            if (inj_bad_data_crc) c = c ^ 16'hFFFF;
+            if (inj_bad_data_crc) begin
+                c = c ^ 16'hFFFF;
+                faults_applied++;
+            end
 
             tx_q.push_back(8'hFE);
             for (k = 0; k < len; k++) tx_q.push_back(blk[k]);
@@ -366,6 +423,7 @@ module spi_card_model #(
         logic [7:0]  r1;
         logic [7:0]  reg16 [];
         logic [15:0] rc;
+        logic [7:0]  stuff;
         int k;
         begin
             idx    = c[0][5:0];
@@ -379,31 +437,78 @@ module spi_card_model #(
                 $display("    [card] t=%0t CMD%0d arg=%08x crc_ok=%b idle=%b inj_ill=%b",
                          $time, idx, arg, crc_ok, is_idle, inj_r1_illegal);
 
-            if (inj_no_response) return;
+            if (inj_no_response) begin
+                faults_applied++;
+                return;
+            end
+
+            // Not yet listening: fewer than POWER_UP_CLOCKS since insertion.
+            // The frame is not received at all, so there is nothing to answer.
+            if (ENFORCE_INIT && (pwr_clocks < POWER_UP_CLOCKS)) return;
+
+            // SD mode. A card answers SD-mode commands on CMD, which is MOSI
+            // in this wiring, so nothing ever appears on MISO. The one thing
+            // that gets it out is CMD0 with CS asserted - which every frame
+            // here has - and a valid CRC, since CRC checking cannot be turned
+            // off in SD mode (§7.2.2).
+            //
+            // This is what makes a card swapped in behind the driver's back
+            // look like what it is: silence, not a card that happens to be
+            // ready for block access.
+            if (ENFORCE_INIT && !spi_mode) begin
+                if ((idx == 6'd0) && crc_ok) begin
+                    spi_mode     = 1'b1;
+                    is_idle      = 1'b1;
+                    acmd41_polls = 0;
+                    push_r1(8'h01);
+                end
+                return;
+            end
 
             // CMD8's CRC is always verified, and CMD0's must be valid because
             // the card is still in SD mode when it arrives (§7.2.2).
             if (!crc_ok && (crc_on || idx == 6'd0 || idx == 6'd8)) begin
+                acmd_next = 1'b0;
                 push_r1(make_r1() | 8'h08);   // Com CRC Error
                 return;
             end
 
             r1 = make_r1();
 
+            // A command the card rejects is a command it does not execute:
+            // only the R1 goes out - no trailer (§7.3.2), no data packet, no
+            // state change. Queueing a block behind a rejected CMD17 left it
+            // for the next command's response to be read out of.
+            if (r1[2] || r1[3]) begin
+                acmd_next = 1'b0;
+                push_r1(r1);
+                return;
+            end
+
             if (acmd_next) begin
                 acmd_next = 1'b0;
                 unique case (idx)
                     6'd41: begin                       // ACMD41
                         push_r1(r1);
-                        is_idle = 1'b0;                // ready after one poll
+                        acmd41_polls++;
+                        if (acmd41_polls >= ACMD41_POLLS) is_idle = 1'b0;
                     end
                     default: push_r1(r1 | 8'h04);      // illegal
                 endcase
                 return;
             end
 
+            // In idle state only the identification commands are accepted
+            // (§7.2.1). Anything else - a block read before ACMD41 has
+            // finished, say - is illegal, and is not executed.
+            if (ENFORCE_INIT && is_idle &&
+                !(idx inside {6'd0, 6'd8, 6'd55, 6'd58, 6'd59})) begin
+                push_r1(r1 | 8'h04);
+                return;
+            end
+
             unique case (idx)
-                6'd0:  begin is_idle = 1'b1; push_r1(8'h01); end
+                6'd0:  begin is_idle = 1'b1; acmd41_polls = 0; push_r1(8'h01); end
                 6'd55: begin acmd_next = 1'b1; push_r1(r1); end
                 6'd59: begin crc_on = arg[0]; push_r1(r1); end
 
@@ -444,6 +549,10 @@ module spi_card_model #(
                     if (idx == 6'd9) build_csd(reg16);
                     else             build_cid(reg16);
                     rc = crc16_of(reg16);
+                    if (inj_bad_data_crc) begin
+                        rc = rc ^ 16'hFFFF;
+                        faults_applied++;
+                    end
                     tx_q.push_back(8'hFE);
                     for (k = 0; k < 16; k++) tx_q.push_back(reg16[k]);
                     tx_q.push_back(rc[15:8]);
@@ -465,8 +574,20 @@ module spi_card_model #(
                 end
 
                 6'd12: begin                            // STOP_TRANSMISSION
+                    // §7.2.3: one stuff byte, then the response. A card that
+                    // was streaming does not stop on a byte boundary of the
+                    // host's choosing, and the stuff byte carries whatever it
+                    // was about to send - Linux's mmc_spi notes it "may include
+                    // two data bits". Modelled as the whole next byte of the
+                    // stream, which is the harder case: a host that reads the
+                    // stuff byte as a candidate response sees data, and data
+                    // with bit 7 clear is a plausible R1.
+                    //
+                    // It used to be 0xFF unconditionally, which let exactly
+                    // that host pass.
+                    stuff = (tx_q.size() > 0) ? tx_q[0] : 8'hFF;
                     tx_q.delete();
-                    tx_q.push_back(8'hFF);              // §7.2.3 stuff byte
+                    tx_q.push_back(stuff);
                     push_r1(r1);
                     busy_bytes = 2;
                 end
@@ -491,6 +612,7 @@ module spi_card_model #(
             if (inj_write_crc_err)      dr = 8'h0B;     // sss = 101
             else if (inj_write_err)     dr = 8'h0D;     // sss = 110
             else                        dr = 8'h05;     // sss = 010, accepted
+            if (dr != 8'h05) faults_applied++;
 
             if (dr == 8'h05) begin
                 for (k = 0; k < wr_buf.size(); k++)
@@ -595,6 +717,10 @@ module spi_card_model #(
         crc_on         = 1'b0;
         block_len      = 32'd512;
         busy_bytes     = 0;
+        spi_mode       = 1'b0;
+        pwr_clocks     = 0;
+        acmd41_polls   = 0;
+        faults_applied = 0;
         pstate         = P_CMD;
         cmds_seen      = 0;
         blocks_read    = 0;
@@ -610,6 +736,22 @@ module spi_card_model #(
     // Test hooks
     // -------------------------------------------------------------------------
 
+    // Set the internal programming time, in byte-times. Only the post-write busy
+    // uses it; the busy that follows CMD12 or a stop-tran token is response
+    // timing rather than programming and is unaffected.
+    task automatic set_prog_bytes(input int unsigned n);
+        begin
+            prog_bytes = n;
+        end
+    endtask
+
+    // Set N_CR, in byte-times, for every response from here on.
+    task automatic set_ncr_bytes(input int unsigned n);
+        begin
+            ncr_bytes = n;
+        end
+    endtask
+
     // Put the protocol machine back to "waiting for a command", discarding any
     // partially received block.
     //
@@ -620,15 +762,6 @@ module spi_card_model #(
     // data-path reset clears the controller, not the card. A test that
     // deliberately starves a write therefore has to put the MODEL straight
     // again, or every command after it is swallowed as write data.
-    // Set the internal programming time, in byte-times. Only the post-write busy
-    // uses it; the busy that follows CMD12 or a stop-tran token is response
-    // timing rather than programming and is unaffected.
-    task automatic set_prog_bytes(input int unsigned n);
-        begin
-            prog_bytes = n;
-        end
-    endtask
-
     task automatic resync();
         begin
             // tx_q matters as much as the receive side. A card interrupted
@@ -644,6 +777,26 @@ module spi_card_model #(
             wr_count = 0;
             wr_multi = 1'b0;
             pstate   = P_CMD;
+        end
+    endtask
+
+    // What removal does to a card: everything but the flash is lost.
+    task automatic power_off();
+        begin
+            tx_q.delete();
+            cmd_buf.delete();
+            wr_buf.delete();
+            wr_count     = 0;
+            wr_multi     = 1'b0;
+            pstate       = P_CMD;
+            busy_bytes   = 0;
+            is_idle      = 1'b1;
+            acmd_next    = 1'b0;
+            crc_on       = 1'b0;
+            block_len    = 32'd512;
+            spi_mode     = 1'b0;
+            pwr_clocks   = 0;
+            acmd41_polls = 0;
         end
     endtask
 

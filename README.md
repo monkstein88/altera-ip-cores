@@ -24,7 +24,7 @@ own terms — see [Licence](#licence).
 | [`altera_avalon_mm_firewall`](altera_avalon_mm_firewall/README.md) | **Avalon-MM Firewall** · v1.0 · *Bridges and Adapters / Custom* | Burst-capable access-control and fault-isolation firewall for Avalon-MM. Default-deny address windows with per-window read/write/burst permission, whole-burst range checking, downstream timeout detection and an explicit software recovery sequence | **Verified on hardware.** 632 checks, 22 assertions, 11 cover points |
 | [`altera_axi4_lite_firewall`](altera_axi4_lite_firewall/README.md) | **AXI4-Lite Firewall** · v2.0 · *Bridges and Adapters / Custom* | The same idea on AXI4-Lite: single transactions, capture-and-redrive rather than pass-through | **Verified on hardware.** 103 checks, 14 assertions, 6 cover points |
 | [`altera_avalon_mm_sdram_controller`](altera_avalon_mm_sdram_controller/README.md) | **Avalon-MM SDRAM Controller (per-bank rows)** · v1.0 · *Memory Interfaces and Controllers / Custom* | SDR SDRAM controller that keeps one open row *per bank* and treats a read/write turnaround as the datasheet does, rather than as a full row cycle. Drop-in replacement for the vendor core below | **Run on two boards — 8/8 RTL scenarios and 10/10 Nios II checks pass on a Terasic DE0-Nano and on a DE10-Lite, including refresh retention.** 199.8 MB/s on row hits, 99.9% of the bus. 3.6–8.9× the vendor core on mixed and scattered traffic, for 3.8× the logic. 3,039 testbench checks across 19 configurations, four board demonstrations on two parts, 295 documentation claims checked |
-| [`altera_avalon_mm_sdcard_controller`](altera_avalon_mm_sdcard_controller/README.md) | **Avalon-MM SD Card Controller (SPI)** · v1.0 · *Memory Interfaces and Controllers / Custom* | SD card controller in SPI mode. Hardware does the link layer — framing, CRC7/CRC16, tokens, multi-block streaming, pre-emptive busy polling, optional DMA — and a Nios II HAL driver does the card protocol | **Never on a board.** 82 checks with the full-core suite run in 5 configurations, 25 assertions, 5 cover points, 22 checks on the Platform Designer component, 219 documentation claims and 9 generated figures checked. Synthesised, fitted and timed for the DE10-Lite part: **111.53 MHz**, 1719 logic cells, one M9K. **98.1% of SPI line rate**, measured |
+| [`altera_avalon_mm_sdcard_controller`](altera_avalon_mm_sdcard_controller/README.md) | **Avalon-MM SD Card Controller (SPI)** · v1.0 · *Memory Interfaces and Controllers / Custom* | SD card controller in SPI mode. Hardware does the link layer — framing, CRC7/CRC16, tokens, multi-block streaming, pre-emptive busy polling, optional DMA — and a Nios II HAL driver does the card protocol, including card changes; a FatFs disk I/O layer ships beside it | **Never on a board.** 91 checks with the full-core suite run in 5 configurations, 26 assertions, 5 cover points, the HAL driver itself run against the RTL in 4 builds, 22 checks on the Platform Designer component, 261 documentation claims and 9 generated figures checked. Synthesised, fitted and timed for the DE10-Lite part in Quartus 18.1: **108.41 MHz**, 1715 logic cells, one M9K. **98.1% of SPI line rate**, measured |
 | [`altera_avalon_new_sdram_controller`](altera_avalon_new_sdram_controller/README.md) | **SDRAM Controller Intel FPGA IP** · v20.1 · *Memory Interfaces and Controllers / SDRAM* | Intel's own SDRAM controller, kept here because current Quartus releases no longer ship it | Vendor IP, unhidden so it is usable — see *Provenance*. **Demo verified on hardware:** all 64 MB written and read back at 194 MB/s |
 
 The two firewalls appear in the IP Catalog under **Bridges and Adapters /
@@ -50,14 +50,15 @@ controller that is correct from one that is fitted to a single geometry:
 
 `altera_avalon_mm_sdcard_controller` has no board demonstration at all. The
 DE10-Lite has no microSD socket, so one would need a breakout on the 2x20 GPIO
-or Arduino header and its own pinout. What it does have is 82 self-checking
+or Arduino header and its own pinout. What it does have is 91 self-checking
 assertions against a card model written to the SD specification — including every
 failure a card can report — run across five configurations, bound SVA assertions
-proven live by fault injection, 22 checks on its Platform Designer component, and
-a measured 98.1% of SPI line rate. It also now synthesises, fits and meets a
-100 MHz clock on the DE10-Lite's own part at 1719 logic cells and one M9K, and
-its component is loaded into real Platform Designer rather than only against
-stubs — so what is missing is a socket and a card, not a build.
+proven live by fault injection, its HAL driver run against the RTL rather than
+only compiled, 22 checks on its Platform Designer component, and a measured 98.1%
+of SPI line rate. It also synthesises, fits and meets a 100 MHz clock on the
+DE10-Lite's own part at 1715 logic cells and one M9K, and its component is loaded
+into real Platform Designer rather than only against stubs — so what is missing
+is a socket and a card, not a build.
 
 Its user guide and block-diagram document are
 built from that same simulation — every timing figure in them is cut out of a
@@ -164,13 +165,25 @@ the whole integration step — there is nothing to copy by hand.
 | `altera_axi4_lite_firewall` | `HAL/src/altera_axi4_lite_firewall.c` | `axi4_lite_firewall_sw.tcl` |
 | `altera_avalon_mm_sdcard_controller` | `HAL/src/altera_avalon_mm_sdcard_controller.c` | `altera_avalon_mm_sdcard_controller_sw.tcl` |
 
-Both set `auto_initialize`, so the BSP constructs every instance in
+All three set `auto_initialize`, so the BSP constructs every instance in
 `alt_sys_init.c` and runs it before `main()`: base address and interrupt from
 `system.h`, a version check against `CORE_INFO`, and the ISR registered. What
-that deliberately does *not* do is program the rule table or install the
-peripheral-reset callbacks — neither can be derived from the hardware. That
-division is the safe one: the table resets empty and the hardware is
-default-deny, so the state after `alt_sys_init()` is *everything denied*.
+that deliberately does *not* do is the part that depends on your system rather
+than on the hardware:
+
+- **The firewalls** do not program the rule table or install the
+  peripheral-reset callbacks — neither can be derived from the hardware. That
+  division is the safe one: the table resets empty and the hardware is
+  default-deny, so the state after `alt_sys_init()` is *everything denied*.
+- **The SD card controller** does not identify the card, which takes hundreds of
+  milliseconds and may find an empty socket. The first block read or write does
+  it instead, and the driver notices a card being removed or swapped.
+
+The SD card controller also ships a FatFs disk I/O layer,
+[`software/fatfs/diskio_altera_sdcard.c`](altera_avalon_mm_sdcard_controller/software/fatfs/diskio_altera_sdcard.c).
+The BSP deliberately does not build it — it needs FatFs's headers, which a system
+without FatFs does not have — so an application that wants a filesystem adds it
+to its own build, next to FatFs.
 
 ---
 
@@ -222,7 +235,8 @@ core would not compile in **any** Quartus version until recently, because six of
 its modules imported a package in the module header — legal SystemVerilog that
 Quartus implements nowhere, accepted without complaint by both simulators here.
 It is checked now, by `altera_avalon_mm_sdcard_controller/verification/check_synthesis.sh`
-against the real toolchain rather than assumed.
+in Quartus 18.1 — the release the hardware examples are built with — against the
+real toolchain rather than assumed.
 
 For simulation, all four original cores have an open-source **Verilator**
 regression — 5.050 or newer, because older releases do not implement the SVA the
@@ -233,13 +247,13 @@ assertions use. What differs is what else each one has been run under:
 | `altera_avalon_mm_firewall` | yes | yes — coverage, assertions | yes — functional only, `-DICARUS` skips the SVA bind |
 | `altera_axi4_lite_firewall` | yes | yes — coverage, assertions | yes — same |
 | `altera_avalon_mm_sdram_controller` | yes — 19 configurations, plus Quartus Analysis & Synthesis | yes — 15 of those, coverage, assertion non-vacuity | — |
-| `altera_avalon_mm_sdcard_controller` | yes — 3 testbenches, the full-core one in 5 configurations, with assertions, plus Quartus synthesis, fit and timing and a real Platform Designer generate | yes — 7 runs, coverage, assertion non-vacuity, cover directives | — |
+| `altera_avalon_mm_sdcard_controller` | yes — 3 testbenches, the full-core one in 5 configurations, with assertions, and the HAL driver compiled and run against the RTL in 4 builds, plus Quartus synthesis, fit and timing and a real Platform Designer generate | yes — 7 runs, coverage, assertion non-vacuity, cover directives | — |
 
 The SD card controller additionally carries three checks that need no simulator
 at all: `verification/check_hw_tcl.tcl` executes its Platform Designer component
 against stubbed Qsys commands, `verification/check_driver_builds.sh` compiles
-the HAL driver against stubbed Nios II headers under `-Wall -Wextra` and
-unit-tests its CSD capacity arithmetic, and `verification/check_figures.sh`
+the HAL driver and its FatFs glue against stubbed headers under `-Wall -Wextra`
+and unit-tests its CSD capacity arithmetic, and `verification/check_figures.sh`
 re-renders every figure in its documentation and compares it byte for byte
 against the tracked copy. All three catch the dull mechanical faults — a renamed
 parameter, a port added to an interface that does not exist, a typo in the
@@ -274,6 +288,7 @@ does not cover.
 altera-ip-cores/
 ├── tools/                              repository-wide checks: this README
 │                                       against the tree, and every core's own
+│                                       fact checker run from one place
 ├── altera_avalon_mm_firewall/          Avalon-MM Firewall: rtl, tb, doc,
 │   ├── HAL/ inc/ *_sw.tcl             HAL driver the BSP picks up itself,
 │   ├── example/de10_lite_rtl/         and two hardware demos
@@ -290,10 +305,12 @@ altera-ip-cores/
 │   ├── example/de0_nano_rtl/           on two parts of different geometry
 │   └── example/de0_nano_nios/
 ├── altera_avalon_mm_sdcard_controller/ SD card controller, SPI mode
-│   ├── rtl/ tb/ simulation/            card model, three testbenches, bound SVA
+│   ├── rtl/ tb/ simulation/            card model, three testbenches, bound SVA,
+│   │                                   and the HAL driver run against the RTL
 │   ├── doc/                            user guide, block diagrams, generated
 │   │                                   figures — the timing ones cut from a VCD
 │   ├── HAL/ inc/ *_sw.tcl              HAL driver the BSP picks up itself
+│   ├── software/fatfs/                 FatFs disk I/O layer, not built by the BSP
 │   └── verification/                   hw.tcl, driver, assertion and wave checks,
 │                                        plus Quartus synthesis and a real
 │                                        Platform Designer generate
@@ -318,17 +335,22 @@ It is policed now:
 
 ```bash
 python3 tools/check_readme.py     # this file, against the tree
-./tools/check_all.sh              # the above plus every core's own checks
+./tools/check_all.sh              # the above, every core's check_facts.py,
+                                  # and the SD card controller's full check
 ```
 
 `tools/check_readme.py` re-derives what is mechanically derivable — every
-relative link, every core directory and component file, the assertion and
+relative link and the heading each anchor points at, every core directory and
+component file, the directories the layout tree names, the assertion and
 cover-point counts in the status cells, the presence of the user guide and
 block-diagram document each core is claimed to have, and whether a Questa cell
-claims a flow was run against a file saying it was not. It deliberately does
-**not** check measured results: throughput, F_max and board pass counts came
-from hardware and from simulations whose logs are not tracked, and a checker
-that pretended to verify them would be theatre.
+claims a flow was run against a file saying it was not. It does **not**
+re-measure anything: throughput, F_max and board pass counts came from hardware
+and from simulations whose logs are not tracked, and a checker that pretended to
+verify them would be theatre. Where this file repeats a figure a core's own
+README also quotes — the SD card controller's check count, documentation-claim
+count, logic cells and F_max — it checks that the two agree, and that core's
+`check_facts.py` holds its README to the source.
 
 Writing it immediately paid for itself twice — once on a pair of links that no
 longer resolved, and once on its own first draft, where the row lookup matched a
@@ -385,16 +407,20 @@ with them. See [`LICENSE`](LICENSE).
 | `altera_avalon_mm_firewall/` | MIT — RTL, testbenches, documentation, HAL driver, DE10-Lite examples |
 | `altera_axi4_lite_firewall/` | MIT — same |
 | `altera_avalon_mm_sdram_controller/` | MIT — RTL, Platform Designer component, benchmark harness, documentation |
-| `altera_avalon_mm_sdcard_controller/` | MIT — RTL, testbenches and card model, Platform Designer component, HAL driver, documentation |
-| `altera_avalon_new_sdram_controller/` | **Intel's own terms, not MIT** — see below |
+| `altera_avalon_mm_sdcard_controller/` | MIT — RTL, testbenches and card model, Platform Designer component, HAL driver, FatFs disk I/O layer, documentation. FatFs itself is not included |
+| `altera_avalon_new_sdram_controller/` | **Intel's own terms, not MIT** — except its `example/`, `NOTICE` and `README.md`; see below |
 
-`altera_avalon_new_sdram_controller/` is the only exception. It is **excluded
-from that licence** and is not the author's to relicense. It stays under Intel's own terms — the Intel
+`altera_avalon_new_sdram_controller/` is the only exception. Intel's controller
+in it is **excluded from that licence** and is not the author's to relicense.
+It stays under Intel's own terms — the Intel
 Program License Subscription Agreement / Intel FPGA IP License Agreement
 referenced in its file headers, which in substance restrict use to programming
 devices manufactured and sold by Intel/Altera or their authorised distributors.
 See [`altera_avalon_new_sdram_controller/NOTICE`](altera_avalon_new_sdram_controller/NOTICE),
-which also records the modification made to it here.
+which also records the modification made to it here. Three things in that
+directory are the author's own and are MIT, as `LICENSE` and the NOTICE both
+record: its DE10-Lite `example/`, which instantiates Intel's controller without
+containing it, the `NOTICE` and the `README.md`.
 
 If you take everything except `altera_avalon_new_sdram_controller/`, only the
 MIT licence applies.

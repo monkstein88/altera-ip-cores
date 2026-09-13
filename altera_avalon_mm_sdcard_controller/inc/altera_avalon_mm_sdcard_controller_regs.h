@@ -156,6 +156,10 @@
  * was fitted, and made this driver reset the data path on a card event. */
 #define ALT_SDCARD_IRQ_ERR_MSK           (0x0004FF00u)
 
+/* The two card-detect events, which a driver consumes on its own schedule and
+ * so must not clear along with a command's status. */
+#define ALT_SDCARD_IRQ_CARD_MSK          (0x00030000u)
+
 /* ------------------------------------------------------------ CLKDIV ------ */
 /* SPI clock = clk / (2 * CLKDIV). SAMPLE_DLY delays MISO capture by N system
  * clocks and is bounded by SAMPLE_DLY <= CLKDIV - 2: beyond that the sample

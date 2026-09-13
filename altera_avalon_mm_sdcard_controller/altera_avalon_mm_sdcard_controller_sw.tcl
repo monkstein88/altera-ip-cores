@@ -75,6 +75,11 @@ set_sw_property isr_preemption_supported true
 # the offsets - or that drives the core from an ISR without the HAL layer - can
 # include it without pulling in the driver.
 # -----------------------------------------------------------------------
+#
+# software/fatfs/diskio_altera_sdcard.c is deliberately NOT listed. It is the
+# FatFs disk I/O layer, it includes FatFs's own headers, and a BSP for a system
+# that does not use FatFs has none - so listing it would break every such BSP.
+# An application that wants it adds it to its own build.
 add_sw_property c_source       HAL/src/altera_avalon_mm_sdcard_controller.c
 add_sw_property include_source HAL/inc/altera_avalon_mm_sdcard_controller.h
 add_sw_property include_source inc/altera_avalon_mm_sdcard_controller_regs.h

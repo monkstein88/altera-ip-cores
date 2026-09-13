@@ -145,6 +145,7 @@ module avalon_mm_sdcard_controller
 
     logic        phy_run_seq, phy_tx_idle_seq, phy_tx_we, phy_tx_ready, phy_rx_valid;
     logic [7:0]  phy_tx_data, phy_rx_data;
+    logic        phy_rx_tx_queued;
 
     // Gates the start of a transaction: see the sequencer's S_IDLE.
     logic        phy_idle;
@@ -253,7 +254,8 @@ module avalon_mm_sdcard_controller
         .phy_run (phy_run_seq), .phy_tx_idle (phy_tx_idle_seq),
         .phy_tx_data (phy_tx_data), .phy_tx_we (phy_tx_we),
         .phy_tx_ready (phy_tx_ready), .phy_rx_data (phy_rx_data),
-        .phy_rx_valid (phy_rx_valid), .phy_idle (phy_idle),
+        .phy_rx_valid (phy_rx_valid), .phy_rx_tx_queued (phy_rx_tx_queued),
+        .phy_idle (phy_idle),
         .sd_cs_n (seq_cs_n),
 
         .fifo_clear (fifo_clear), .fifo_dir_h2c (fifo_dir_h2c),
@@ -285,6 +287,7 @@ module avalon_mm_sdcard_controller
         .idle    (phy_idle),
         .tx_data (phy_tx_data), .tx_we (phy_tx_we), .tx_ready (phy_tx_ready),
         .rx_data (phy_rx_data), .rx_valid (phy_rx_valid),
+        .rx_tx_queued (phy_rx_tx_queued),
         .sd_clk (sd_clk), .sd_mosi (sd_mosi), .sd_miso (sd_miso)
     );
 

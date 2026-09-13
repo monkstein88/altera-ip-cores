@@ -3,7 +3,7 @@
 # check_synthesis.sh - put the RTL through Quartus and report what it costs.
 #
 #   ./verification/check_synthesis.sh
-#   QUARTUS_ROOT=/opt/altera/25.1std ./verification/check_synthesis.sh
+#   QUARTUS_ROOT=/opt/altera/25.1std ./verification/check_synthesis.sh   # another release
 #
 # Exit 0 if it synthesises, fits and meets its clock constraint; 1 if any of
 # those fail; 2 if no Quartus installation could be found, which is not a pass.
@@ -55,8 +55,10 @@ CLK_NS=10.000
 # --- budgets -----------------------------------------------------------------
 # Logic cells for the whole core, and separately for the buffer, because the
 # buffer has been most of the core and that is the thing worth watching.
-# Measured 1719 cells, 888 registers, 111.53 MHz. The headroom is for the
-# parameter variations and for ordinary fitter noise, not for drift.
+# Measured in 18.1: 1715 cells, 898 registers, 108.41 MHz; the 8 KB buffer
+# build is the closest to the floor, at 103.58 MHz. The headroom is for the
+# parameter variations and for ordinary fitter noise, not for drift - Fmax has
+# moved by several MHz, both ways, for a change of a dozen cells.
 #
 # These were 13000 / 10500 / 75 when the buffer was a register file. Anyone
 # raising them back towards those numbers is undoing that fix, which is why the
@@ -84,11 +86,16 @@ CFGS=(
     "noburst:M0_BURST_WIDTH=1:8192"
 )
 
+# Quartus Prime 18.1 Standard first. It is the release this repository builds and
+# verifies its hardware examples with - Nios II does not generate under 25.1
+# Standard - so it is the release whose figures a board build will reproduce.
+# The budgets and the documented figures are 18.1's. 25.1 Standard is the
+# fallback, and gives different numbers for the same RTL.
 find_quartus () {
     if [ -n "${QUARTUS_ROOT:-}" ] && [ -x "$QUARTUS_ROOT/quartus/bin/quartus_map" ]; then
         echo "$QUARTUS_ROOT"; return 0
     fi
-    for q in /opt/altera/25.1std /opt/intelFPGA/18.1 /opt/intelFPGA_lite/*; do
+    for q in /opt/intelFPGA/18.1 /opt/altera/25.1std /opt/intelFPGA_lite/*; do
         [ -x "$q/quartus/bin/quartus_map" ] && { echo "$q"; return 0; }
     done
     return 1

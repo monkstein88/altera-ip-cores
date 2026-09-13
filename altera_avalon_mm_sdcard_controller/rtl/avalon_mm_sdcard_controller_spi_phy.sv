@@ -101,6 +101,12 @@ module avalon_mm_sdcard_controller_spi_phy
     output logic [7:0]              rx_data,
     output logic                    rx_valid,    // one-cycle pulse
 
+    // Qualifies rx_data: the byte SENT while this one was being received came
+    // from the prefetch - a byte the sequencer queued - and was not 0xFF idle
+    // fill. See "WHICH BYTE WENT OUT WITH THIS ONE" below for why a sequencer
+    // cannot work that out for itself.
+    output logic                    rx_tx_queued,
+
     // ---- pins --------------------------------------------------------------
     output logic                    sd_clk,
     output logic                    sd_mosi,
@@ -188,6 +194,7 @@ module avalon_mm_sdcard_controller_spi_phy
     logic       hold_v;
     logic [2:0] tx_cnt;     // bits driven out of the current byte
     logic       mosi_q;
+    logic       tx_queued;  // the byte in flight was loaded from the prefetch
 
     always_comb tx_ready = !hold_v;
 
@@ -222,6 +229,7 @@ module avalon_mm_sdcard_controller_spi_phy
             tx_cnt      <= '0;
             mosi_q      <= 1'b1;
             byte_active <= 1'b0;
+            tx_queued   <= 1'b0;
         end else begin
 
             // ---- prefetch bookkeeping ----
@@ -248,6 +256,7 @@ module avalon_mm_sdcard_controller_spi_phy
                 mosi_q      <= next_byte[7];
                 tx_cnt      <= '0;
                 byte_active <= 1'b1;
+                tx_queued   <= hold_v;
 
             end else if (tx_last_bit) begin
                 // Boundary reached with `run` low: stop cleanly, on a byte.
@@ -268,6 +277,42 @@ module avalon_mm_sdcard_controller_spi_phy
     always_comb sd_mosi = mosi_q;
 
     // -------------------------------------------------------------------------
+    // WHICH BYTE WENT OUT WITH THIS ONE
+    //
+    // Full duplex means every received byte was shifted in alongside exactly
+    // one transmitted byte. WHICH one is not something the sequencer can
+    // deduce from counting, and it once assumed it could.
+    //
+    // A sending state queues its first byte the cycle after it is entered, and
+    // it is entered on a receive tick - which trails the last rising edge of
+    // the byte that caused it by 2 + sample_dly system clocks. The shifter
+    // loads its next byte at the following FALLING edge, CLKDIV clocks after
+    // that rising edge. When CLKDIV is large the queued byte is there in time
+    // and goes out next. When it is not - CLKDIV 1 and 2, or a large
+    // sample_dly at any divisor - the shifter has already loaded a 0xFF of idle
+    // fill, and the queued byte goes out one byte LATER. So the first receive
+    // tick of a sending state pairs with its first byte at some settings and
+    // with a stray 0xFF at others.
+    //
+    // For most of the protocol that is harmless: every phase that follows a
+    // send searches for a token and is bounded by TIMEOUT. It is not harmless
+    // after a command. Counting six ticks and then opening the response window
+    // opened it one byte early at 25 MHz: a response at the full N_CR of 8
+    // byte-times timed out, and an auto CMD12 took the card's still-streaming
+    // data - read while the CRC byte was going out - for its R1. The driver
+    // harness found it, on data whose byte there happened to have bit 7 clear.
+    //
+    // So the pairing is recorded at the one place it is known: the tag is set
+    // when a byte is loaded and captured when the receive byte completes.
+    // Capture always precedes the next load - the eighth sample lands at most
+    // CLKDIV-1 clocks after the eighth rising edge, given
+    // sample_dly <= CLKDIV - 2, and the next load is at the falling edge
+    // CLKDIV clocks after it. At CLKDIV = 1 the two share an edge, and the
+    // nonblocking assignment reads the tag of the byte still in flight, which
+    // is the right one.
+    // -------------------------------------------------------------------------
+
+    // -------------------------------------------------------------------------
     // Receive path
     //
     // Counted independently of the transmit side. The two are offset by half a
@@ -285,10 +330,11 @@ module avalon_mm_sdcard_controller_spi_phy
 
     always_ff @(posedge clk or negedge reset_n) begin
         if (!reset_n) begin
-            rxreg    <= '0;
-            rx_cnt   <= '0;
-            rx_data  <= '0;
-            rx_valid <= 1'b0;
+            rxreg        <= '0;
+            rx_cnt       <= '0;
+            rx_data      <= '0;
+            rx_valid     <= 1'b0;
+            rx_tx_queued <= 1'b0;
         end else begin
             rx_valid <= 1'b0;
 
@@ -297,8 +343,9 @@ module avalon_mm_sdcard_controller_spi_phy
                 rx_cnt <= rx_cnt + 3'd1;
 
                 if (rx_cnt == 3'd7) begin
-                    rx_data  <= {rxreg, sd_miso};
-                    rx_valid <= 1'b1;
+                    rx_data      <= {rxreg, sd_miso};
+                    rx_valid     <= 1'b1;
+                    rx_tx_queued <= tx_queued;
                 end
             end
 

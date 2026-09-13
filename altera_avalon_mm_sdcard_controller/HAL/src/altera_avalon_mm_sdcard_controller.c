@@ -5,9 +5,10 @@
  *
  * The hardware owns the link layer. This file owns the protocol: the
  * identification sequence, the v1.x / v2.00 distinction, byte versus block
- * addressing, capacity from the CSD, and the retry policy.
+ * addressing, capacity from the CSD, card changes, and the retry policy.
  * ===========================================================================*/
 
+#include <stdint.h>
 #include <string.h>
 
 #include "altera_avalon_mm_sdcard_controller.h"
@@ -17,6 +18,36 @@
  * must match; a newer minor is accepted, because minor revisions do not move
  * registers. */
 #define DRIVER_HW_MAJOR   1
+
+/* §6.4.1.1 asks for at least 74; the rest is margin for a first clock period
+ * that starts part-way through. */
+#define POWER_UP_CLOCKS   80u
+
+/* ACMD41 attempts before giving up on initialisation.
+ *
+ * The specification gives the card one second (§4.2.3), and the bound has to
+ * cover that however quickly the attempts go by. Each attempt is CMD55 plus
+ * ACMD41 - at least 2 x (6 command bytes + 1 response byte) x 8 = 112 clocks -
+ * and identification runs at no more than 400 kHz, so no attempt can take less
+ * than 280 us. One second is therefore at most 3572 of them. The previous
+ * bound of 2000 could give up after 0.56 s on a card still within its rights.
+ */
+#define ACMD41_TRIES      4000u
+
+/* BLK_COUNT is 16 bits wide. A larger count written to it is truncated - to
+ * zero for exactly 65536 blocks, which the sequencer runs as a single block -
+ * so a longer transfer is issued in pieces.
+ *
+ * Overridable only so the splitting can be exercised without a 32 MiB
+ * transfer; a value above 0xFFFF is clamped, because it cannot work. */
+#ifndef ALT_SDCARD_MAX_BLOCKS_PER_TRANSFER
+#define ALT_SDCARD_MAX_BLOCKS_PER_TRANSFER  0xFFFFu
+#endif
+#define MAX_BLOCKS_PER_TRANSFER \
+    ((ALT_SDCARD_MAX_BLOCKS_PER_TRANSFER) > 0xFFFFu ? 0xFFFFu \
+                                                    : (ALT_SDCARD_MAX_BLOCKS_PER_TRANSFER))
+
+static alt_sdcard_dev *instances[ALT_SDCARD_MAX_INSTANCES];
 
 /* -------------------------------------------------------------------------
  * Low-level helpers
@@ -31,6 +62,25 @@ static void wait_not_busy(alt_sdcard_dev *dev)
      * returns immediately for a command that never happened. */
     while (ALT_SDCARD_RD_STATUS(dev->base) & ALT_SDCARD_STAT_CMD_BUSY_MSK) {
         /* spin */
+    }
+}
+
+/* Let at least `clocks` SPI clock periods pass at divider `div`.
+ *
+ * Counted in bus transfers, not in loop iterations. A read of STATUS occupies
+ * at least one cycle of the core's clock whatever the processor - the slave has
+ * read latency 1 - and one SPI period is 2 * CLKDIV of those cycles, so the
+ * count below is a lower bound on elapsed time that no CPU can beat. A spin
+ * loop is not: the previous 200000 empty iterations were a wait on a slow
+ * processor and next to nothing on a fast one, and in the driver-in-the-loop
+ * harness - where only bus accesses move time - they gave the card no power-up
+ * clocks at all and identification failed on every card. */
+static void run_clocks(alt_sdcard_dev *dev, alt_u32 div, alt_u32 clocks)
+{
+    alt_u32 n = clocks * 2u * (div ? div : 1u);    /* CLKDIV 0 runs as 1 */
+
+    while (n--) {
+        (void)ALT_SDCARD_RD_STATUS(dev->base);
     }
 }
 
@@ -78,7 +128,12 @@ static void issue(alt_sdcard_dev *dev, alt_u8 index, alt_u32 arg,
 
     wait_not_busy(dev);
 
-    ALT_SDCARD_WR_IRQ_STATUS(dev->base, 0xFFFFFFFFu);
+    /* Clear the previous command's status - but NOT the card-detect events.
+     * Those belong to card_changed(), which reads them at the start of the next
+     * call; clearing them here, as this once did with 0xFFFFFFFF, threw away a
+     * removal that happened between two commands before anything looked. */
+    ALT_SDCARD_WR_IRQ_STATUS(dev->base, ~ALT_SDCARD_IRQ_CARD_MSK);
+    dev->isr_status = 0;
     ALT_SDCARD_WR(dev->base, ALT_SDCARD_CMD_ARG_OFST, arg);
 
     cmd = ((alt_u32)index & ALT_SDCARD_CMD_INDEX_MSK)
@@ -90,8 +145,10 @@ static void issue(alt_sdcard_dev *dev, alt_u8 index, alt_u32 arg,
     dev->cmd_count++;
 }
 
-/* Wait for the command to finish and turn the latched status into a result. */
-static int complete(alt_sdcard_dev *dev, alt_u32 *resp0, alt_u32 *resp1)
+/* Wait for the command to finish and turn the latched status into a result.
+ * `st_out`, if given, receives the status bits the result was made from. */
+static int complete(alt_sdcard_dev *dev, alt_u32 *resp0, alt_u32 *resp1,
+                    alt_u32 *st_out)
 {
     alt_u32 st;
 
@@ -100,22 +157,85 @@ static int complete(alt_sdcard_dev *dev, alt_u32 *resp0, alt_u32 *resp1)
          * cannot hang on a card that has stopped answering */
     }
 
-    st = ALT_SDCARD_RD_IRQ_STATUS(dev->base);
+    /* Plus anything an application-enabled interrupt acknowledged first. */
+    st = ALT_SDCARD_RD_IRQ_STATUS(dev->base) | dev->isr_status;
+    st &= ~ALT_SDCARD_IRQ_CARD_MSK;
     account(dev, st);
 
-    if (resp0) *resp0 = ALT_SDCARD_RD_RESP0(dev->base);
-    if (resp1) *resp1 = ALT_SDCARD_RD_RESP1(dev->base);
+    if (resp0)  *resp0  = ALT_SDCARD_RD_RESP0(dev->base);
+    if (resp1)  *resp1  = ALT_SDCARD_RD_RESP1(dev->base);
+    if (st_out) *st_out = st;
 
     return irq_to_result(st);
+}
+
+/* The SPI-mode response format of each command (§7.3.2, table 7-3).
+ *
+ * One table serves commands and application commands alike, because the index
+ * never collides where it matters: CMD13 and ACMD13 both answer R2, and every
+ * other application command answers R1. */
+static alt_u32 resp_for(alt_u8 index)
+{
+    switch (index) {
+    case 8:  return ALT_SDCARD_RESP_R3R7;     /* R7 */
+    case 58: return ALT_SDCARD_RESP_R3R7;     /* R3 */
+    case 13: return ALT_SDCARD_RESP_R2;
+    case 12:                                  /* STOP_TRANSMISSION         */
+    case 28:                                  /* SET_WRITE_PROT            */
+    case 29:                                  /* CLR_WRITE_PROT            */
+    case 38: return ALT_SDCARD_RESP_R1B;      /* ERASE                     */
+    default: return ALT_SDCARD_RESP_R1;
+    }
 }
 
 int alt_sdcard_command(alt_sdcard_dev *dev, alt_u8 index, alt_u32 arg,
                        alt_u32 resp_type, alt_u32 extra_cmd_bits,
                        alt_u32 *resp0, alt_u32 *resp1)
 {
-    if (dev == 0) return ALT_SDCARD_ERR_PARAM;
+    if (dev == 0 || index > 63u) return ALT_SDCARD_ERR_PARAM;
+
+    if (resp_type == ALT_SDCARD_RESP_AUTO)
+        resp_type = resp_for(index);
+    else if (resp_type > ALT_SDCARD_RESP_R3R7)
+        return ALT_SDCARD_ERR_PARAM;   /* was silently masked to two bits */
+
     issue(dev, index, arg, resp_type, extra_cmd_bits);
-    return complete(dev, resp0, resp1);
+    return complete(dev, resp0, resp1, 0);
+}
+
+/* A command the driver itself sends, retried on a command CRC error.
+ *
+ * Safe for exactly the reason the error exists: a card that finds the command
+ * CRC wrong does not execute the command (§7.2.2), so sending it again cannot
+ * do anything twice. Nothing else is retried here. */
+static int command_retried(alt_sdcard_dev *dev, alt_u8 index, alt_u32 arg,
+                           alt_u32 resp_type, alt_u32 *resp0, alt_u32 *resp1)
+{
+    alt_u32 st, attempt;
+    int     r;
+
+    for (attempt = 0; ; attempt++) {
+        issue(dev, index, arg, resp_type, 0);
+        r = complete(dev, resp0, resp1, &st);
+        if (!(st & ALT_SDCARD_IRQ_ERR_CMD_CRC_MSK) || attempt >= dev->retries)
+            return r;
+        dev->retry_count++;
+    }
+}
+
+/* An ACMD is CMD55 followed by the command itself.
+ *
+ * CMD55 is retried on a CRC error like any command. The application command is
+ * NOT retried here, deliberately: a card that rejected it has already left
+ * application mode, so repeating it alone would send the ordinary command with
+ * the same index. The one caller, the ACMD41 poll, repeats the whole pair on
+ * any failure anyway. */
+static int app_command(alt_sdcard_dev *dev, alt_u8 index, alt_u32 arg,
+                       alt_u32 resp_type, alt_u32 *resp0, alt_u32 *resp1)
+{
+    int r = command_retried(dev, 55, 0, ALT_SDCARD_RESP_R1, 0, 0);
+    if (r != ALT_SDCARD_OK) return r;
+    return alt_sdcard_command(dev, index, arg, resp_type, 0, resp0, resp1);
 }
 
 /* -------------------------------------------------------------------------
@@ -124,17 +244,23 @@ int alt_sdcard_command(alt_sdcard_dev *dev, alt_u8 index, alt_u32 arg,
  * Both loops watch CMD_BUSY as well as the FIFO flags so a transfer that fails
  * part-way terminates instead of spinning forever on a buffer that will never
  * fill or drain again.
+ *
+ * Words are copied with memcpy rather than through an alt_u32 pointer, so the
+ * caller's buffer need not be aligned: a misaligned 32-bit load on Nios II is
+ * not trapped, it is quietly word-aligned by the bus.
  * ---------------------------------------------------------------------- */
 
-static int pio_read(alt_sdcard_dev *dev, alt_u32 *dst, alt_u32 words)
+static int pio_read(alt_sdcard_dev *dev, alt_u8 *dst, alt_u32 words)
 {
     alt_u32 got = 0;
-    alt_u32 st;
+    alt_u32 st, w;
 
     while (got < words) {
         st = ALT_SDCARD_RD_STATUS(dev->base);
         if (!(st & ALT_SDCARD_STAT_FIFO_EMPTY_MSK)) {
-            dst[got++] = ALT_SDCARD_RD(dev->base, ALT_SDCARD_DATA_OFST);
+            w = ALT_SDCARD_RD(dev->base, ALT_SDCARD_DATA_OFST);
+            memcpy(dst + 4u * got, &w, 4);
+            got++;
         } else if (!(st & ALT_SDCARD_STAT_CMD_BUSY_MSK)) {
             break;      /* transfer over and the buffer is drained */
         }
@@ -142,15 +268,17 @@ static int pio_read(alt_sdcard_dev *dev, alt_u32 *dst, alt_u32 words)
     return (got == words) ? ALT_SDCARD_OK : ALT_SDCARD_ERR_TIMEOUT;
 }
 
-static int pio_write(alt_sdcard_dev *dev, const alt_u32 *src, alt_u32 words)
+static int pio_write(alt_sdcard_dev *dev, const alt_u8 *src, alt_u32 words)
 {
     alt_u32 put = 0;
-    alt_u32 st;
+    alt_u32 st, w;
 
     while (put < words) {
         st = ALT_SDCARD_RD_STATUS(dev->base);
         if (!(st & ALT_SDCARD_STAT_FIFO_FULL_MSK)) {
-            ALT_SDCARD_WR(dev->base, ALT_SDCARD_DATA_OFST, src[put++]);
+            memcpy(&w, src + 4u * put, 4);
+            ALT_SDCARD_WR(dev->base, ALT_SDCARD_DATA_OFST, w);
+            put++;
         } else if (!(st & ALT_SDCARD_STAT_CMD_BUSY_MSK)) {
             break;      /* the transfer gave up before we finished feeding it */
         }
@@ -163,25 +291,35 @@ static int pio_write(alt_sdcard_dev *dev, const alt_u32 *src, alt_u32 words)
  *
  * These come back through the ordinary data path with a block length of 16
  * rather than 512, which is the only place in the driver that BLK_SIZE moves.
+ * A CRC error on either the command or the 16 bytes is retried: reading a
+ * register twice has no side effect.
  * ---------------------------------------------------------------------- */
 static int read_reg16(alt_sdcard_dev *dev, alt_u8 index, alt_u8 *out16)
 {
     alt_u32 buf[4];
+    alt_u32 st, attempt;
     int     r;
 
-    ALT_SDCARD_WR(dev->base, ALT_SDCARD_BLK_SIZE_OFST, 16);
-    ALT_SDCARD_WR(dev->base, ALT_SDCARD_BLK_COUNT_OFST, 1);
-    ALT_SDCARD_WR(dev->base, ALT_SDCARD_DMA_ADDR_OFST, (alt_u32)buf);
+    for (attempt = 0; ; attempt++) {
+        ALT_SDCARD_WR(dev->base, ALT_SDCARD_BLK_SIZE_OFST, 16);
+        ALT_SDCARD_WR(dev->base, ALT_SDCARD_BLK_COUNT_OFST, 1);
+        ALT_SDCARD_WR(dev->base, ALT_SDCARD_DMA_ADDR_OFST, (alt_u32)(uintptr_t)buf);
 
-    issue(dev, index, 0, ALT_SDCARD_RESP_R1, ALT_SDCARD_CMD_DATA_EN_MSK);
+        issue(dev, index, 0, ALT_SDCARD_RESP_R1, ALT_SDCARD_CMD_DATA_EN_MSK);
 
-    if (!dev->use_dma) (void)pio_read(dev, buf, 4);
+        if (!dev->use_dma) (void)pio_read(dev, (alt_u8 *)buf, 4);
 
-    r = complete(dev, 0, 0);
+        r = complete(dev, 0, 0, &st);
 
-    ALT_SDCARD_WR(dev->base, ALT_SDCARD_BLK_SIZE_OFST, 512);
+        ALT_SDCARD_WR(dev->base, ALT_SDCARD_BLK_SIZE_OFST, 512);
 
-    if (r != ALT_SDCARD_OK) return r;
+        if (r == ALT_SDCARD_OK) break;
+        alt_sdcard_reset_datapath(dev);
+        if (!(st & (ALT_SDCARD_IRQ_ERR_CMD_CRC_MSK | ALT_SDCARD_IRQ_ERR_DAT_CRC_MSK))
+                || attempt >= dev->retries)
+            return r;
+        dev->retry_count++;
+    }
 
     memcpy(out16, buf, 16);
     return ALT_SDCARD_OK;
@@ -223,13 +361,80 @@ static alt_u32 csd_blocks(const alt_u8 *csd)
     return ((c_size + 1u) << (mult + read_bl_len)) >> 9;
 }
 
-/* An ACMD is CMD55 followed by the command itself. */
-static int app_command(alt_sdcard_dev *dev, alt_u8 index, alt_u32 arg,
-                       alt_u32 resp_type, alt_u32 *resp0, alt_u32 *resp1)
+/* -------------------------------------------------------------------------
+ * Card changes
+ * ---------------------------------------------------------------------- */
+
+/* Forget the card. Everything learned from it goes, so nothing stale can be
+ * mistaken for a description of whatever is fitted next. */
+static void invalidate(alt_sdcard_dev *dev)
 {
-    int r = alt_sdcard_command(dev, 55, 0, ALT_SDCARD_RESP_R1, 0, 0, 0);
-    if (r != ALT_SDCARD_OK) return r;
-    return alt_sdcard_command(dev, index, arg, resp_type, 0, resp0, resp1);
+    dev->type   = ALT_SDCARD_TYPE_NONE;
+    dev->blocks = 0;
+    dev->ocr    = 0;
+    memset(dev->cid, 0, sizeof dev->cid);
+    memset(dev->csd, 0, sizeof dev->csd);
+}
+
+/* Has the card in the socket possibly changed since anything last looked?
+ *
+ * Three pieces of evidence, all consumed here: the socket switch reading
+ * empty now, a CARD_INSERT or CARD_REMOVE the hardware latched, and one the
+ * ISR took first. The latched events are what make a FAST swap visible - out
+ * and back in between two calls, with the switch reading "present" both times.
+ *
+ * Without a card-detect switch there is no evidence to consume, and a change
+ * shows up instead as a card that stops answering. */
+static int card_changed(alt_sdcard_dev *dev)
+{
+    alt_u32 ev;
+    int     changed = 0;
+
+    if (!dev->has_card_detect) return 0;
+
+    ev = ALT_SDCARD_RD_IRQ_STATUS(dev->base) & ALT_SDCARD_IRQ_CARD_MSK;
+    if (ev) {
+        /* Only the bits seen: one that sets between the read and this write is
+         * left for the next look rather than lost. */
+        ALT_SDCARD_WR_IRQ_STATUS(dev->base, ev);
+        changed = 1;
+    }
+
+    ev = dev->isr_card_events;
+    if (ev != dev->card_events_seen) {
+        dev->card_events_seen = ev;
+        changed = 1;
+    }
+
+    if (!(ALT_SDCARD_RD_STATUS(dev->base) & ALT_SDCARD_STAT_CARD_PRES_MSK))
+        changed = 1;
+
+    return changed;
+}
+
+int alt_sdcard_check(alt_sdcard_dev *dev)
+{
+    if (dev == 0) return ALT_SDCARD_ERR_PARAM;
+
+    if (card_changed(dev) && dev->type != ALT_SDCARD_TYPE_NONE) {
+        /* Fail THIS call; the next one identifies whatever is there. The caller
+         * may be holding something it learned from the old card - see the
+         * header. */
+        invalidate(dev);
+        return alt_sdcard_present(dev) ? ALT_SDCARD_ERR_CHANGED
+                                       : ALT_SDCARD_ERR_NO_CARD;
+    }
+    if (!alt_sdcard_present(dev))          return ALT_SDCARD_ERR_NO_CARD;
+    if (dev->type == ALT_SDCARD_TYPE_NONE) return ALT_SDCARD_ERR_NOT_READY;
+    return ALT_SDCARD_OK;
+}
+
+/* The start of every block call: act on a change, then make sure an identified
+ * card is there, identifying one if none is. */
+static int ensure_ready(alt_sdcard_dev *dev)
+{
+    int r = alt_sdcard_check(dev);
+    return (r == ALT_SDCARD_ERR_NOT_READY) ? alt_sdcard_probe(dev) : r;
 }
 
 /* -------------------------------------------------------------------------
@@ -239,7 +444,15 @@ static int app_command(alt_sdcard_dev *dev, alt_u8 index, alt_u32 arg,
 static void sdcard_isr(void *context)
 {
     alt_sdcard_dev *dev = (alt_sdcard_dev *)context;
-    alt_u32 st = ALT_SDCARD_RD_IRQ_STATUS(dev->base);
+    alt_u32 st;
+
+    /* Only the bits that can have raised the interrupt; the rest stay latched
+     * for whoever polls them. What this acknowledges is kept below, so the
+     * driver's own completion poll still finds it: acknowledging and
+     * discarding, as this once did, cleared a command's status out from under
+     * that poll whenever an application enabled any source at all. */
+    st  = ALT_SDCARD_RD_IRQ_STATUS(dev->base);
+    st &= ALT_SDCARD_RD(dev->base, ALT_SDCARD_IRQ_ENABLE_OFST);
 
     dev->last_irq_status = st;
 
@@ -247,6 +460,12 @@ static void sdcard_isr(void *context)
      * until the causing bit is cleared - writing 1 to it is the only thing that
      * deasserts the pin. */
     ALT_SDCARD_WR_IRQ_STATUS(dev->base, st);
+
+    /* Keep what was acknowledged where the driver will still find it: card
+     * events as a count - only this ISR writes it, so the main line reads it
+     * without a race - and everything else for complete(). */
+    if (st & ALT_SDCARD_IRQ_CARD_MSK) dev->isr_card_events++;
+    dev->isr_status |= st & ~ALT_SDCARD_IRQ_CARD_MSK;
 
     if (dev->on_event) dev->on_event(dev, st);
 }
@@ -258,6 +477,7 @@ static void sdcard_isr(void *context)
 int alt_sdcard_init(alt_sdcard_dev *dev)
 {
     alt_u32 info;
+    unsigned i;
 
     if (dev == 0) return ALT_SDCARD_ERR_PARAM;
 
@@ -280,17 +500,28 @@ int alt_sdcard_init(alt_sdcard_dev *dev)
     /* A core built without the DMA cannot use it however the caller asked. */
     if (!dev->has_dma) dev->use_dma = 0;
 
-    dev->type   = ALT_SDCARD_TYPE_NONE;
-    dev->blocks = 0;
+    /* NOT generation, which only ever counts up: a second init followed by an
+     * identification must not reproduce a number a caller already holds for
+     * a card it thinks it knows. */
+    invalidate(dev);
+    dev->isr_card_events  = 0;
+    dev->card_events_seen = 0;
+    dev->isr_status       = 0;
 
     ALT_SDCARD_WR_CTRL(dev->base, 0);
     ALT_SDCARD_WR_IRQ_ENABLE(dev->base, 0);
+    /* Everything, card events included: the card, if any, is unidentified. */
     ALT_SDCARD_WR_IRQ_STATUS(dev->base, 0xFFFFFFFFu);
     ALT_SDCARD_WR(dev->base, ALT_SDCARD_TIMEOUT_OFST, dev->timeout_cycles);
 
     if (dev->irq != -1) {
         alt_ic_isr_register((alt_u32)dev->irq_controller_id, (alt_u32)dev->irq,
                             sdcard_isr, dev, 0);
+    }
+
+    for (i = 0; i < ALT_SDCARD_MAX_INSTANCES; i++) {
+        if (instances[i] == dev) break;
+        if (instances[i] == 0) { instances[i] = dev; break; }
     }
 
     return ALT_SDCARD_OK;
@@ -300,17 +531,12 @@ int alt_sdcard_init(alt_sdcard_dev *dev)
  * probe - the identification sequence
  * ---------------------------------------------------------------------- */
 
-int alt_sdcard_probe(alt_sdcard_dev *dev)
+static int identify(alt_sdcard_dev *dev)
 {
-    alt_u32 r0, r1, ctrl;
-    int     r, tries;
+    alt_u32 r0, r1, ctrl, tries;
+    alt_sdcard_type type;
+    int     r;
     int     v2;
-
-    if (dev == 0) return ALT_SDCARD_ERR_PARAM;
-    if (!alt_sdcard_present(dev)) return ALT_SDCARD_ERR_NO_CARD;
-
-    dev->type   = ALT_SDCARD_TYPE_NONE;
-    dev->blocks = 0;
 
     ALT_SDCARD_WR(dev->base, ALT_SDCARD_TIMEOUT_OFST, dev->timeout_cycles);
     ALT_SDCARD_WR(dev->base, ALT_SDCARD_CLKDIV_OFST,
@@ -320,18 +546,14 @@ int alt_sdcard_probe(alt_sdcard_dev *dev)
      *
      * CS high is the opposite of what a transaction wants, which is why the
      * manual override exists at all. The card may use all 74 clocks to get
-     * ready, so this is not optional padding. */
+     * ready, so this is not optional padding - and it is timed by the bus, see
+     * run_clocks(). */
     ctrl = ALT_SDCARD_CTRL_ENABLE_MSK
          | ALT_SDCARD_CTRL_CS_MANUAL_MSK
          | ALT_SDCARD_CTRL_CS_VALUE_MSK
          | ALT_SDCARD_CTRL_CLK_RUN_MSK;
     ALT_SDCARD_WR_CTRL(dev->base, ctrl);
-
-    /* 100 byte-times is comfortably more than 74 clocks at any divider. */
-    {
-        volatile int spin;
-        for (spin = 0; spin < 200000; spin++) { }
-    }
+    run_clocks(dev, dev->clkdiv_id, POWER_UP_CLOCKS);
 
     /* ---- 2. into SPI mode: CMD0 with CS asserted ----
      * Asserting CS during CMD0 is what selects SPI mode; the only way back to
@@ -340,12 +562,17 @@ int alt_sdcard_probe(alt_sdcard_dev *dev)
                        ALT_SDCARD_CTRL_ENABLE_MSK | ALT_SDCARD_CTRL_CRC_EN_MSK |
                        (dev->use_dma ? ALT_SDCARD_CTRL_DMA_EN_MSK : 0u));
 
-    for (tries = 0; tries < 8; tries++) {
+    for (tries = 0; tries < 8u; tries++) {
         r = alt_sdcard_command(dev, 0, 0, ALT_SDCARD_RESP_R1, 0, &r0, 0);
         if (r == ALT_SDCARD_OK && (r0 & 0xFFu) == ALT_SDCARD_R1_IDLE) break;
         dev->retry_count++;
     }
-    if (tries == 8) return ALT_SDCARD_ERR_UNUSABLE;
+    if (tries == 8u) {
+        /* Nothing answered. On a socket without card detect that is also what
+         * an empty one looks like, and it is worth saying so. */
+        return dev->has_card_detect ? ALT_SDCARD_ERR_UNUSABLE
+                                    : ALT_SDCARD_ERR_NO_CARD;
+    }
 
     /* ---- 3. version: CMD8 ----
      *
@@ -353,8 +580,8 @@ int alt_sdcard_probe(alt_sdcard_dev *dev)
      * 32-bit trailer never arrives (§7.3.2). The hardware handles the
      * truncation; here it simply means "this is a v1.x card", not an error. */
     v2 = 0;
-    r  = alt_sdcard_command(dev, 8, ALT_SDCARD_CMD8_ARG,
-                            ALT_SDCARD_RESP_R3R7, 0, &r0, &r1);
+    r  = command_retried(dev, 8, ALT_SDCARD_CMD8_ARG,
+                         ALT_SDCARD_RESP_R3R7, &r0, &r1);
     if (r == ALT_SDCARD_OK) {
         if ((r1 & 0xFFu) != (ALT_SDCARD_CMD8_ARG & 0xFFu)) {
             /* The check pattern did not come back. Communication is not
@@ -368,15 +595,15 @@ int alt_sdcard_probe(alt_sdcard_dev *dev)
     }
 
     /* ---- 4. CRC checking on, before ACMD41 (§7.2.2 recommends this order) */
-    (void)alt_sdcard_command(dev, 59, 1, ALT_SDCARD_RESP_R1, 0, 0, 0);
+    (void)command_retried(dev, 59, 1, ALT_SDCARD_RESP_R1, 0, 0);
 
     /* ---- 5. initialise: ACMD41, polled ----
      *
      * The card reports in_idle_state until initialisation completes. The
      * specification allows a full second for this, and large cards use a good
      * fraction of it, so a driver that issues ACMD41 once and gives up works
-     * only by luck. */
-    for (tries = 0; tries < 2000; tries++) {
+     * only by luck. See ACMD41_TRIES for why the bound is what it is. */
+    for (tries = 0; tries < ACMD41_TRIES; tries++) {
         r = app_command(dev, 41, v2 ? ALT_SDCARD_ACMD41_HCS : 0u,
                         ALT_SDCARD_RESP_R1, &r0, 0);
         if (r != ALT_SDCARD_OK) {
@@ -386,24 +613,28 @@ int alt_sdcard_probe(alt_sdcard_dev *dev)
         if (((r0 & 0xFFu) & ALT_SDCARD_R1_IDLE) == 0) break;
         dev->retry_count++;
     }
-    if (tries == 2000) return ALT_SDCARD_ERR_TIMEOUT;
+    if (tries == ACMD41_TRIES) return ALT_SDCARD_ERR_TIMEOUT;
 
     /* ---- 6. capacity class: CMD58 reads the OCR ----
      * CCS decides byte versus block addressing, which is the single thing the
-     * block API has to get right for a caller that does not want to care. */
-    dev->type = ALT_SDCARD_TYPE_SDSC;
+     * block API has to get right for a caller that does not want to care.
+     *
+     * The class is held locally and published only when identification has
+     * finished. Setting dev->type here, as this once did, left a card whose
+     * CSD read then failed looking identified - with a capacity of zero. */
+    type = ALT_SDCARD_TYPE_SDSC;
     if (v2) {
-        r = alt_sdcard_command(dev, 58, 0, ALT_SDCARD_RESP_R3R7, 0, &r0, &r1);
+        r = command_retried(dev, 58, 0, ALT_SDCARD_RESP_R3R7, &r0, &r1);
         if (r != ALT_SDCARD_OK) return r;
         dev->ocr = r1;
-        if (r1 & ALT_SDCARD_OCR_CCS) dev->type = ALT_SDCARD_TYPE_SDHC;
+        if (r1 & ALT_SDCARD_OCR_CCS) type = ALT_SDCARD_TYPE_SDHC;
     }
 
     /* ---- 7. block length ----
      * SDHC and SDXC are fixed at 512 whatever CMD16 says; sending it anyway is
      * harmless and correct for standard-capacity cards. */
-    if (dev->type == ALT_SDCARD_TYPE_SDSC) {
-        r = alt_sdcard_command(dev, 16, 512, ALT_SDCARD_RESP_R1, 0, 0, 0);
+    if (type == ALT_SDCARD_TYPE_SDSC) {
+        r = command_retried(dev, 16, 512, ALT_SDCARD_RESP_R1, 0, 0);
         if (r != ALT_SDCARD_OK) return r;
     }
 
@@ -424,11 +655,43 @@ int alt_sdcard_probe(alt_sdcard_dev *dev)
      */
     r = read_reg16(dev, 9, dev->csd);
     if (r != ALT_SDCARD_OK) return r;
-    dev->blocks = csd_blocks(dev->csd);
 
     r = read_reg16(dev, 10, dev->cid);
     if (r != ALT_SDCARD_OK) return r;
 
+    dev->blocks = csd_blocks(dev->csd);
+    dev->type   = type;
+    return ALT_SDCARD_OK;
+}
+
+int alt_sdcard_probe(alt_sdcard_dev *dev)
+{
+    int r;
+
+    if (dev == 0) return ALT_SDCARD_ERR_PARAM;
+
+    /* Whatever happened in the socket before now is superseded by what is
+     * about to be identified. */
+    (void)card_changed(dev);
+    invalidate(dev);
+
+    if (!alt_sdcard_present(dev)) return ALT_SDCARD_ERR_NO_CARD;
+
+    r = identify(dev);
+
+    /* A card pulled - or a switch still bouncing - DURING identification has
+     * produced an identification of nothing in particular. */
+    if (r == ALT_SDCARD_OK && card_changed(dev)) {
+        r = alt_sdcard_present(dev) ? ALT_SDCARD_ERR_CHANGED
+                                    : ALT_SDCARD_ERR_NO_CARD;
+    }
+
+    if (r != ALT_SDCARD_OK) {
+        invalidate(dev);
+        return r;
+    }
+
+    dev->generation++;
     return ALT_SDCARD_OK;
 }
 
@@ -483,30 +746,23 @@ static void recover(alt_sdcard_dev *dev, int writing)
     }
 }
 
-static int transfer(alt_sdcard_dev *dev, alt_u32 block, void *buf,
-                    alt_u32 count, int writing)
+/* One attempt at one transfer of at most MAX_BLOCKS_PER_TRANSFER blocks, from
+ * or to a word-aligned buffer. `*retry` says whether a failure is one that may
+ * safely be tried again. */
+static int transfer_once(alt_sdcard_dev *dev, alt_u32 block, void *buf,
+                         alt_u32 count, int writing, int *retry)
 {
     alt_u32 extra, st;
     alt_u8  index;
     int     r;
 
-    if (dev == 0 || buf == 0 || count == 0) return ALT_SDCARD_ERR_PARAM;
-    if (dev->type == ALT_SDCARD_TYPE_NONE)  return ALT_SDCARD_ERR_NOT_READY;
-    if (!alt_sdcard_present(dev))           return ALT_SDCARD_ERR_NO_CARD;
-    if (writing && alt_sdcard_write_protected(dev))
-        return ALT_SDCARD_ERR_PROTECTED;
-
-    /* The DMA moves whole 32-bit words, so a misaligned buffer would be
-     * silently word-aligned by the hardware and the caller would get its data
-     * somewhere it did not ask for. Refuse instead. */
-    if (dev->use_dma && (((alt_u32)buf & 3u) != 0u))
-        return ALT_SDCARD_ERR_PARAM;
+    *retry = 0;
 
     wait_not_busy(dev);
 
     ALT_SDCARD_WR(dev->base, ALT_SDCARD_BLK_SIZE_OFST, 512);
     ALT_SDCARD_WR(dev->base, ALT_SDCARD_BLK_COUNT_OFST, count);
-    ALT_SDCARD_WR(dev->base, ALT_SDCARD_DMA_ADDR_OFST, (alt_u32)buf);
+    ALT_SDCARD_WR(dev->base, ALT_SDCARD_DMA_ADDR_OFST, (alt_u32)(uintptr_t)buf);
 
     extra = ALT_SDCARD_CMD_DATA_EN_MSK;
     if (writing) extra |= ALT_SDCARD_CMD_DATA_DIR_MSK;
@@ -528,22 +784,109 @@ static int transfer(alt_sdcard_dev *dev, alt_u32 block, void *buf,
      * write it must start immediately, because the sequencer reaches the data
      * phase about ten byte-times after the command goes out. */
     if (!dev->use_dma) {
-        if (writing) (void)pio_write(dev, (const alt_u32 *)buf, count * 128u);
-        else         (void)pio_read (dev, (alt_u32 *)buf,       count * 128u);
+        if (writing) (void)pio_write(dev, (const alt_u8 *)buf, count * 128u);
+        else         (void)pio_read (dev, (alt_u8 *)buf,       count * 128u);
     }
 
-    r = complete(dev, 0, 0);
-    if (r != ALT_SDCARD_OK) {
-        recover(dev, writing);
-        return r;
+    /* complete() folds in everything the ISR acknowledged as well, so its result
+     * is the whole story. This once read IRQ_STATUS a second time to look for
+     * errors complete() had missed - which there cannot be, and which would not
+     * have included the ones an interrupt handler had already taken. */
+    r = complete(dev, 0, 0, &st);
+    if (r == ALT_SDCARD_OK) return ALT_SDCARD_OK;
+
+    /* Retryable: a command CRC error, a read whose CRC16 failed, or a written
+     * block the card rejected ON CRC (data response 0bxxx01011). The last has
+     * to be told apart from a genuine write error, which reports through the
+     * same status bit, so the data response is read before the reset below
+     * can clear it. A multi-block write retried from the start rewrites blocks
+     * that did land - with the same data, at the same address.
+     *
+     * One cause at a time is enough: the sequencer stops at the first error, so
+     * a timeout never arrives alongside a CRC error to be retried by mistake. */
+    if (st & (ALT_SDCARD_IRQ_ERR_CMD_CRC_MSK | ALT_SDCARD_IRQ_ERR_DAT_CRC_MSK)) {
+        *retry = 1;
+    } else if (writing && (st & ALT_SDCARD_IRQ_ERR_WRITE_MSK) &&
+               ((ALT_SDCARD_RD_ERR_INFO(dev->base) & 0x1Fu) == 0x0Bu)) {
+        *retry = 1;
     }
 
-    st = ALT_SDCARD_RD_IRQ_STATUS(dev->base);
-    if (st & ALT_SDCARD_IRQ_ERR_MSK) {
-        recover(dev, writing);
-        return irq_to_result(st);
+    recover(dev, writing);
+    return r;
+}
+
+static int transfer_retried(alt_sdcard_dev *dev, alt_u32 block, void *buf,
+                            alt_u32 count, int writing)
+{
+    alt_u32 attempt;
+    int     r, retry;
+
+    for (attempt = 0; ; attempt++) {
+        r = transfer_once(dev, block, buf, count, writing, &retry);
+        if (r == ALT_SDCARD_OK) return r;
+        if (!retry || attempt >= dev->retries) break;
+        dev->retry_count++;
     }
 
+    /* A card that stopped answering can no longer be vouched for: it may have
+     * been pulled from a socket with no switch, swapped, or reset. Identify
+     * again before the next transfer rather than address it on trust. */
+    if (r == ALT_SDCARD_ERR_TIMEOUT) invalidate(dev);
+    return r;
+}
+
+/* A misaligned buffer through the DMA, a block at a time via a bounce buffer.
+ * Separate so its 512 bytes of stack are paid only by callers who need it. */
+static int transfer_bounced(alt_sdcard_dev *dev, alt_u32 block, alt_u8 *buf,
+                            alt_u32 count, int writing)
+{
+    alt_u32 bounce[128];
+    alt_u32 i;
+    int     r;
+
+    for (i = 0; i < count; i++) {
+        if (writing) memcpy(bounce, buf + 512u * i, 512);
+        r = transfer_retried(dev, block + i, bounce, 1, writing);
+        if (r != ALT_SDCARD_OK) return r;
+        if (!writing) memcpy(buf + 512u * i, bounce, 512);
+    }
+    return ALT_SDCARD_OK;
+}
+
+static int transfer(alt_sdcard_dev *dev, alt_u32 block, void *buf,
+                    alt_u32 count, int writing)
+{
+    alt_u32 n;
+    int     r;
+
+    if (dev == 0 || buf == 0 || count == 0) return ALT_SDCARD_ERR_PARAM;
+
+    r = ensure_ready(dev);
+    if (r != ALT_SDCARD_OK) return r;
+
+    /* Past the end of the card is refused rather than sent. On a standard-
+     * capacity card the byte address would otherwise wrap at 4 GiB and land
+     * near block 0 - the partition table. */
+    if (block >= dev->blocks || count > dev->blocks - block)
+        return ALT_SDCARD_ERR_PARAM;
+
+    if (writing && alt_sdcard_write_protected(dev))
+        return ALT_SDCARD_ERR_PROTECTED;
+
+    /* The DMA moves whole 32-bit words and cannot address a misaligned buffer
+     * - the hardware would silently word-align it and the data would go
+     * somewhere the caller did not ask for. */
+    if (dev->use_dma && (((uintptr_t)buf & 3u) != 0u))
+        return transfer_bounced(dev, block, (alt_u8 *)buf, count, writing);
+
+    while (count) {
+        n = (count > MAX_BLOCKS_PER_TRANSFER) ? MAX_BLOCKS_PER_TRANSFER : count;
+        r = transfer_retried(dev, block, buf, n, writing);
+        if (r != ALT_SDCARD_OK) return r;
+        block += n;
+        count -= n;
+        buf    = (alt_u8 *)buf + 512u * n;
+    }
     return ALT_SDCARD_OK;
 }
 
@@ -562,6 +905,35 @@ int alt_sdcard_write_blocks(alt_sdcard_dev *dev, alt_u32 block,
 /* -------------------------------------------------------------------------
  * Odds and ends
  * ---------------------------------------------------------------------- */
+
+int alt_sdcard_poll(alt_sdcard_dev *dev)
+{
+    int r;
+
+    r = alt_sdcard_check(dev);
+    if (r != ALT_SDCARD_OK) return r;
+
+    /* CMD13, SEND_STATUS: harmless, answered in any data-transfer state, and
+     * the one command a card swapped in behind the driver's back - still in SD
+     * mode - cannot answer. The hardware's pre-emptive busy check also means it
+     * returns only once any write in progress has been programmed. */
+    /* A card sent CMD0 behind the driver's back is answering, but in idle
+     * state, where CMD13 is not a legal command - so that case needs no test of
+     * its own: it fails here like any other. */
+    r = command_retried(dev, 13, 0, ALT_SDCARD_RESP_R2, 0, 0);
+    if (r != ALT_SDCARD_OK) invalidate(dev);
+    return r;
+}
+
+alt_u32 alt_sdcard_generation(alt_sdcard_dev *dev)
+{
+    return (dev == 0) ? 0u : dev->generation;
+}
+
+alt_sdcard_dev *alt_sdcard_instance(unsigned n)
+{
+    return (n < ALT_SDCARD_MAX_INSTANCES) ? instances[n] : 0;
+}
 
 int alt_sdcard_present(alt_sdcard_dev *dev)
 {
@@ -591,15 +963,26 @@ void alt_sdcard_reset_datapath(alt_sdcard_dev *dev)
     if (dev == 0) return;
     /* Data path only. The command path and every configuration register are
      * untouched, so the card stays identified - which is the entire reason the
-     * reset is split into domains. */
+     * reset is split into domains. Card events survive too, for card_changed().
+     */
     ALT_SDCARD_WR_CTRL(dev->base,
                        ALT_SDCARD_RD_CTRL(dev->base) |
                        ALT_SDCARD_CTRL_SRST_DAT_MSK);
-    ALT_SDCARD_WR_IRQ_STATUS(dev->base, 0xFFFFFFFFu);
+    ALT_SDCARD_WR_IRQ_STATUS(dev->base, ~ALT_SDCARD_IRQ_CARD_MSK);
 }
 
 void alt_sdcard_set_event_handler(alt_sdcard_dev *dev,
         void (*handler)(alt_sdcard_dev *dev, alt_u32 irq_status))
 {
-    if (dev) dev->on_event = handler;
+    alt_u32 en;
+
+    if (dev == 0) return;
+    dev->on_event = handler;
+
+    if (dev->has_card_detect && dev->irq != -1) {
+        en = ALT_SDCARD_RD(dev->base, ALT_SDCARD_IRQ_ENABLE_OFST);
+        if (handler) en |=  ALT_SDCARD_IRQ_CARD_MSK;
+        else         en &= ~ALT_SDCARD_IRQ_CARD_MSK;
+        ALT_SDCARD_WR_IRQ_ENABLE(dev->base, en);
+    }
 }

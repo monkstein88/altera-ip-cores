@@ -41,7 +41,9 @@
   speed from the same build
 - Bounded waits on every phase, reporting **which** phase failed
 - Split soft resets: reset the data path without losing card identification
-- Nios II HAL driver with `alt_sdcard_*` API
+- Nios II HAL driver with `alt_sdcard_*` API: identifies the card on first use,
+  notices card changes, retries CRC errors
+- FatFs disk I/O layer, for applications that want a filesystem
 
 ## 1.2 What it is for
 
@@ -58,18 +60,18 @@ in hardware buys nothing and makes every future card quirk an RTL change.
 ## 1.3 Status
 
 **This core has never run on a board.** It has not been tested against a
-physical SD card, and no timing closure has been demonstrated on real hardware.
-What it has is:
+physical SD card. Its timing is closed in Quartus for the DE10-Lite's part, but
+nothing about it has been measured on hardware. What it has is:
 
 | | |
 |---|---|
-| Testbenches | 3 — shifter, FIFO, full core |
-| Distinct checks | 57 |
-| Configurations swept | 5 (`dma`, `pio`, `sdsc`, `tight`, `noburst`) |
-| Bound SVA assertions | 24, plus 5 cover points |
-| Assertion fault injections | 3 — each required to be caught |
+| Testbenches | 3 — shifter, FIFO, full core — plus the HAL driver run against the RTL |
+| Checks | 91 in the three testbenches, 97 in the driver harness |
+| Configurations swept | 5 for the full core (`dma`, `pio`, `sdsc`, `tight`, `noburst`); 4 for the driver, plus a slow processor |
+| Bound SVA assertions | 26, plus 5 cover points |
+| Assertion fault injections | 5 — each required to be caught |
 | Platform Designer component checks | 22 |
-| HAL driver checks | 3 |
+| HAL driver build checks | 4 |
 | Lint configurations | 10 |
 | Documentation claims re-derived from source | see `doc/tools/check_facts.py` |
 
@@ -123,23 +125,24 @@ floating.
 
 ## 2.4 A first transfer
 
+The BSP has already bound the driver to the hardware: `alt_sys_init()` runs
+`alt_sdcard_init()` for every instance before `main()`. It has not touched the
+card, and nothing needs to before the first read.
+
 ```c
 #include "altera_avalon_mm_sdcard_controller.h"
 
-alt_sdcard_dev dev;
-alt_u32        buf[128];                      /* one 512-byte block */
+extern alt_sdcard_dev sdcard;            /* from alt_sys_init.c */
+alt_u32 buf[128];                        /* one 512-byte block */
 
-if (alt_sdcard_init(&dev, SDCARD_0_BASE, ALT_CPU_FREQ) != 0)
-    return -1;                                /* no card, or it refused */
-
-if (alt_sdcard_read(&dev, 0, buf, 1) != 0)    /* LBA 0, one block */
-    return -1;
+if (alt_sdcard_read_blocks(&sdcard, 0, buf, 1) != ALT_SDCARD_OK)
+    return -1;                           /* no card, or it refused */
 ```
 
-`alt_sdcard_init()` runs the identification sequence at 400 kHz, works out the
-card's capacity class, reads the CSD, and then raises the clock. Everything
-after it addresses the card in **512-byte blocks** regardless of class; the
-driver converts to a byte address for standard-capacity cards.
+The first block call runs the identification sequence at 400 kHz, works out the
+card's capacity class, reads the CSD and CID, and then raises the clock. Every
+call addresses the card in **512-byte blocks** regardless of class; the driver
+converts to a byte address for standard-capacity cards.
 
 ---
 
@@ -156,8 +159,10 @@ followed by a data phase:
 2. **Command.** Six bytes: `0x40 | index`, four argument bytes, CRC7 shifted up
    one with the stop bit in bit 0.
 3. **Response.** The core clocks `0xFF` until a byte arrives with bit 7 clear.
-   `N_CR` is a **range** — 0 to 8 byte-times — not a fixed latency, so this is a
-   poll and not a wait.
+   `N_CR` is a **range** — 0 to 8 byte-times after the frame — not a fixed
+   latency, so this is a poll and not a wait. After CMD12 the first byte is a
+   stuff byte, which may still carry data from a stream being stopped; the core
+   drops it unread.
 4. **Data phase**, if `CMD.DATA_EN` is set. Read: wait for the `0xFE` token,
    take `BLK_SIZE` bytes, then a two-byte CRC16. Write: send `0xFE`, the data,
    the CRC16, then read the data-response token and wait out the card's busy.
@@ -287,8 +292,8 @@ All registers are 32 bits, word-addressed on `csr`. Read latency is 1.
 | 0x14 | 5 | `TIMEOUT` | RW | Cycles without progress before giving up |
 | 0x18 | 6 | `CMD_ARG` | RW | The command's 32-bit argument |
 | 0x1C | 7 | `CMD` | RW | Index, response type, data flags. **Write starts the operation** |
-| 0x20 | 8 | `RESP0` | RO | R1, or the low word of a longer response |
-| 0x24 | 9 | `RESP1` | RO | R3 / R7 trailer |
+| 0x20 | 8 | `RESP0` | RO | R1 in [7:0]. Cleared when a command starts |
+| 0x24 | 9 | `RESP1` | RO | The R3 / R7 trailer, or R2's second byte in [7:0]. Cleared when a command starts |
 | 0x28 | 10 | `BLK_SIZE` | RW | Bytes per block, up to `MAX_BLOCK_BYTES` |
 | 0x2C | 11 | `BLK_COUNT` | RW | Blocks in this transfer |
 | 0x30 | 12 | `DMA_ADDR` | RW | Byte address in system memory |
@@ -457,15 +462,29 @@ transfer with no error reported anywhere. An assertion enforces it, and
 # 7. Software
 
 The HAL driver is at `HAL/src/altera_avalon_mm_sdcard_controller.c`, with the
-API in `HAL/inc/altera_avalon_mm_sdcard_controller.h`.
+API in `HAL/inc/altera_avalon_mm_sdcard_controller.h`. The BSP finds it by
+itself, constructs every instance in `alt_sys_init.c` and calls
+`alt_sdcard_init()` before `main()`.
 
 | Function | Purpose |
 |---|---|
-| `alt_sdcard_init` | Identification at 400 kHz, capacity class, CSD and CID, then raise the clock |
-| `alt_sdcard_read` | Read blocks into memory |
-| `alt_sdcard_write` | Write blocks from memory |
+| `alt_sdcard_init` | Bind to the hardware: check `CORE_INFO`, learn the build, register the ISR. Called by the BSP |
+| `alt_sdcard_read_blocks` | Read blocks into memory, identifying the card first if none is |
+| `alt_sdcard_write_blocks` | Write blocks from memory, likewise |
+| `alt_sdcard_probe` | Identify the card now: 400 kHz sequence, capacity class, CSD and CID, then raise the clock |
+| `alt_sdcard_check` | Has the socket changed? Reads the switch and the latched events; sends nothing |
+| `alt_sdcard_poll` | `alt_sdcard_check`, then CMD13 — is the card still answering? |
+| `alt_sdcard_generation` | Counts identifications; changes whenever the card behind the block calls might have |
 | `alt_sdcard_block_count` | Card capacity in 512-byte blocks, parsed from the CSD |
-| `alt_sdcard_command` | Issue an arbitrary command, for anything the API does not cover |
+| `alt_sdcard_command` | Issue an arbitrary command. `ALT_SDCARD_RESP_AUTO` takes the response format from the index |
+| `alt_sdcard_present`, `alt_sdcard_write_protected` | The socket switches; 1 and 0 on a core built without them |
+| `alt_sdcard_reset_datapath` | Clear a wedged data path without losing the identification |
+| `alt_sdcard_set_event_handler` | A callback from the ISR. Installing one enables the card-detect interrupts |
+| `alt_sdcard_instance` | The n-th controller, for code that is not handed a device |
+
+Every call busy-waits, polling `STATUS` for completion. Under an RTOS that holds
+the calling task for the transfer — about 170 µs a block at 25 MHz — which suits
+a filesystem task and not an interrupt handler.
 
 ## 7.1 Capacity, and why the CSD parse is separately tested
 
@@ -476,16 +495,73 @@ magnitude, which is the kind of bug that survives casual testing and then
 corrupts a filesystem.
 
 So it is unit-tested directly, against the exact CSD bytes the card model
-returns for each class, in `verification/check_driver_builds.sh` — the one piece
-of the driver the RTL regression cannot reach.
+returns for each class, in `verification/check_driver_builds.sh`, as well as
+through a real identification in the driver harness.
 
-## 7.2 PIO mode
+## 7.2 Card changes
 
-With `USE_DMA = 0`, `alt_sdcard_command()` is **non-blocking**: it issues, and
-you call the completion half yourself, moving words through the `DATA` window in
-between. It has to be. A blocking command call cannot service the window while
-the transfer runs, and on a write that is fatal — the sequencer reaches the data
-phase about ten byte-times after the command goes out.
+A card can be pulled and another fitted between any two calls, and the new one
+may be a different capacity class, which changes the unit a block number is sent
+in. So the driver never carries an identification across a change it can see:
+
+- **With a card-detect switch**, the switch and the latched `CARD_INSERT` and
+  `CARD_REMOVE` events are checked at the start of every call. The events are
+  what catch a fast swap, which the switch alone reads as "present" both times.
+  An interrupt handler may take them first; the driver still sees them.
+- **Without one**, there is nothing to read. But a card inserted behind the
+  driver's back is still in SD mode and cannot answer, so it shows up as a
+  timeout, and a card that times out is forgotten. `alt_sdcard_poll()` finds out
+  sooner, at the cost of one command.
+
+The call that discovers a change fails with `ALT_SDCARD_ERR_CHANGED`, or
+`ALT_SDCARD_ERR_NO_CARD` if the socket is empty, and the next call identifies
+whatever is there. Failing once is deliberate: a caller holding anything it
+learned from the old card must not have its next write land on the new one.
+
+## 7.3 Retries
+
+A CRC error means the link corrupted something, not that the card refused. A
+command whose CRC fails is not executed; a read can be repeated; and a block the
+card rejected on CRC (data response `0x0B`) was never programmed. Those are
+retried inside the call, `dev->retries` times — 2 by default. Nothing else is
+retried: a timeout, an error the card reported, or a write it refused for any
+other reason (`0x0D`) goes straight back to the caller.
+
+`alt_sdcard_command()` itself never retries, because after CMD55 repeating a
+failed application command would send the ordinary command with the same index.
+
+## 7.4 Buffers and PIO
+
+Any buffer works. With the DMA a word-aligned buffer moves in one multi-block
+stream, and a misaligned one — which the DMA cannot address — goes a block at a
+time through a bounce buffer on the stack. Either way it must be memory the DMA
+master can reach. A transfer longer than `BLK_COUNT`'s 16 bits is issued in
+pieces.
+
+With `USE_DMA = 0` the driver moves every word through the `DATA` window while
+the transfer runs. It has to: on a write the sequencer reaches the data phase
+about ten byte-times after the command goes out, and a buffer still empty then
+stalls the shifter.
+
+## 7.5 FatFs
+
+`software/fatfs/diskio_altera_sdcard.c` implements FatFs's disk I/O functions —
+`disk_status`, `disk_initialize`, `disk_read`, `disk_write`, `disk_ioctl` — on
+the block API. FatFs is not included (R0.14 or later). Add the file to the
+application in place of FatFs's template `diskio.c`; the BSP does not build it.
+Drive *n* is the *n*-th controller instance, and if FatFs has other drives,
+`SDCARD_DISKIO_NAME` renames the five functions for your own dispatcher.
+
+It ties a mounted volume to the card it was mounted from. Transfers are refused
+with `RES_NOTRDY` on anything but the identification `disk_initialize`
+accepted, and `disk_status` reports `STA_NOINIT` after a change, which makes
+FatFs drop the volume and mount afresh; an open file on the old card fails with
+`FR_INVALID_OBJECT`. On a socket with no switch, `disk_status` asks the card with
+CMD13, because FatFs answers enough from its cache that a failed transfer comes
+too late.
+
+`GET_BLOCK_SIZE` reports 1, FatFs's "unknown", and `CTRL_TRIM` is not
+implemented.
 
 ---
 
@@ -494,7 +570,7 @@ phase about ten byte-times after the command goes out.
 ## 8.1 Measured
 
 **16,696 SPI clocks to move 2,048 bytes**, against a theoretical floor of
-16,384 — **98.1% of line rate**. At a 25 MHz SPI clock that is 3.06 MB/s of a
+16,384 — **98.1% of line rate**. At a 25 MHz SPI clock that is 3.07 MB/s of a
 possible 3.125.
 
 The regression **asserts** this cycle count rather than reporting it. A
@@ -526,10 +602,10 @@ Everything that can be checked in software alone:
 | Suite | What it does |
 |---|---|
 | Lint | Verilator `-Wall` across 10 parameter configurations |
-| Simulation | 3 testbenches, the full-core one in 5 configurations |
+| Simulation | 3 testbenches, the full-core one in 5 configurations, and the HAL driver run against the RTL in 4 builds |
 | Platform Designer | `hw.tcl` executed against stubbed Qsys commands — 22 checks |
-| HAL driver | Compiled against stubbed Nios II headers, plus the CSD parse unit-tested |
-| Assertions | 4 faults injected, each required to be caught by the assertion meant to catch it |
+| HAL driver | Compiled against stubbed Nios II headers, the FatFs glue with it, plus the CSD parse unit-tested |
+| Assertions | 5 faults injected, each required to be caught by the assertion meant to catch it |
 | Facts | Every number in the documentation re-derived from source |
 | CRC vectors | The polynomials checked against an independent Python model |
 
@@ -552,7 +628,7 @@ why it survived until the PIO configuration was run.
 
 ## 9.2 Assertions, and proving they are alive
 
-25 bound SVA assertions and 5 cover points, in
+26 bound SVA assertions and 5 cover points, in
 `tb/avalon_mm_sdcard_controller_sva.sv`.
 
 They check invariants rather than results. That suits this core: most of its
@@ -561,7 +637,7 @@ bits, a transfer declared complete with a byte still in the shifter — and each
 one breaks an invariant you can state in a line.
 
 A passing assertion proves nothing by itself, so
-`verification/check_assertions_fire.sh` injects three faults into scratch copies
+`verification/check_assertions_fire.sh` injects five faults into scratch copies
 of the RTL and requires each to be caught by the assertion meant to catch it.
 
 The first fault it tried turned out to be **unreachable**. `S_PRE_BUSY` clocks
@@ -569,7 +645,26 @@ The first fault it tried turned out to be **unreachable**. `S_PRE_BUSY` clocks
 sending state begins, and the `!hold_v` term in its idle output can never fire.
 The script records that rather than swapping in a fault that worked.
 
-## 9.3 Questa
+## 9.3 The driver against the RTL
+
+Everything above drives the registers from SystemVerilog written to do what the
+driver does. `tb/driver/` runs the driver itself: `HAL/src` compiled with gcc,
+unmodified, linked into the Verilator model, with a small C++ harness standing in
+for the processor — each register access is one Avalon-MM transfer, and nothing
+else moves simulated time. Two cards, one of each capacity class, can be swapped
+in the socket between calls or in the middle of one. It runs with and without the
+DMA and a card-detect switch, and on a slow processor, 97 checks each time, and
+it calls the FatFs glue the way FatFs does.
+
+Its first run found two faults every other suite had passed. The driver's
+power-up clocks were timed by a CPU loop rather than by anything the bus can
+count. And the sequencer opened the response window one byte early at 25 MHz:
+a card answering at the maximum `N_CR` of 8 timed out, and a CMD12 stopping a
+read could take the card's data for its response. Both are fixed and each has a
+test that fails without the fix; the README's verification section has the
+detail.
+
+## 9.4 Questa
 
 `simulation/questa/run_sim.tcl` runs the same sweep with coverage and
 non-vacuity reporting.
@@ -604,8 +699,9 @@ README's verification section for the reasoning.
   largest gap and no amount of simulation closes it.
 
   Timing closure is no longer part of it. The core synthesises, fits and meets a
-  100 MHz clock on the DE10-Lite's `10M50DAF484C7G` — Fmax 111.53 MHz at the slow
-  85 °C corner, +1.034 ns of slack, 1719 logic cells and one M9K. That is checked
+  100 MHz clock on the DE10-Lite's `10M50DAF484C7G` in Quartus Prime 18.1 — Fmax
+  108.41 MHz at the slow 85 °C corner, +0.776 ns of slack, 1715 logic cells and
+  one M9K. That is checked
   by `verification/check_synthesis.sh` on every run, and the component itself is
   loaded into real Platform Designer by `verification/check_qsys.sh`. What remains
   unproven is a transfer to an actual card.
@@ -619,8 +715,11 @@ README's verification section for the reasoning.
   separate command on the write side.
 - **`DMA_CTRL` defines only contiguous mode.** The field exists so a descriptor
   mode could be added as a reserved encoding rather than an ABI break.
-- **No erase, no lock/unlock, no SDIO.**
-- **Questa flow untested** — see 9.3.
+- **No erase, no lock/unlock, no SDIO.** The FatFs glue does not implement
+  `CTRL_TRIM` for the same reason.
+- **Without a card-detect switch, a card change costs a timeout** to discover —
+  one command's `N_CR` bound when the new card is in SD mode, which is the only
+  way a card fitted behind the driver's back can be.
 
 ---
 

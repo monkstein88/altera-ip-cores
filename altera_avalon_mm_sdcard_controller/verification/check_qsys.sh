@@ -3,7 +3,7 @@
 # check_qsys.sh - open the Platform Designer component for real.
 #
 #   ./verification/check_qsys.sh
-#   QUARTUS_ROOT=/opt/altera/25.1std ./verification/check_qsys.sh
+#   QUARTUS_ROOT=/opt/altera/25.1std ./verification/check_qsys.sh   # another release
 #
 # Exit 0 if the component loads, elaborates and generates; 1 if it does not;
 # 2 if no Quartus installation could be found, which is not a pass.
@@ -34,12 +34,14 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CORE="$(cd "$HERE/.." && pwd)"
 
+# Quartus Prime 18.1 Standard first: the release the hardware examples are built
+# with, and so the Platform Designer that has to accept this component.
 find_quartus () {
     if [ -n "${QUARTUS_ROOT:-}" ] && \
        [ -x "$QUARTUS_ROOT/quartus/sopc_builder/bin/qsys-generate" ]; then
         echo "$QUARTUS_ROOT"; return 0
     fi
-    for q in /opt/altera/25.1std /opt/intelFPGA/18.1 /opt/intelFPGA_lite/*; do
+    for q in /opt/intelFPGA/18.1 /opt/altera/25.1std /opt/intelFPGA_lite/*; do
         [ -x "$q/quartus/sopc_builder/bin/qsys-generate" ] && { echo "$q"; return 0; }
     done
     return 1
@@ -62,6 +64,8 @@ trap 'rm -rf "$WORK"' EXIT
 
 echo ""
 echo "=== Platform Designer: the component as Qsys sees it ==="
+# Which release answered, since the two installed ones do not always agree.
+"$QROOT/quartus/bin/quartus_sh" --version 2>/dev/null | grep -m1 'Version' | sed 's/^/    /'
 echo ""
 
 fail=0

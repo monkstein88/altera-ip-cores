@@ -254,7 +254,7 @@ proc check_assertions_reported {} {
         a_pop_only_when_nonempty a_queued_byte_not_dropped a_request_never_dropped
         a_send_state_never_idles a_start_only_when_phy_idle a_tx_we_needs_ready
         a_waitrequest_holds_command a_waitrequest_holds_read a_write_has_data
-        a_error_levels_released_before_idle
+        a_error_levels_released_before_idle a_response_window_after_whole_frame
     }
 
     set missing {}

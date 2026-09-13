@@ -56,7 +56,7 @@ run () {
     elif [ $rc -eq 2 ]; then
         summary+=("  PART  $name - incomplete, see below")
         echo "--- $name (incomplete) ---"
-        grep -E '^\s+--|INCOMPLETE|PART |Do what' "$log" | head -10
+        grep -E '^\s+--|INCOMPLETE|PART |Do what|NOT RUN' "$log" | head -10
         partial=1
     else
         summary+=("  FAIL  $name")

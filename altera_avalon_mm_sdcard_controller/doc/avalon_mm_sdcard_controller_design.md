@@ -1,9 +1,11 @@
 # Avalon-MM SD Card Controller — design specification
 
-**Status: design, nothing implemented.** This document is the contract the RTL,
-the driver, the Platform Designer component and the documentation are all
-written against. It is the first file in the core and the one `check_facts.py`
-will eventually re-derive its numbers from.
+**Status: implemented, simulation only.** This document began as the contract
+the RTL, the driver, the Platform Designer component and the documentation were
+written against, before any of them existed. It is kept as the record of why:
+where implementation settled a question the answer is marked **Closed** beside
+the original position, and `check_facts.py` re-derives its numbers from the
+source.
 
 Catalog name **Avalon-MM SD Card Controller (SPI)** · v1.0 ·
 *Memory Interfaces and Controllers / Custom*.
@@ -129,7 +131,7 @@ and counts SPI clocks at the pin:
 | --- | --- |
 | Bytes transferred | 2048 |
 | SPI clocks consumed | 16 696 |
-| Achieved | **0.1226 bytes per SPI clock** |
+| Achieved | **0.1227 bytes per SPI clock** |
 | Theoretical ceiling (8 clocks/byte) | 0.1250 |
 | **Fraction of line rate** | **98.1%** |
 
@@ -382,7 +384,10 @@ start token.
 ### Sequencing details that each cost a debugging week
 
 1. **The byte after CMD12 is a stuff byte** and must be discarded before the R1
-   response is read. `AUTO_STOP` handles this in hardware.
+   response is read. The sequencer drops it for every CMD12, the one `AUTO_STOP`
+   sends and one software issues. Until the driver was run against the RTL this
+   was only true of a card that sends `0xFF` there, which the card model did; a
+   card stopping a stream may leave data bits in it.
 2. **The card's internal write starts one byte after the data response**, so
    eight clocks must be issued before busy means anything.
 3. **The card releases MISO synchronously to the clock**, not to CS. The core
@@ -514,8 +519,31 @@ by `SYSTEM_BUS_WIDTH`, and every register here is 32 bits regardless.
 8. **Speed up** — raise `CLKDIV` to the working rate
 9. **Block length** — CMD16 for SDSC; SDHC/SDXC are fixed at 512 regardless
 
-Then a block API — read, write, multi-block read, multi-block write — that sets
-`DMA_ADDR`, `BLK_COUNT` and `CMD` and waits for one interrupt.
+The steps above are in the order the specification describes; the driver reads
+CMD9 and CMD10 after raising the clock and sending CMD16, so identification does
+not spend milliseconds at 400 kHz on two 16-byte blocks. The ACMD41 poll is
+bounded by attempts rather than by a timer: 4000 of them, which cannot finish in
+under a second at 400 kHz.
+
+Then a block API — read and write, multi-block whenever the count is above
+one — that sets `DMA_ADDR`, `BLK_COUNT` and `CMD` and polls for completion.
+Three policies sit in it, all decided in software because each is a judgement
+about cards rather than about the bus:
+
+- **Identification on first use.** The block calls identify the card when none
+  is identified, so `probe()` is available rather than required.
+- **Card changes.** Any change the driver can see — the switch, the latched
+  insert and remove events, or a card that stops answering — discards the
+  identification, and the call that finds it fails once rather than addressing
+  a card it has not identified. `alt_sdcard_generation()` counts identifications
+  for callers that would rather compare than catch the error.
+- **Retries.** CRC errors, and nothing else: a command whose CRC fails was not
+  executed, a read can be repeated, and a block rejected on CRC was never
+  programmed. A timeout or a card-reported error is the caller's to handle.
+
+The FatFs disk I/O layer in `software/fatfs/` adds the one policy a filesystem
+needs on top — a mounted volume is tied to the identification it was mounted
+against — and is not part of the BSP.
 
 Two things the hardware deliberately leaves to the driver, because they need a
 follow-up command rather than a bus state machine: after a write, **CMD13**
@@ -539,18 +567,29 @@ rtl/avalon_mm_sdcard_controller_crc.sv        CRC7 and CRC16-CCITT, computed dur
 rtl/avalon_mm_sdcard_controller_clkgen.sv     SPI clock divider and gating
 rtl/avalon_mm_sdcard_controller_spi_phy.sv    continuous full-duplex shifter
 rtl/avalon_mm_sdcard_controller_seq.sv        command, data, multi-block and busy sequencer
-rtl/avalon_mm_sdcard_controller_fifo.sv       ping-pong block buffer
+rtl/avalon_mm_sdcard_controller_fifo.sv       block buffer, byte side and word side
 rtl/avalon_mm_sdcard_controller_dma.sv        Avalon-MM master, bursting
 rtl/avalon_mm_sdcard_controller_regs.sv       CSR decode
-rtl/avalon_mm_sdcard_controller_top.sv        top level
+rtl/avalon_mm_sdcard_controller.sv            top level
 
-tb/avalon_mm_sdcard_controller_tb.sv          self-checking regression
+tb/avalon_mm_sdcard_controller_tb.sv          full-core regression
+tb/avalon_mm_sdcard_controller_spi_phy_tb.sv  shifter unit test
+tb/avalon_mm_sdcard_controller_fifo_tb.sv     buffer unit test
 tb/avalon_mm_sdcard_controller_sva.sv         bound assertions and cover points
-tb/spi_card_model.sv         SPI-mode card model
-tb/avl_mm_mem_model.sv       memory for the DMA master to target
-tb/spi_timing_check.sv       SPI bus timing checker
-tb/timing_check_selftest.sv  self-test for the checker itself
+tb/spi_card_model.sv                          SPI-mode card model, removable
+tb/avalon_mm_mem_model.sv                     memory for the DMA master to target
+tb/avalon_mm_sdcard_controller_drv_top.sv     the driver harness's hardware half
+tb/driver/                                    the HAL driver run against the RTL
+
+HAL/, inc/                                    Nios II driver, register header
+software/fatfs/diskio_altera_sdcard.c         FatFs disk I/O layer
 ```
+
+The two timing-checker files this list once named - an independent SPI bus
+timing checker and a self-test for it - were never written. The bus timing they
+would have watched is checked instead by the shifter's unit test, which counts
+clocks at the pin, and by the card model, which samples and drives on the
+edges SPI mode 0 defines.
 
 Nine RTL files where the firewall core has three. The core is genuinely larger,
 and the split follows the block diagram in §4 so that each file is one box.
@@ -580,10 +619,6 @@ SDSC byte addressing and SDHC block addressing. It must also be able to
 misbehave on demand: bad CRC, error tokens, never responding, and holding busy
 past the timeout.
 
-A timing checker watches the bus independently, and — following the SDRAM
-core's precedent — carries a **self-test for the checker**, so a checker that
-silently stops checking cannot pass the suite.
-
 **Configurations actually swept.** `run_sim.sh` builds the full-core suite five
 times and ANDs the results. These are not cosmetic variations — each reaches a
 path the others cannot:
@@ -607,11 +642,18 @@ core with no recovery short of a soft reset. With a master attached that cannot
 happen, because the DMA always supplies. With software feeding the buffer it
 can, and did.
 
-**Throughput is a checked result, not a claim.** The testbench measures
-sustained bytes per second for multi-block read and write and asserts it against
-a floor derived from `CLKDIV`. That is what stops a refactor from quietly
-reintroducing an inter-byte gap — the failure mode that costs 25% and is
-invisible in a functional test.
+**Throughput is a checked result, not a claim.** The shifter's unit test
+requires exactly eight SPI clocks per byte at every divisor, and the full-core
+suite measures bytes per SPI clock over a multi-block read and holds it above a
+floor. That is what stops a refactor from quietly reintroducing an inter-byte
+gap — the failure mode that costs 25% and is invisible in a functional test.
+
+**The driver runs against the RTL.** `tb/driver/` links the HAL driver, compiled
+unmodified, into the Verilator model with a C++ harness in place of the
+processor, in four builds and on a slow processor. It is the only suite that
+exercises the division of labour this document is built around, and its first
+run found a fault on each side of it: a driver wait timed by a CPU loop, and a
+response window the sequencer opened one byte early at 25 MHz.
 
 ---
 
@@ -687,9 +729,18 @@ Things deliberately left undecided, to be closed during implementation:
    discovered.
 2. ~~`N_CR` bound.~~ **Closed:** 0–8 byte-times for SD cards, 1–8 for MMC. Fixed
    at 8 in hardware, with `TIMEOUT` as the outer bound — no parameter needed.
+
+   The bound was right and the window it was counted over was not. The
+   sequencer opened the response window by counting six receive ticks after a
+   command, and at `CLKDIV` 1 and 2 — or a large `SAMPLE_DLY` — the first tick
+   belongs to a byte of idle fill, so the window opened a byte early and a
+   response at the full 8 timed out. The shifter now tags each received byte
+   with whether the byte sent alongside it was queued, and the frame is counted
+   in tagged bytes. The full-core suite checks 8 accepted and 9 refused at five
+   clock settings.
 3. ~~**`CLKDIV = 1`: functionally settled, timing still open.**~~ **Closed.**
    Synthesised, fitted and timed for the DE10-Lite's `10M50DAF484C7G`:
-   **Fmax 111.53 MHz** at the slow 85 °C corner, **+1.034 ns** of slack against
+   **Fmax 108.41 MHz** in Quartus 18.1 at the slow 85 °C corner, **+0.776 ns** of slack against
    a 100 MHz system clock. clk/2 is therefore reachable and the fallback of
    restricting `CLKDIV >= 2` is not needed. `verification/check_synthesis.sh`
    holds that as a floor.
@@ -738,3 +789,17 @@ Things deliberately left undecided, to be closed during implementation:
    pre-emptive busy check is "most of the difference between the card's rate and
    the bus's" rests on the same unmodelled costs as `ACMD23` does, and is now
    described as an argument rather than a result.
+6. **A block buffer mapped straight into the `csr` address space.** Deferred to
+   the question of the core's size. Altera's University Program SD core puts its
+   512-byte buffer in its own address space, so software reads a block by
+   address rather than word by word through a window, and it was the one
+   convenience of that core not borrowed when this driver gained card-change
+   handling, identification on first use, CRC retries and FatFs glue.
+
+   It was left because of what it would buy here. With the DMA the buffer never
+   passes through software at all, and without it the `DATA` window is already
+   the whole data path, driven by the driver rather than by applications. A
+   mapped buffer would help only software that bypasses the driver on a core
+   built without the DMA, while changing the register map and turning a FIFO
+   whose read and write pointers chase each other into a random-access store -
+   which is the structure the area work has to decide about first.

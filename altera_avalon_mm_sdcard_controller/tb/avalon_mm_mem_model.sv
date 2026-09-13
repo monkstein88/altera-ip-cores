@@ -41,6 +41,28 @@ module avalon_mm_mem_model #(
 
     logic [31:0] mem [int unsigned];
 
+    // Storage. A sparse array for the RTL suites; for the driver harness
+    // (+define+SDCARD_DPI_MEM), the host process's own memory, because there
+    // the address on the bus is a pointer the C driver took of its buffer.
+`ifdef SDCARD_DPI_MEM
+    import "DPI-C" function int unsigned drv_mem_rd(input int unsigned word_addr);
+    import "DPI-C" function void drv_mem_wr(input int unsigned word_addr,
+                                            input int unsigned data);
+    function automatic void mem_store(input int unsigned a, input logic [31:0] d);
+        drv_mem_wr(a, d);
+    endfunction
+    function automatic logic [31:0] mem_fetch(input int unsigned a);
+        return drv_mem_rd(a);
+    endfunction
+`else
+    function automatic void mem_store(input int unsigned a, input logic [31:0] d);
+        mem[a] = d;
+    endfunction
+    function automatic logic [31:0] mem_fetch(input int unsigned a);
+        return mem.exists(a) ? mem[a] : 32'hDEADBEEF;
+    endfunction
+`endif
+
     int unsigned wait_cnt;
     int unsigned rd_left;
     logic [ADDR_WIDTH-1:0] rd_addr;
@@ -116,11 +138,11 @@ module avalon_mm_mem_model #(
                     if (wr_left == 0) begin
                         wr_addr <= address + ADDR_WIDTH'(4);
                         wr_left <= int'(burstcount) - 1;
-                        if (byteenable[0]) mem[address >> 2] = writedata;
+                        if (byteenable[0]) mem_store(address >> 2, writedata);
                     end else begin
                         wr_addr <= wr_addr + ADDR_WIDTH'(4);
                         wr_left <= wr_left - 1;
-                        if (byteenable[0]) mem[wr_addr >> 2] = writedata;
+                        if (byteenable[0]) mem_store(wr_addr >> 2, writedata);
                     end
                     wr_beats <= wr_beats + 1;
                     if (MAX_WAIT != 0) wait_cnt <= MAX_WAIT;
@@ -146,8 +168,7 @@ module avalon_mm_mem_model #(
             end
 
             if (rd_left != 0) begin
-                dl_data[0]  <= mem.exists(rd_addr >> 2) ? mem[rd_addr >> 2]
-                                                        : 32'hDEADBEEF;
+                dl_data[0]  <= mem_fetch(rd_addr >> 2);
                 dl_valid[0] <= 1'b1;
                 rd_addr     <= rd_addr + ADDR_WIDTH'(4);
                 rd_left     <= rd_left - 1;
@@ -165,11 +186,11 @@ module avalon_mm_mem_model #(
 
     // ---- test hooks ---------------------------------------------------------
     function automatic void poke(input int unsigned word_addr, input logic [31:0] d);
-        mem[word_addr] = d;
+        mem_store(word_addr, d);
     endfunction
 
     function automatic logic [31:0] peek(input int unsigned word_addr);
-        return mem.exists(word_addr) ? mem[word_addr] : 32'hDEADBEEF;
+        return mem_fetch(word_addr);
     endfunction
 
 endmodule : avalon_mm_mem_model

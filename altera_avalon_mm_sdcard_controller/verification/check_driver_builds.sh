@@ -24,7 +24,8 @@
 # the paragraph above, and it costs a second.
 #
 # It does NOT prove the driver works, or that it matches the real HAL's
-# semantics. Those are the BSP's job and the board's.
+# semantics. Running it is tb/driver/'s job - the driver against the RTL, in
+# simulation/verilator/run_sim.sh - and matching the real HAL is the board's.
 # =============================================================================
 set -uo pipefail
 
@@ -155,6 +156,30 @@ if "$CC" -std=c99 -w -I "$STUB" -I "$ROOT/HAL/inc" -I "$ROOT/inc" \
     echo "  PASS  CSD capacity arithmetic, both structure versions"
 else
     echo "  FAIL  CSD capacity arithmetic"
+    fail=1
+fi
+
+# The FatFs disk I/O glue, compiled the same way: -Wall -Wextra, and against the
+# stubbed HAL, whose alt_u32 is the host's `unsigned long` - so a width
+# assumption between FatFs's types and the driver's shows up here. FatFs's own
+# headers are replaced by the stand-ins the driver harness uses, which declare
+# the interface FatFs documents and nothing else; FatFs is not redistributed.
+# Twice, because FF_LBA64 makes FatFs's sector number 64 bits wide and the glue
+# has a range check that must compile, and mean something, both ways.
+glue_ok=1
+for lba in "" "-DSDCARD_STUB_LBA64"; do
+    # shellcheck disable=SC2086
+    if ! "$CC" "${FLAGS[@]}" $lba -I "$ROOT/tb/driver/fatfs_stub" \
+            "$ROOT/software/fatfs/diskio_altera_sdcard.c" > "$STUB/glue.log" 2>&1 \
+       || [ -s "$STUB/glue.log" ]; then
+        cat "$STUB/glue.log"
+        glue_ok=0
+    fi
+done
+if [ $glue_ok -eq 1 ]; then
+    echo "  PASS  FatFs glue compiles clean against FatFs's interface, 32- and 64-bit LBA"
+else
+    echo "  FAIL  FatFs glue does not compile clean"
     fail=1
 fi
 

@@ -34,6 +34,12 @@ COVERED by the MIT licence above - original work:
                                         and DE10-Lite examples
     altera_axi4_lite_firewall/          the AXI4-Lite Firewall core, and the
                                         same supporting material
+    altera_avalon_mm_sdram_controller/  the per-bank SDRAM controller, its
+                                        testbenches, benchmark harness,
+                                        documentation and board examples
+    altera_avalon_mm_sdcard_controller/ the SD card controller, its
+                                        testbenches and card model, HAL driver,
+                                        FatFs disk I/O layer and documentation
     altera_avalon_new_sdram_controller/example/   the DE10-Lite demonstration
                                         built around the SDRAM controller -
                                         original work, see the note below
@@ -63,4 +69,13 @@ on; the MIT grant covers the demonstration sources, not Intel's controller.
 See altera_avalon_new_sdram_controller/NOTICE for the detail, including the
 one change made to it in this repository.
 
-If you take only the firewalls, only the MIT licence applies.
+Two things outside that directory touch third-party terms without containing
+third-party code. The SDRAM controller's benchmark can GENERATE Intel's
+controller from your own Quartus installation to measure against; that output
+is Intel's and is never committed. The SD card controller's FatFs disk I/O
+layer is written against FatFs's documented interface; FatFs itself is not
+included, and is under its own licence where you obtain it.
+
+If you take everything except altera_avalon_new_sdram_controller/ - or that
+directory's example/, NOTICE and README.md alone - only the MIT licence
+applies.

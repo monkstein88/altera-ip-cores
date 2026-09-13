@@ -103,7 +103,7 @@ module wave_capture_tb;
     logic inj_write_err      = 1'b0;
     logic inj_busy_forever   = 1'b0;
 
-    int unsigned card_cmds, card_blocks_rd, card_blocks_wr;
+    int unsigned card_cmds, card_blocks_rd, card_blocks_wr, card_faults;
     logic [5:0]  card_last_cmd;
     logic        card_last_crc_ok;
 
@@ -163,7 +163,12 @@ module wave_capture_tb;
     // is in the middle of the 0..8 the specification permits. A card that
     // answered immediately would make the N_CR wait invisible in the figure,
     // and one that took the full 8 would make the figure too wide.
-    spi_card_model #(.HIGH_CAPACITY (1'b1), .NCR_BYTES (2), .TRACE (1'b0))
+    //
+    // ENFORCE_INIT off: this bench records the controller, and goes from CMD0
+    // straight to CMD17 without the power-up clocks or ACMD41 a real card would
+    // insist on. Every suite that verifies behaviour leaves it on.
+    spi_card_model #(.HIGH_CAPACITY (1'b1), .NCR_BYTES (2), .TRACE (1'b0),
+                     .ENFORCE_INIT (1'b0))
     u_card (
         .sd_clk (sd_clk), .sd_cs_n (sd_cs_n),
         .sd_mosi (sd_mosi), .sd_miso (sd_miso),
@@ -172,9 +177,11 @@ module wave_capture_tb;
         .inj_bad_data_crc (inj_bad_data_crc),
         .inj_write_crc_err (inj_write_crc_err), .inj_write_err (inj_write_err),
         .inj_busy_forever (inj_busy_forever),
+        .inserted (1'b1),
         .cmds_seen (card_cmds), .blocks_read (card_blocks_rd),
         .blocks_written (card_blocks_wr),
-        .last_cmd (card_last_cmd), .last_cmd_crc_ok (card_last_crc_ok)
+        .last_cmd (card_last_cmd), .last_cmd_crc_ok (card_last_crc_ok),
+        .faults_applied (card_faults)
     );
 
     // -------------------------------------------------------------------------

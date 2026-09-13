@@ -40,7 +40,7 @@ module avalon_mm_sdcard_controller_spi_phy_tb;
     logic [7:0]              tx_data;
     logic                    tx_we, tx_ready;
     logic [7:0]              rx_data;
-    logic                    rx_valid;
+    logic                    rx_valid, rx_tx_queued;
     logic                    sd_clk, sd_mosi, sd_miso;
 
     // The card model for this unit test is a wire: MISO echoes MOSI. That is
@@ -56,7 +56,7 @@ module avalon_mm_sdcard_controller_spi_phy_tb;
         .clkdiv (clkdiv), .sample_dly (sample_dly),
         .run (run), .tx_idle (tx_idle), .idle (idle),
         .tx_data (tx_data), .tx_we (tx_we), .tx_ready (tx_ready),
-        .rx_data (rx_data), .rx_valid (rx_valid),
+        .rx_data (rx_data), .rx_valid (rx_valid), .rx_tx_queued (rx_tx_queued),
         .sd_clk (sd_clk), .sd_mosi (sd_mosi), .sd_miso (sd_miso)
     );
 
@@ -81,9 +81,14 @@ module avalon_mm_sdcard_controller_spi_phy_tb;
         if (sd_clk && !sclk_d) sclk_rises++;
     end
 
-    // Collect received bytes.
-    logic [7:0] rx_q [$];
-    always_ff @(posedge clk) if (rx_valid) rx_q.push_back(rx_data);
+    // Collect received bytes, and whether each went out alongside a byte from
+    // the prefetch.
+    logic [7:0] rx_q   [$];
+    logic       rx_tag [$];
+    always_ff @(posedge clk) if (rx_valid) begin
+        rx_q.push_back(rx_data);
+        rx_tag.push_back(rx_tx_queued);
+    end
 
     // -------------------------------------------------------------------------
     // Drive one stream of bytes through the shifter and report clocks per byte.
@@ -98,6 +103,7 @@ module avalon_mm_sdcard_controller_spi_phy_tb;
             clkdiv = div[CLKDIV_WIDTH-1:0];
             sample_dly = dly;
             rx_q.delete();
+            rx_tag.delete();
             repeat (4) @(posedge clk);
             reset_n = 1'b1;
             repeat (2) @(posedge clk);
@@ -139,10 +145,24 @@ module avalon_mm_sdcard_controller_spi_phy_tb;
             // would strand a queued byte, since with tx_idle low nothing loads
             // without run.
             while (!(dut.idle && !dut.hold_v)) @(negedge clk);
+
+            // The clock count is the stream's alone, taken before the fill.
+            rises = sclk_rises;
+
+            // Then at least TWO bytes of idle fill, which a sequencer's receive
+            // phase clocks out with the prefetch empty. They must come back
+            // tagged as fill: this is the pairing the sequencer cannot derive,
+            // measured at the one place it is known. (At CLKDIV=1 a third can
+            // load on the edge that completes the second; it is fill too.)
+            tx_idle = 1'b1;
+            repeat (2) begin
+                @(posedge rx_valid);
+                @(negedge clk);
+            end
+            tx_idle = 1'b0;
+            while (!(dut.idle && !dut.hold_v)) @(negedge clk);
             run = 1'b0;
             repeat (20) @(negedge clk);
-
-            rises = sclk_rises;
         end
     endtask
 
@@ -154,7 +174,7 @@ module avalon_mm_sdcard_controller_spi_phy_tb;
         int unsigned divs [4];
         logic [2:0]  dlys [2];
         int unsigned di, si, k, max_dly;
-        bit          echo_ok;
+        bit          echo_ok, tag_ok;
 
         divs = '{1, 2, 4, 125};
 
@@ -207,6 +227,20 @@ module avalon_mm_sdcard_controller_spi_phy_tb;
 
                 check($sformatf("CLKDIV=%0d dly=%0d: loopback bit-exact",
                                 divs[di], dlys[si]), echo_ok);
+
+                // Every byte of the stream is tagged as sent from the prefetch,
+                // and the fill bytes after it are not - so a receive byte can be
+                // paired with what went out alongside it at every divisor and
+                // every legal sample delay.
+                tag_ok = (rx_tag.size() >= pat.size() + 2);
+                if (tag_ok) begin
+                    for (k = 0; k < pat.size(); k++)
+                        if (rx_tag[k] !== 1'b1) tag_ok = 1'b0;
+                    for (k = pat.size(); k < rx_tag.size(); k++)
+                        if (rx_tag[k] !== 1'b0) tag_ok = 1'b0;
+                end
+                check($sformatf("CLKDIV=%0d dly=%0d: each byte paired with the byte sent alongside it",
+                                divs[di], dlys[si]), tag_ok);
             end
         end
 

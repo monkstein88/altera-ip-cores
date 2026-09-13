@@ -26,14 +26,17 @@
 #
 #   zero_byteenable  a read with all byteenables clear, which Avalon permits the
 #                    interconnect to suppress - a hang with no error anywhere
-#   idle_too_early   reporting the shifter idle with a byte still in the
-#                    prefetch, which let a transfer be declared complete before
-#                    its last byte reached the card
+#   unready_prefetch offering the shifter a byte while its prefetch is still
+#                    occupied, which sent a command frame out with its first
+#                    byte repeated and its last missing
 #   idle_in_send     raising tx_idle in a sending state, which makes the shifter
 #                    emit a 0xFF nobody asked for inside a data block
 #   stuck_err_level  holding the error levels asserted into idle, which leaves
 #                    IRQ_STATUS impossible for software to acknowledge - the
 #                    write lands and the level sets the bit straight back
+#   frame_any_tick   counting every receive tick as a byte of the command
+#                    frame, which opened the response window a byte early at
+#                    25 MHz - the defect the driver harness found
 # =============================================================================
 set -uo pipefail
 
@@ -150,6 +153,17 @@ inject stuck_err_level a_error_levels_released_before_idle \
     avalon_mm_sdcard_controller_seq.sv \
     "err_flags <= '0;" \
     "err_flags <= err_flags;"
+
+# Count every receive tick in S_CMD as a frame byte again, whatever went out
+# alongside it. At CLKDIV 2 - where the regression runs its data - the first
+# tick of a frame belongs to a byte of idle fill, so the window opens with the
+# CRC byte still in the prefetch. The regression's own functional checks fail
+# too, but only on a card that answers at N_CR = 8 or is stopped mid-stream;
+# the assertion fails on every command.
+inject frame_any_tick a_response_window_after_whole_frame \
+    avalon_mm_sdcard_controller_seq.sv \
+    "if (tick && phy_rx_tx_queued) begin" \
+    "if (tick) begin"
 
 echo ""
 if [ $fail -eq 0 ]; then echo "*** PASS ***"; else echo "*** FAIL ***"; fi

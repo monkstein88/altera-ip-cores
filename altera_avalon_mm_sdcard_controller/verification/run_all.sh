@@ -14,10 +14,11 @@
 #   lint          the RTL under -Wall, across every parameter configuration
 #                 that changes what gets built
 #   simulation    three Verilator testbenches against a card model and a
-#                 memory model
+#                 memory model, and the HAL driver itself run against the RTL
 #   hw.tcl        the Platform Designer component executed against stubbed
 #                 Qsys commands
-#   driver        the HAL driver compiled against stubbed Nios II headers
+#   driver        the HAL driver and its FatFs glue compiled against stubbed
+#                 headers
 #   assertions    three faults injected into scratch copies of the RTL, each
 #                 required to be caught by the assertion meant to catch it -
 #                 because an assertion that cannot fail passes just as
@@ -62,7 +63,7 @@ run () {
     elif [ $rc -eq 2 ]; then
         summary+=("  PART  $name - see below")
         echo "--- $name (incomplete) ---"
-        grep -E '^\s+--|INCOMPLETE|Do what' /tmp/runall.$$ | head -8
+        grep -E '^\s+--|INCOMPLETE|Do what|NOT RUN' /tmp/runall.$$ | head -8
         partial=1
     else
         summary+=("  FAIL  $name")
@@ -113,9 +114,9 @@ echo " avalon_mm_sdcard_controller - full check"
 echo "======================================================================"
 
 run "lint, 10 parameter configurations"  lint_all
-run "simulation, 3 testbenches"          "$ROOT/simulation/verilator/run_sim.sh"
+run "simulation, 3 testbenches + driver" "$ROOT/simulation/verilator/run_sim.sh"
 run "Platform Designer component"        tclsh "$ROOT/verification/check_hw_tcl.tcl"
-run "HAL driver compiles"                "$ROOT/verification/check_driver_builds.sh"
+run "HAL driver and FatFs glue compile"  "$ROOT/verification/check_driver_builds.sh"
 run "assertions actually fire"           "$ROOT/verification/check_assertions_fire.sh"
 run "figures match their generators"     "$ROOT/verification/check_figures.sh"
 run "documentation facts"                python3 "$ROOT/doc/tools/check_facts.py"

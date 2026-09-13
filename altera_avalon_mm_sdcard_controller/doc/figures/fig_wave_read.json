@@ -43,8 +43,9 @@
   {},
   {
    "name": "state",
-   "wave": "4...54........",
+   "wave": "45..45........",
    "data": [
+    "CMD",
     "RESP_WAIT",
     "RD_TOKEN",
     "RD_DATA"
