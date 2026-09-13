@@ -66,7 +66,7 @@ nothing about it has been measured on hardware. What it has is:
 | | |
 |---|---|
 | Testbenches | 3 — shifter, FIFO, full core — plus the HAL driver run against the RTL |
-| Checks | 98 in the three testbenches, 98 in the driver harness |
+| Checks | 98 in the three testbenches, 99 in the driver harness |
 | Configurations swept | 5 for the full core (`dma`, `pio`, `sdsc`, `tight`, `noburst`); 4 for the driver, plus a processor slower than the card |
 | Bound SVA assertions | 28, plus 6 cover points |
 | Assertion fault injections | 7 — each required to be caught |
@@ -554,6 +554,12 @@ stalls the shifter. A read can be drained as slowly as the processor needs — t
 core holds the clock until the buffer has room for the next block — but not
 abandoned: after `TIMEOUT` with no room it gives up with `ERR_DAT_TMO`.
 
+The loop reads `STATUS` once per batch. `LEVEL` says how many bytes are waiting,
+so it takes every whole word there — or, writing, fills every word of room — with
+`DATA` accesses back to back, then looks again. Where the processor is slower
+than the card that is half the bus traffic of reading `STATUS` before every word,
+and so half the transfer time.
+
 ## 7.5 FatFs
 
 `software/fatfs/diskio_altera_sdcard.c` implements FatFs's disk I/O functions —
@@ -665,8 +671,8 @@ unmodified, linked into the Verilator model, with a small C++ harness standing i
 for the processor — each register access is one Avalon-MM transfer, and nothing
 else moves simulated time. Two cards, one of each capacity class, can be swapped
 in the socket between calls or in the middle of one. It runs with and without the
-DMA and a card-detect switch, and on a processor nearly five times slower than
-the card, 98 checks each time, and it calls the FatFs glue the way FatFs does.
+DMA and a card-detect switch, and on a processor more than twice as slow as the
+card, 99 checks each time, and it calls the FatFs glue the way FatFs does.
 
 Its first run found two faults every other suite had passed. The driver's
 power-up clocks were timed by a CPU loop rather than by anything the bus can
@@ -677,14 +683,16 @@ test that fails without the fix; the README's verification section has the
 detail.
 
 Its "slow processor" was not slow: 82 clock cycles per word read through `DATA`,
-against the card's 128. Run slower than the card, it showed that a multi-block
+a `STATUS` read and a `DATA` read each, against the card's 128. Run slower than the card, it showed that a multi-block
 read kept clocking into a full buffer and lost the bytes that did not fit, while
 the CRC — checked on the wire — passed and the driver returned `ALT_SDCARD_OK`.
 A memory stalling the DMA on a block's last word lost the next block's DMA start
 the same quietly. Both are fixed by admitting a read block only once the buffer
 has room for it and the DMA is free, and the README's section
-*A read the host cannot keep up with* has the detail. The slow run now takes 602
-clock cycles per word, and must see blocks held.
+*A read the host cannot keep up with* has the detail. The slow run now takes 301
+clock cycles per word, and must see blocks held, since the PIO loop reads
+`STATUS` once per batch of words rather than before every word — which a further
+check holds it to.
 
 ## 9.4 Questa
 

@@ -266,15 +266,17 @@ fi
 #              FatFs's sector number is 64 bits wide, as FF_LBA64 makes it.
 #   dma_nocd   DMA, no switch
 #   slow_cpu   pio_cd's build again with SLOW_CPU extra clock cycles per access.
-#              A word read through DATA costs a STATUS read and a DATA read,
-#              2 x (SLOW_CPU + 1) clocks, against the card's 4 x 8 x 2 x 2 = 128
-#              at the driver's run divider of 2 - so 300 is 602 a word, nearly
-#              five times slower than the card, and every multi-block read has
-#              to wait for the processor. This run used 40, which is 82 a word:
-#              faster than the card, so it never waited, and the core it passed
-#              dropped bytes behind a passing CRC whenever it did. The harness
-#              now fails a run at twice the card's time per word or slower in
-#              which no read block was held.
+#              A word read through DATA costs one DATA read, SLOW_CPU + 1
+#              clocks - the driver reads STATUS once per batch of words -
+#              against the card's 4 x 8 x 2 x 2 = 128 at the driver's run
+#              divider of 2. So 300 is 301 a word, more than twice as slow as the
+#              card, and every multi-block read has to wait for the processor.
+#              This run used 40, with a loop that also read STATUS before every
+#              word: 82 a word, faster than the card, so it never waited, and the
+#              core it passed dropped bytes behind a passing CRC whenever it did.
+#              The harness now fails a run at twice the card's time per word or
+#              slower in which no read block was held, and one in which a word
+#              costs more than about one bus access.
 #
 # The FatFs disk I/O glue in software/fatfs is linked into every build, compiled
 # against stand-ins for FatFs's two headers (tb/driver/fatfs_stub), and called

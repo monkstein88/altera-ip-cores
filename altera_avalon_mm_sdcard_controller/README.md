@@ -15,7 +15,7 @@ driver the BSP picks up by itself.
 > behavioural SD card model — with the full-core suite run in five
 > configurations — plus bound SVA assertions proven live by fault injection,
 > 22 checks on the Platform Designer component, and the HAL driver itself run
-> against the RTL: 98 checks, in four builds. None of that is a substitute for
+> against the RTL: 99 checks, in four builds. None of that is a substitute for
 > hardware, and the DE10-Lite this repository's other examples target has no
 > microSD socket — see
 > [Verification status](#verification-status--what-is-and-is-not-proven).
@@ -417,7 +417,7 @@ full Quartus toolchain tries to build a project.
 | `phy` | 18 | Exactly 8.00 SPI clocks per byte at every divisor; bit-exact loopback; the `SAMPLE_DLY` bound; every received byte paired with the byte sent alongside it |
 | `fifo` | 5 | Byte↔word round trip both directions, little-endian order, partial-word flush |
 | `core` | 75 | Identification, single and multi-block both directions, CSD/CID, every card-reported failure, `ERR_INFO` contents, every per-state timeout escape, soft reset from inside a transfer, the response window at five clock settings, a multi-block read drained slower than the card, stalled by the memory and never drained at all, read throughput floor, the multi-block write saving, Avalon conformance |
-| `driver` | 98 | The HAL driver itself against the RTL, in four builds and on a processor nearly five times slower than the card: identification on first use, both capacity classes, CRC retries, card removal and swaps with and without a switch, interrupts, misaligned buffers, transfer splitting, the FatFs glue |
+| `driver` | 99 | The HAL driver itself against the RTL, in four builds and on a processor more than twice as slow as the card: identification on first use, both capacity classes, CRC retries, card removal and swaps with and without a switch, interrupts, misaligned buffers, transfer splitting, the PIO loop's cost per word, the FatFs glue |
 | `check_hw_tcl.tcl` | 22 | The component executes; parameters and ports exist; validation rejects exactly the bad configurations |
 | `check_driver_builds.sh` | 4 | The driver compiles clean under `-Wall -Wextra`; CSD capacity arithmetic for both structure versions; the FatFs glue compiles clean with 32- and 64-bit sector numbers; the register header stands alone |
 | `check_assertions_fire.sh` | 7 faults | Each injected into a scratch copy and required to be caught by the assertion meant to catch it |
@@ -539,8 +539,9 @@ can be outrun. It could, and nothing reported it. So could the DMA.
   is checked on the bytes as they come off the wire, not on what the buffer
   kept, so it passed, and the driver returned `ALT_SDCARD_OK` with the wrong
   data. The harness's "slow processor" never got near it: 40 extra clock cycles
-  per bus access is 82 per word read through `DATA`, and the card delivers one
-  every 128 at the driver's run divider. At 242 per word a 5-block read came
+  per bus access is 82 per word read through `DATA` — two accesses a word, as
+  the loop then was — and the card delivers one every 128 at the driver's run
+  divider. At 242 per word a 5-block read came
   back OK and wrong; at 182 an 8-block read overflowed. A fast processor that
   pauses for about 33 000 clocks — a third of a millisecond at 100 MHz — in a
   read of three or more blocks does the same, and a 512-byte buffer exposes
@@ -576,9 +577,19 @@ own checks. Two assertions state the invariants, `a_no_byte_dropped_on_read` and
 `a_dma_start_only_when_idle`, and each is proven by a fault injection. A cover
 point, `c_read_block_held`, shows Questa reaching the hold.
 
-The harness's slow run now takes 300 extra clock cycles per bus access, 602 per
+The harness's slow run now takes 300 extra clock cycles per bus access, 301 per
 word, and a new check requires a run at twice the card's time per word or slower
 to see read blocks held: that run holds 12. On the previous RTL it fails.
+
+**The PIO loop spent two bus accesses on every word.** It read `STATUS` before
+each `DATA` read or write. While the card is the slower side that costs nothing
+anyone can see; where the processor is slower, it is the whole transfer time,
+and it halved the speed of every such read. The loop now reads `STATUS` once,
+takes every whole word `LEVEL` says is waiting — or fills every word of room —
+and only then looks again. On the slow run a word costs 313 clock cycles read
+and 310 written, against 301 per access, and a harness check fails any run where
+the processor limits a transfer and a word costs more than one and a half
+accesses in either direction: the old loops measure two.
 
 The FatFs glue is linked in too, against stand-ins for FatFs's two headers, so
 the suite needs no copy of FatFs. It was also run once against **FatFs R0.15

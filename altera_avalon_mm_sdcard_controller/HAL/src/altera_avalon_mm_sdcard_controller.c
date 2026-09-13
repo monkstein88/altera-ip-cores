@@ -241,28 +241,52 @@ static int app_command(alt_sdcard_dev *dev, alt_u8 index, alt_u32 arg,
 /* -------------------------------------------------------------------------
  * PIO data movement, used when the core was built or configured without DMA.
  *
- * Both loops watch CMD_BUSY as well as the FIFO flags so a transfer that fails
- * part-way terminates instead of spinning forever on a buffer that will never
- * fill or drain again.
+ * One STATUS read per batch, not per word. STATUS.LEVEL says how many bytes
+ * the buffer holds, so a read can take every whole word waiting and a write
+ * can fill every word of room, back to back, before looking again. The loops
+ * used to read STATUS before every word, which doubled the bus traffic, and
+ * when the processor is what limits a PIO transfer that is the whole transfer
+ * time: a read on a processor slower than the card ran at half the speed it
+ * needed to.
+ *
+ * Back-to-back DATA accesses need nothing from STATUS in between. The buffer
+ * presents its next word the cycle after a pop, and a word LEVEL counts is
+ * already readable by the time the access after the STATUS read reaches it.
+ * LEVEL counts the byte staging registers too, which is why both loops take
+ * whole words only: a read never counts a partial word as available, and a
+ * write never counts the part of a word still going out as room.
+ *
+ * Both loops still watch CMD_BUSY, so a transfer that fails part-way ends the
+ * loop instead of leaving it waiting on a buffer that will never fill or drain.
  *
  * Words are copied with memcpy rather than through an alt_u32 pointer, so the
  * caller's buffer need not be aligned: a misaligned 32-bit load on Nios II is
  * not trapped, it is quietly word-aligned by the bus.
  * ---------------------------------------------------------------------- */
 
+static alt_u32 status_level(alt_u32 st)
+{
+    return (st & ALT_SDCARD_STAT_LEVEL_MSK) >> ALT_SDCARD_STAT_LEVEL_OFST_B;
+}
+
 static int pio_read(alt_sdcard_dev *dev, alt_u8 *dst, alt_u32 words)
 {
     alt_u32 got = 0;
-    alt_u32 st, w;
+    alt_u32 st, n, w;
 
     while (got < words) {
         st = ALT_SDCARD_RD_STATUS(dev->base);
-        if (!(st & ALT_SDCARD_STAT_FIFO_EMPTY_MSK)) {
+        n  = status_level(st) / 4u;            /* whole words waiting */
+        if (n == 0u) {
+            if (!(st & ALT_SDCARD_STAT_CMD_BUSY_MSK))
+                break;  /* transfer over and the buffer is drained */
+            continue;
+        }
+        if (n > words - got) n = words - got;
+        while (n-- > 0u) {
             w = ALT_SDCARD_RD(dev->base, ALT_SDCARD_DATA_OFST);
             memcpy(dst + 4u * got, &w, 4);
             got++;
-        } else if (!(st & ALT_SDCARD_STAT_CMD_BUSY_MSK)) {
-            break;      /* transfer over and the buffer is drained */
         }
     }
     return (got == words) ? ALT_SDCARD_OK : ALT_SDCARD_ERR_TIMEOUT;
@@ -271,16 +295,22 @@ static int pio_read(alt_sdcard_dev *dev, alt_u8 *dst, alt_u32 words)
 static int pio_write(alt_sdcard_dev *dev, const alt_u8 *src, alt_u32 words)
 {
     alt_u32 put = 0;
-    alt_u32 st, w;
+    alt_u32 st, n, w, level;
 
     while (put < words) {
         st = ALT_SDCARD_RD_STATUS(dev->base);
-        if (!(st & ALT_SDCARD_STAT_FIFO_FULL_MSK)) {
+        level = status_level(st);
+        n = (level < dev->fifo_bytes) ? (dev->fifo_bytes - level) / 4u : 0u;
+        if (n == 0u) {
+            if (!(st & ALT_SDCARD_STAT_CMD_BUSY_MSK))
+                break;  /* the transfer gave up before we finished feeding it */
+            continue;
+        }
+        if (n > words - put) n = words - put;
+        while (n-- > 0u) {
             memcpy(&w, src + 4u * put, 4);
             ALT_SDCARD_WR(dev->base, ALT_SDCARD_DATA_OFST, w);
             put++;
-        } else if (!(st & ALT_SDCARD_STAT_CMD_BUSY_MSK)) {
-            break;      /* the transfer gave up before we finished feeding it */
         }
     }
     return (put == words) ? ALT_SDCARD_OK : ALT_SDCARD_ERR_TIMEOUT;
@@ -780,9 +810,11 @@ static int transfer_once(alt_sdcard_dev *dev, alt_u32 block, void *buf,
 
     issue(dev, index, block_to_arg(dev, block), ALT_SDCARD_RESP_R1, extra);
 
-    /* Without the DMA nothing else moves the data, so software must - and on a
-     * write it must start immediately, because the sequencer reaches the data
-     * phase about ten byte-times after the command goes out. */
+    /* Without the DMA nothing else moves the data, so software must, while the
+     * transfer runs - the buffer is cleared when the command starts, so it
+     * cannot be filled beforehand. Being late costs time, not data: a write
+     * whose next word has not arrived stops the SPI clock until it does, and a
+     * read block waits for room. Only a stall longer than TIMEOUT fails. */
     if (!dev->use_dma) {
         if (writing) (void)pio_write(dev, (const alt_u8 *)buf, count * 128u);
         else         (void)pio_read (dev, (alt_u8 *)buf,       count * 128u);

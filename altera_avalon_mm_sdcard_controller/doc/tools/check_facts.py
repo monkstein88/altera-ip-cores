@@ -627,14 +627,15 @@ check("the design record no longer says the stuff byte was simply handled",
 # that dropped bytes behind a passing CRC passed it. How slow the run is follows
 # from two numbers in two files - the runner's per-access cost and the driver's
 # run divider - so derive it rather than trust the comment beside either: a
-# word read through DATA is a STATUS read and a DATA read, and the card sends
-# one every 4 x 8 x 2 x CLKDIV clocks. The harness only insists on held blocks
-# at twice the card's time or slower, so the slow run has to be at least that.
+# word read through DATA is one DATA read - the harness holds the loop to that -
+# and the card sends one every 4 x 8 x 2 x CLKDIV clocks. The harness only
+# insists on held blocks at twice the card's time or slower, so the slow run has
+# to be at least that.
 RUNSIM = rd("simulation/verilator/run_sim.sh")
 HALH = rd("HAL/inc/altera_avalon_mm_sdcard_controller.h")
 m_slow = re.search(r"^SLOW_CPU=(\d+)$", RUNSIM, re.M)
 m_div = re.search(r"(\d+)u,\s*/\* 25 MHz", HALH)
-cpu_word = 2 * (int(m_slow.group(1)) + 1) if m_slow else 0
+cpu_word = int(m_slow.group(1)) + 1 if m_slow else 0
 card_word = 4 * 8 * 2 * int(m_div.group(1)) if m_div else 0
 check("the slow driver run really is at least twice slower than the card",
       m_slow is not None and m_div is not None and card_word > 0

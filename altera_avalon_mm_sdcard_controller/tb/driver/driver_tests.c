@@ -892,22 +892,61 @@ int driver_tests(void)
     /* A processor slower than the card made reads wait for it.
      *
      * The run meant to show that once cost 82 clock cycles per word read
-     * through DATA - a STATUS read and a DATA read at 41 each - against the
-     * card's 128 at the run divider, so it was never slower than the card at
-     * all, and a core that dropped every byte it had no room for passed it.
-     * The same core with a processor slower still returned OK from a 5-block
-     * read with the wrong data. So a run whose processor takes at least twice
-     * the card's time per word must see blocks held, and with reads of 4, 5
-     * and 8 blocks against a 256-word buffer, one at twice cannot avoid it. */
+     * through DATA - a STATUS read and a DATA read at 41 each, as the loop was
+     * then - against the card's 128 at the run divider, so it was never slower
+     * than the card at all, and a core that dropped every byte it had no room
+     * for passed it. The same core with a processor slower still returned OK
+     * from a 5-block read with the wrong data. So a run whose processor takes
+     * at least twice the card's time per word must see blocks held, and with
+     * reads of 4, 5 and 8 blocks against a 256-word buffer, one at twice cannot
+     * avoid it. A word now costs one bus access - the check after this one
+     * holds the loop to that - so that is the cost counted here. */
     {
-        unsigned cpu_per_word  = 2u * (sim_cpu_cycles() + 1u);
+        unsigned access        = sim_cpu_cycles() + 1u;
+        unsigned cpu_per_word  = access;
         unsigned card_per_word = 4u * 8u * 2u * (unsigned)sdcard.clkdiv_run;
         int      slow = !sim_cfg_dma() && (cpu_per_word >= 2u * card_per_word);
+        unsigned long long t0, per_word;
+        int      r;
 
         printf("  -- read through DATA: %u clocks a word, card %u; %u blocks held --\n",
                cpu_per_word, card_per_word, sim_read_holds());
         check("a processor at least twice slower than the card makes reads wait rather than lose data",
               !slow || sim_read_holds() > 0u);
+
+        /* ...and the PIO loops cost one bus access per word, not two.
+         *
+         * They read STATUS before every DATA access, which is invisible while
+         * the card is the slower side and halves the speed of every transfer
+         * where the processor is. On a processor that slow the time a transfer
+         * takes is the loop's own cost, so clock cycles per word measure
+         * accesses per word: one access is `access` cycles, and 1.5 of them
+         * separates the batched loops, about 1.05, from the old ones at 2.
+         * Both directions, because they are two loops. */
+        sim_budget("the PIO loops' cost per word", 10000000);
+        {
+            unsigned long long wr_per_word;
+            int w;
+
+            fill(wbuf, 4u, 0x6B);
+            t0 = sim_cycles();
+            w  = alt_sdcard_write_blocks(&sdcard, 44u, wbuf, 4u);
+            wr_per_word = (sim_cycles() - t0) / (4u * 128u);
+
+            memset(rbuf, 0, sizeof rbuf);
+            t0 = sim_cycles();
+            r  = alt_sdcard_read_blocks(&sdcard, 44u, rbuf, 4u);
+            per_word = (sim_cycles() - t0) / (4u * 128u);
+
+            printf("  -- 4 blocks: write %llu, read %llu clocks a word, %u a bus access --\n",
+                   wr_per_word, per_word, access);
+            check("PIO reads and writes cost about one bus access per word where the processor limits them",
+                  w == ALT_SDCARD_OK && r == ALT_SDCARD_OK
+                  && on_card(SIM_CARD_SC, 44u, (alt_u8 *)wbuf, 4u)
+                  && memcmp(rbuf, wbuf, 4u * BLOCK) == 0
+                  && (!slow || (2u * wr_per_word <= 3u * access
+                                && 2u * per_word <= 3u * access)));
+        }
     }
 
     printf("  === %d checks, %d failures ===\n", checks_run, checks_fail);

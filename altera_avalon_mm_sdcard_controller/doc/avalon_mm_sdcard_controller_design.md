@@ -667,7 +667,7 @@ gap — the failure mode that costs 25% and is invisible in a functional test.
 
 **The driver runs against the RTL.** `tb/driver/` links the HAL driver, compiled
 unmodified, into the Verilator model with a C++ harness in place of the
-processor, in four builds and on a processor nearly five times slower than the
+processor, in four builds and on a processor more than twice as slow as the
 card. It is the only suite that exercises the division of labour this document
 is built around, and its first run found a fault on each side of it: a driver
 wait timed by a CPU loop, and a response window the sequencer opened one byte
@@ -810,8 +810,39 @@ Things deliberately left undecided, to be closed during implementation:
    pre-emptive busy check is "most of the difference between the card's rate and
    the bus's" rests on the same unmodelled costs as `ACMD23` does, and is now
    described as an argument rather than a result.
-6. **A block buffer mapped straight into the `csr` address space.** Deferred to
-   the question of the core's size. Altera's University Program SD core puts its
+6. ~~A block buffer mapped straight into the `csr` address space.~~ **Closed:
+   not built.** Reviewed against measurements rather than argument, and it loses
+   to both data paths the core already has.
+
+   *Against the DMA.* A DMA transfer costs the processor six register writes to
+   start it and one read for its result, however many blocks it carries; the
+   data lands in the caller's buffer with no copy, and the card never waits for
+   software. A mapped buffer costs about 130 accesses per block - its 128 words,
+   a release and a status check - and holds the card while they happen. In a
+   scratch copy of the driver harness, eight blocks through the DMA took 132 760
+   clock cycles with a fast processor and 136 353 with one costing 301 cycles a
+   bus access; the mapped buffer, estimated from the same per-access costs,
+   comes to about 137 000 and 446 000. The driver does not yet collect the DMA's
+   saving - it reads `STATUS` for the whole transfer - but that is a change to
+   the driver, not a reason for another data path.
+
+   *Against PIO.* The FIFO lets the card and the processor work at the same
+   time, where a mapped buffer makes them take turns. Once the PIO loop stopped
+   reading `STATUS` before every word, the same slow processor read those eight
+   blocks in 315 749 cycles, where the loop as it was took 620 662 - so a mapped
+   buffer beats PIO only against a loop that wastes half its accesses.
+
+   *What only it offers* - reading a sector in place without copying it, and
+   needing neither a bus master nor memory one can reach - does not help a
+   driver whose FatFs layer copies every sector into a window of its own. The
+   programming model is available anyway: a system that wants a block it can
+   read by address points the DMA at a small on-chip RAM and reads it there.
+
+   What would reopen it is a target with no memory the DMA can reach and no RAM
+   to spare for a sector, or software that must inspect sectors in place.
+
+   ~~Original position:~~ **A block buffer mapped straight into the `csr`
+   address space.** Deferred to the question of the core's size. Altera's University Program SD core puts its
    512-byte buffer in its own address space, so software reads a block by
    address rather than word by word through a window, and it was the one
    convenience of that core not borrowed when this driver gained card-change
