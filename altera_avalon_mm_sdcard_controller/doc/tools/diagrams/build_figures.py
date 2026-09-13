@@ -234,15 +234,17 @@ fig("fig_datapath", f"""
   // Declared bottom-first: dot stacks clusters in reverse declaration
   // order, so listing read, write, PIO in the obvious order prints them
   // upside down.
+  // Green like the other two, and no longer red: the palette keeps red for
+  // the error path, and this row was drawn as one while a CPU slower than the
+  // card could overrun the buffer. It cannot now - the card waits for it.
   subgraph cluster_pio {{
     label="Read with USE_DMA = 0 — the CPU moves every word";
-    fontcolor="{RED}"; color="{RED}"; style=rounded; margin=12;
+    fontcolor="{OK}"; color="{OK}"; style=rounded; margin=12;
     p0 [label="SD card", {blk(EXT_F, EXT)}];
     p1 [label="spi_phy"];
     p2 [label="fifo"];
-    p3 [label="CPU\\nreads the DATA\\nregister, on a deadline",
-        {blk(RED_F, RED)}];
-    edge [color="{RED}"];
+    p3 [label="CPU\\nreads the DATA\\nregister at its own\\npace; the card waits",
+        {blk(EXT_F, EXT)}];
     p0 -> p1 -> p2 -> p3;
   }}
   subgraph cluster_wr {{

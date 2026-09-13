@@ -32,8 +32,8 @@
 // design or a different card, not a cosmetic variation:
 //
 //   TB_USE_DMA=0        removes the master entirely and makes software move
-//                       every word through the DATA window - a different FIFO
-//                       client, on a deadline.
+//                       every word through the DATA window, at its own pace -
+//                       a different FIFO client.
 //   TB_HIGH_CAPACITY=0  a standard-capacity card, which is BYTE addressed;
 //                       the driver's and the testbench's block-to-address
 //                       conversion is dead code on an SDHC card.

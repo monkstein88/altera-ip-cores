@@ -12,13 +12,13 @@
 #   COVERAGE          statement, branch, condition, expression, FSM and toggle,
 #                     merged across the sweep. This core's sequencer is a
 #                     twenty-state machine whose error paths are reached only
-#                     by fault injection, and whose stall timeouts are reachable
-#                     ONLY in the PIO configuration - with a master attached the
-#                     DMA always supplies, so the branch never executes. FSM
-#                     coverage is the flow that says which of those states and
-#                     arcs the sweep genuinely visited rather than merely
-#                     compiled.
-#   NON-VACUITY       how many times each of the 25 assertions passed for a real
+#                     by fault injection, and whose stall timeouts are reached
+#                     only when software rather than the DMA moves the data -
+#                     the testbench clears DMA_EN at run time to get there in
+#                     every configuration. FSM coverage is the flow that says
+#                     which of those states and arcs the sweep genuinely visited
+#                     rather than merely compiled.
+#   NON-VACUITY       how many times each assertion passed for a real
 #                     reason rather than because its antecedent never held. That
 #                     distinction has already cost this core once:
 #                     verification/check_assertions_fire.sh found that the
@@ -59,7 +59,8 @@
 #     -mfcu -cuname above and the sva_cu top below, and the run reproduces the
 #     original fault exactly - seven configurations printing *** PASS ***, a
 #     zero-byte assertion report, and no complaint from any simulator. The gate
-#     reports RESULT: FAILED and names all 25 missing assertions. A gate that
+#     reported RESULT: FAILED and named all 25 missing assertions - every one
+#     the file held at the time. A gate that
 #     has not been shown to fail is worth no more than the assertions it is
 #     there to protect.
 #
@@ -83,11 +84,13 @@
 #     for exactly one accepted cycle, so waitrequest was never asserted while
 #     read was high. The model now stalls the first beat of every command too.
 #
-# TRANSITION COVERAGE: the sequencer reaches all 20 states and 40 of its 58
-# transitions. The 18 remaining are accounted for rather than unreached - 16 are
-# the single `if (srst)` statement counted once per source state, and two are
-# defensive timeouts that cannot fire as the sequencer is wired. The README's
-# verification section has the reasoning, and both branches say so in the RTL.
+# TRANSITION COVERAGE: the sequencer reaches all 20 states and 41 of its 58
+# transitions. The 17 remaining are accounted for rather than unreached - 16 are
+# the single `if (srst)` statement counted once per source state, and one is the
+# defensive timeout in S_WR_CRC, which cannot fire as the sequencer is wired.
+# The timeout in S_RD_DATA was the second until a read block could be held for
+# the host; a read nobody drains reaches it now. The README's verification
+# section has the reasoning, and both branches say so in the RTL.
 #
 # The sweep below matches simulation/verilator/run_sim.sh exactly, so a
 # disagreement between the two flows is a real disagreement between simulators
@@ -163,9 +166,8 @@ proc run_unit {top tag ucdb} {
 #
 #   dma       the reference configuration
 #   pio       USE_DMA=0. No master at all; software moves every word through the
-#             DATA window, on a deadline. The only configuration in which the
-#             shifter can be starved by the CPU rather than by the interconnect,
-#             and therefore the only one that reaches the stall timeouts.
+#             DATA window, at its own pace, in every transfer - where the other
+#             builds use the window only when a test clears DMA_EN.
 #   sdsc      a standard-capacity card, which is BYTE addressed. On an SDHC card
 #             the block-to-address conversion is the identity, so this is the
 #             only configuration in which it is executed at all.

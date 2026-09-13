@@ -422,7 +422,7 @@ full Quartus toolchain tries to build a project.
 | `check_driver_builds.sh` | 4 | The driver compiles clean under `-Wall -Wextra`; CSD capacity arithmetic for both structure versions; the FatFs glue compiles clean with 32- and 64-bit sector numbers; the register header stands alone |
 | `check_assertions_fire.sh` | 7 faults | Each injected into a scratch copy and required to be caught by the assertion meant to catch it |
 | `check_figures.sh` | 19 files | The 9 figures and their generator inputs, each re-rendered and compared byte for byte, because a stale picture is worse than a missing one. Needs `graphviz` for the block diagrams, a recorded `wave.vcd` for the timing figures, and Node with the WaveDrom module to render their SVGs — without the renderer it still compares their JSON; short of those it reports **INCOMPLETE** with a count, rather than passing on what it could not look at, and never FAIL for a tool that is missing |
-| `check_facts.py` | 276 | Every register offset, parameter default, line count and measured figure in these documents, re-derived from the RTL |
+| `check_facts.py` | 293 | Every register offset, parameter default, line count and measured figure in these documents, re-derived from the RTL |
 | `check_synthesis.sh` | 5 configs | The RTL through Quartus for the DE10-Lite part in the default, `tight`, `big`, `nodma` and `noburst` configurations: each synthesises, fits and meets a 100 MHz clock, holds area and Fmax to a budget, and puts **exactly** `FIFO_DEPTH_BYTES` × 8 bits in a memory block — so a buffer that slips back into registers fails by name rather than by growing |
 | `check_qsys.sh` | 7 | The component in **real** Platform Designer: it loads, its interfaces are the expected six, `USE_DMA=0` genuinely removes `m0`, and a system containing it generates |
 | lint | 10 configs | `-Wall` clean across every parameter that changes what is built |
@@ -433,7 +433,7 @@ all of them:
 | Configuration | What only it reaches |
 | --- | --- |
 | `dma` | the reference case |
-| `pio` | no master; software moves every word through `DATA` on a deadline |
+| `pio` | no master; software moves every word through `DATA`, at its own pace |
 | `sdsc` | **byte** addressing — the identity on an SDHC card, so untested anywhere else |
 | `tight` | one block of buffer, so the data path refills mid-transfer |
 | `noburst` | single-beat Avalon transactions throughout |
@@ -484,8 +484,8 @@ swapped between calls or in the middle of one; with the DMA, the master reads
 and writes the driver's own buffers. It runs under Verilator only.
 
 It runs in four builds — with and without the DMA, with and without a
-card-detect switch — and again with a processor slower than the card. Its first run found two
-faults that every suite above had passed:
+card-detect switch — and again with a processor slower than the card. Its first
+run found two faults that every suite above had passed:
 
 - **The driver's power-up wait was a CPU loop.** 200 000 empty iterations: a few
   milliseconds on a Nios II/f, which is ample at 400 kHz, but a count of loop
@@ -539,11 +539,12 @@ can be outrun. It could, and nothing reported it. So could the DMA.
   is checked on the bytes as they come off the wire, not on what the buffer
   kept, so it passed, and the driver returned `ALT_SDCARD_OK` with the wrong
   data. The harness's "slow processor" never got near it: 40 extra clock cycles
-  per bus access is 82 per word read through `DATA`, and the card delivers one every
-  128 at the driver's run divider. At 242 per word a 5-block read came back OK
-  and wrong; at 182 an 8-block read overflowed. A fast processor that pauses for
-  about 33 000 clocks — a third of a millisecond at 100 MHz — in a read of three
-  or more blocks does the same, and a 512-byte buffer exposes reads of two.
+  per bus access is 82 per word read through `DATA`, and the card delivers one
+  every 128 at the driver's run divider. At 242 per word a 5-block read came
+  back OK and wrong; at 182 an 8-block read overflowed. A fast processor that
+  pauses for about 33 000 clocks — a third of a millisecond at 100 MHz — in a
+  read of three or more blocks does the same, and a 512-byte buffer exposes
+  reads of two.
 - **A lost DMA start.** A read started the next block's DMA transfer when the
   previous block ended, and the DMA only accepts a start while it is idle. A
   memory that held the last word of a block for as long as the two CRC bytes
@@ -575,9 +576,9 @@ own checks. Two assertions state the invariants, `a_no_byte_dropped_on_read` and
 `a_dma_start_only_when_idle`, and each is proven by a fault injection. A cover
 point, `c_read_block_held`, shows Questa reaching the hold.
 
-The harness's slow run now takes 300 extra clock cycles per bus access, 602 per word,
-and a new check requires a run at twice the card's time per word or slower to
-see read blocks held: that run holds 12. On the previous RTL it fails.
+The harness's slow run now takes 300 extra clock cycles per bus access, 602 per
+word, and a new check requires a run at twice the card's time per word or slower
+to see read blocks held: that run holds 12. On the previous RTL it fails.
 
 The FatFs glue is linked in too, against stand-ins for FatFs's two headers, so
 the suite needs no copy of FatFs. It was also run once against **FatFs R0.15
@@ -656,10 +657,11 @@ accounted for rather than merely unreached:
 
 The five timeout escapes that **are** reachable are now tested: busy before a
 command, busy between the blocks of a multi-block write, an R1b whose busy never
-lifts, and a write data phase starved of data — each checked for the `phase_e`
-it reports — and a read that nobody drains. That last one is the sequel to a defect this core already had — the
-configuration sweep once found that neither data-streaming state checked its
-timeout at all — and until now nothing exercised the fix.
+lifts, and a write data phase starved of data, each checked for the `phase_e` it
+reports; and a read that nobody drains. The last two are the sequel to a defect
+this core already had — the configuration sweep once found that neither
+data-streaming state checked its timeout at all — and for a long time nothing
+exercised either fix.
 
 ### Verification status — what is and is not proven
 

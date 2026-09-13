@@ -267,20 +267,23 @@ gets a data-response token, and the next command is swallowed as data.
 ## 4.2 On `USE_DMA`
 
 Turning the DMA off is a legitimate choice for a system with no suitable memory
-target, or none to spare. What changes is the *deadline*: with no master keeping
-the buffer moving, software has to service the `DATA` window fast enough that
-the shifter is never starved, and the data-phase stall timeout is what catches
-it when it is not.
+target, or none to spare. What changes is *who sets the pace*: with no master
+keeping the buffer moving, software does, in both directions. A write whose next
+word has not arrived stops the SPI clock until it does. A read block is only
+clocked in once the buffer has room for all of it, so the clock stops between
+blocks until software has drained enough. Either way the card waits, and a
+processor slower than the card makes the transfer slower, not wrong.
 
-A read has no deadline. A read block is only clocked in once the buffer has
-room for all of it, so software that drains the window slower than the card
-sends makes the transfer slower, not wrong: the core stops the SPI clock between
-blocks and the card waits. A read that nobody drains at all ends in
-`ERR_DAT_TMO` once `TIMEOUT` has passed with no room.
+What software must not do is stop servicing the `DATA` window altogether. The
+data-phase timeout bounds time **without progress**, and after `TIMEOUT` the
+transfer ends with `ERR_DAT_TMO`. A write abandoned in the middle of a block
+leaves the card waiting for the rest of it, which is why the driver issues CMD12
+after any failed write.
 
-That path is tested rather than assumed — `pio` is one of the five
-configurations the regression sweeps, and it is the only one in which those
-stall timeouts can be reached at all.
+Both paths are tested rather than assumed — `pio` is one of the five
+configurations the regression sweeps, and the full-core suite also clears
+`DMA_EN` at run time to starve a write and abandon a read in every one of
+them.
 
 ---
 
@@ -595,7 +598,8 @@ command frames, response polling, tokens, CRC bytes — not idle clocks.
 Not throughput. At SPI rates the memory side is never the bottleneck, and
 `M0_BURST_WIDTH = 1` measures the same as `8`. What the DMA buys is **CPU time**
 and **immunity to interrupt latency**: without it the CPU must service the
-`DATA` window on a deadline for the whole of every block.
+`DATA` window for the whole of every transfer, and the transfer goes no faster
+than the CPU does.
 
 ---
 
@@ -624,7 +628,7 @@ The five configurations are not cosmetic variations:
 | Configuration | What only it reaches |
 |---|---|
 | `dma` | The reference case |
-| `pio` | No master; software moves every word. The only one that reaches the data-phase stall timeouts |
+| `pio` | No master at all; software moves every word in every transfer, where the other builds use the `DATA` window only when a test clears `DMA_EN` |
 | `sdsc` | Byte addressing. On an SDHC card the block-to-address conversion is the identity, so this is the only place it executes |
 | `tight` | One block of buffer, so the data path refills mid-transfer |
 | `noburst` | Single-beat Avalon transactions throughout |

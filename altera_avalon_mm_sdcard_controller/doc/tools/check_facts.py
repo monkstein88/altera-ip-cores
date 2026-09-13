@@ -642,7 +642,7 @@ check("the slow driver run really is at least twice slower than the card",
       f"{cpu_word} clocks a word against the card's {card_word}")
 check("the slow driver run passes its per-access cost to the harness",
       '"+cpu=$SLOW_CPU"' in RUNSIM)
-m = re.search(r"takes (\d+) extra clock cycles per bus access, (\d+) per word", README)
+m = re.search(r"takes (\d+)\s+extra\s+clock\s+cycles\s+per\s+bus\s+access,\s+(\d+)\s+per\s+word", README)
 check("README quotes the slow run's per-access and per-word cost",
       m is not None and m_slow is not None
       and int(m.group(1)) == int(m_slow.group(1)) and int(m.group(2)) == cpu_word,
@@ -690,6 +690,32 @@ check("README and user guide quote the same sequencer transition coverage",
       m_rt is not None and m_ut is not None and m_rt.groups() == m_ut.groups())
 check("the uncovered transition count is the total less the covered",
       m_rt is not None and int(m_rt.group(3)) == int(m_rt.group(2)) - int(m_rt.group(1)))
+# ...and a third time in the Questa flow's own header, which is the one this
+# pair of checks did not read - it said 40 and 18 for a commit after the
+# documents said 41 and 17.
+m_qt = re.search(r"all 20 states and (\d+) of its (\d+)\s*#?\s*transitions\. The (\d+) remaining", QTCL)
+check("the Questa flow's header quotes the same sequencer transition coverage",
+      m_rt is not None and m_qt is not None and m_rt.groups() == m_qt.groups(),
+      f"header {m_qt.groups() if m_qt else '?'}, README {m_rt.groups() if m_rt else '?'}")
+
+# With USE_DMA = 0 the CPU sets the pace in both directions: a write whose next
+# word is late stops the clock, and a read block waits for room. Neither is on a
+# deadline, and the stall timeouts are reached in every configuration, because
+# the testbench clears DMA_EN at run time. Every place that said otherwise was
+# written when a slow read lost data - including the datapath figure, which drew
+# that read as a hazard - and survived the fix for a commit.
+BUILD_FIGS = rd("doc/tools/diagrams/build_figures.py")
+TBSRC = rd("tb/avalon_mm_sdcard_controller_tb.sv")
+for label, text in (("README", README), ("user guide", UG), ("design record", DESIGN),
+                    ("block-diagram document", BD), ("Verilator runner", RUNSIM),
+                    ("Questa flow", QTCL), ("core testbench", TBSRC),
+                    ("figure generator", BUILD_FIGS)):
+    check(f"the {label} does not put the DATA window on a deadline",
+          "on a deadline" not in text)
+    check(f"the {label} does not say the stall timeouts need the pio build",
+          re.search(r"only (?:one|configuration) (?:in which|that reaches|where) "
+                    r"(?:those |the )?(?:data-phase )?(?:stall timeouts|shifter can be starved)",
+                    text) is None and "ONLY in the PIO" not in text)
 
 # --- 9.13 this script's own total, as the README's verification table quotes it ---
 #

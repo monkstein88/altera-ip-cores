@@ -643,7 +643,7 @@ path the others cannot:
 | Configuration | What only it exercises |
 | --- | --- |
 | `dma` | the reference case |
-| `pio` (`USE_DMA=0`) | no master at all; software moves every word through `DATA` on a deadline. The only configuration where the shifter can be starved by the CPU rather than by the interconnect. |
+| `pio` (`USE_DMA=0`) | no master at all; software moves every word through `DATA`, at its own pace, in every transfer. The other builds use the window only when a test clears `DMA_EN`. |
 | `sdsc` (`HIGH_CAPACITY=0`) | **byte** addressing. On an SDHC card the block-to-address conversion is the identity, so this is the only place it is tested. |
 | `tight` (`FIFO_DEPTH_BYTES=512`) | one block of buffer instead of two, so nothing overlaps and the data path refills mid-transfer. |
 | `noburst` (`M0_BURST_WIDTH=1`) | single-beat Avalon transactions throughout. |

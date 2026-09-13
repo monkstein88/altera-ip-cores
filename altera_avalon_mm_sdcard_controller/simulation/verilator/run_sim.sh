@@ -209,9 +209,9 @@ fi
 #
 #   dma       the reference configuration
 #   pio       USE_DMA=0. No master at all; software moves every word through
-#             the DATA window, on a deadline. A completely different FIFO
-#             client, and the only configuration where the shifter can be
-#             starved by the CPU rather than by the interconnect.
+#             the DATA window, at its own pace, in every transfer. A completely
+#             different FIFO client, and the only build without the DMA's logic
+#             - the other builds use the window only when a test clears DMA_EN.
 #   sdsc      a standard-capacity card, which is BYTE addressed. On an SDHC
 #             card the block-to-address conversion is the identity, so this is
 #             the only configuration in which it is tested at all.

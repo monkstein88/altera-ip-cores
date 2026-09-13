@@ -133,13 +133,12 @@ transfer takes more care than never starting one.
 Read and write are mirror images. The third row is the same core with
 `USE_DMA = 0`.
 
-In that third case a write puts the CPU on a deadline: nothing else is keeping
-the buffer filled, so software that is slow to service the `DATA` register
-starves the shifter and the data-phase timeout fires. A read does not. A read
-block is only clocked in once the buffer has room for all of it, so software
-that drains `DATA` slowly makes the read slower, and only software that stops
-draining altogether reaches the same timeout. The DMA gets the same treatment:
-a block waits for the DMA to be free as well as for room.
+In that third case the CPU sets the pace. Nothing else is keeping the buffer
+moving, so a write whose next word is late stops the SPI clock until it arrives,
+and a read block is only clocked in once the buffer has room for all of it. A
+slow CPU makes a transfer slower; one that stops servicing the `DATA` register
+altogether trips the data-phase timeout. The DMA gets the same treatment on a
+read: a block waits for the DMA to be free as well as for room.
 
 That timeout exists because of a bug. `RD_DATA` and `WR_DATA` originally had no
 timeout at all, so a starved data phase hung the core until a soft reset. With a
