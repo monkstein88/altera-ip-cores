@@ -28,6 +28,12 @@
 #              skipped rather than failed. "You have not run capture.sh" is not
 #              the same finding as "a figure has drifted", and reporting them
 #              the same way trains people to ignore the result.
+#
+#              Neither is node_modules/, so a fresh clone that has recorded the
+#              VCD - as the message below tells it to - usually has Node and no
+#              wavedrom module. That once reported FAIL, "mkwaves.py did not
+#              run", for a render that was never possible. It now compares the
+#              JSON, which needs nothing, and reports the SVGs as not checked.
 # =============================================================================
 set -uo pipefail
 
@@ -88,31 +94,50 @@ fi
 
 # ---- timing figures, via WaveDrom -------------------------------------------
 VCD="$ROOT/verification/wave.vcd"
-WAVE_JS="$ROOT/doc/tools/waveforms/render.js"
-have_node=0
-command -v node >/dev/null 2>&1 && have_node=1
-command -v nodejs >/dev/null 2>&1 && have_node=1
+WAVE_DIR="$ROOT/doc/tools/waveforms"
+
+# Whether the SVGs can be rendered HERE: Node, and the two modules render.js
+# loads, looked up the way it looks them up - beside it first, then wherever
+# Node would normally find them.
+NODE="$(command -v node || command -v nodejs || true)"
+can_render=0
+cannot_render="node is not installed"
+if [ -n "$NODE" ]; then
+    if (cd "$WAVE_DIR" && "$NODE" -e '
+            const p = require("path");
+            for (const m of ["wavedrom", "onml"]) {
+                try { require(p.join(process.cwd(), "node_modules", m)); }
+                catch (e) { require(m); }
+            }') >/dev/null 2>&1; then
+        can_render=1
+    else
+        cannot_render="the wavedrom module is not installed
+        (cd doc/tools/waveforms && npm install wavedrom onml)"
+    fi
+fi
 
 if [ ! -s "$VCD" ]; then
     skipped="$skipped
   --    timing figures not checked: verification/wave.vcd is absent.
         Run ./verification/capture.sh to record it, then re-run this."
-elif [ $have_node -eq 0 ]; then
+elif [ $can_render -eq 0 ]; then
     skipped="$skipped
-  --    timing figures not checked: node is not installed.
-        The WaveDrom JSON is still compared; only the SVG render needs Node."
-    if python3 "$ROOT/doc/tools/waveforms/mkwaves.py" "$VCD" "$WORK" \
-            >/dev/null 2>&1; then
-        for f in "${WAVES[@]}"; do
-            compare "$f.json"
-        done
-        compare "wave_facts.json"
-    fi
+  --    timing figure SVGs not checked: $cannot_render.
+        The WaveDrom JSON is still compared; only the SVG render needs it."
+    # mkwaves.py writes every JSON before it tries to render, and exits non-zero
+    # only because the render it then attempts cannot run. So its exit status
+    # is not the test. The comparison is: a generator that really failed leaves
+    # a JSON unwritten, and that is reported as a failure by name.
+    python3 "$WAVE_DIR/mkwaves.py" "$VCD" "$WORK" >/dev/null 2>&1
+    for f in "${WAVES[@]}"; do
+        compare "$f.json"
+    done
+    compare "wave_facts.json"
 else
-    if ! python3 "$ROOT/doc/tools/waveforms/mkwaves.py" "$VCD" "$WORK" \
+    if ! python3 "$WAVE_DIR/mkwaves.py" "$VCD" "$WORK" \
             >/dev/null 2>&1; then
         echo "  FAIL  mkwaves.py did not run against the recorded VCD"
-        python3 "$ROOT/doc/tools/waveforms/mkwaves.py" "$VCD" "$WORK" 2>&1 | tail -5
+        python3 "$WAVE_DIR/mkwaves.py" "$VCD" "$WORK" 2>&1 | tail -5
         fail=1
     else
         for f in "${WAVES[@]}"; do
