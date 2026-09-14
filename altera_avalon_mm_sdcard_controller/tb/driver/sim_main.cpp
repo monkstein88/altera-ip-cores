@@ -80,6 +80,7 @@ static int          swap_to_card;
 static alt_isr_func isr_fn;
 static void        *isr_ctx;
 static int          in_isr;
+static int          irq_masked;    // alt_irq_disable_all() in force
 
 static const unsigned SDCARD_SIM_BASE = 0x00010000u;   // must match the tests
 
@@ -123,7 +124,7 @@ static void tick()
 // An interrupt is taken between bus accesses, never inside one.
 static void service_irq()
 {
-    if (top->irq && isr_fn && !in_isr) {
+    if (top->irq && isr_fn && !in_isr && !irq_masked) {
         in_isr = 1;
         isr_fn(isr_ctx);
         in_isr = 0;
@@ -184,6 +185,22 @@ extern "C" int alt_ic_isr_register(alt_u32, alt_u32, alt_isr_func isr,
     isr_fn  = isr;
     isr_ctx = context;
     return 0;
+}
+
+extern "C" alt_irq_context alt_irq_disable_all(void)
+{
+    alt_irq_context was = irq_masked;
+    irq_masked = 1;
+    return was;
+}
+
+// An interrupt that arrived while they were held off is taken the moment they
+// are enabled again, as the processor takes it - not at the next bus access,
+// which a loop doing all its accesses with interrupts held off never reaches.
+extern "C" void alt_irq_enable_all(alt_irq_context context)
+{
+    irq_masked = context;
+    service_irq();
 }
 
 // ---------------------------------------------------------------------------

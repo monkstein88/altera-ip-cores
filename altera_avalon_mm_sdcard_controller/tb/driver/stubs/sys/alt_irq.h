@@ -10,6 +10,13 @@ extern "C" {
 typedef void (*alt_isr_func)(void *context);
 int alt_ic_isr_register(alt_u32 ic_id, alt_u32 irq, alt_isr_func isr,
                         void *context, void *flags);
+
+/* The real HAL's context type. Masking holds the registered handler off: an
+ * interrupt that arrives meanwhile is taken the moment alt_irq_enable_all()
+ * lets it, as the processor takes it. */
+typedef int alt_irq_context;
+alt_irq_context alt_irq_disable_all(void);
+void            alt_irq_enable_all(alt_irq_context context);
 #ifdef __cplusplus
 }
 #endif

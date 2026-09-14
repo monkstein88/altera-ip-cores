@@ -264,7 +264,9 @@ fi
 #              (ALT_SDCARD_MAX_BLOCKS_PER_TRANSFER), so the splitting - and
 #              the auto CMD12 between the pieces - runs on ordinary sizes; and
 #              FatFs's sector number is 64 bits wide, as FF_LBA64 makes it.
-#   dma_nocd   DMA, no switch
+#   dma_nocd   DMA, no switch, and split every 3 blocks like pio_nocd - so the
+#              non-blocking calls, which only a DMA build can run, take their
+#              transfers in pieces too
 #   slow_cpu   pio_cd's build again with SLOW_CPU extra clock cycles per access.
 #              A word read through DATA costs one DATA read, SLOW_CPU + 1
 #              clocks - the driver reads STATUS once per batch of words -
@@ -277,6 +279,12 @@ fi
 #              The harness now fails a run at twice the card's time per word or
 #              slower in which no read block was held, and one in which a word
 #              costs more than about one bus access.
+#   no_delay   pio_cd's and dma_cd's builds again with no clock cycles between
+#              one bus access and the next. The core shows a command as busy two
+#              cycles after its CMD write, and a DATA write reaches the buffer a
+#              cycle after the access, so a driver that trusts a STATUS read made
+#              straight after either goes wrong: the first version of this driver
+#              could not identify a card here.
 #
 # The FatFs disk I/O glue in software/fatfs is linked into every build, compiled
 # against stand-ins for FatFs's two headers (tb/driver/fatfs_stub), and called
@@ -288,7 +296,7 @@ DRIVER_CFGS=(
     "pio_cd:0:1:"
     "dma_cd:1:1:"
     "pio_nocd:0:0:-DALT_SDCARD_MAX_BLOCKS_PER_TRANSFER=3u -DSDCARD_STUB_LBA64"
-    "dma_nocd:1:0:"
+    "dma_nocd:1:0:-DALT_SDCARD_MAX_BLOCKS_PER_TRANSFER=3u"
 )
 
 # Runs one harness binary and classifies the result. Exit 2 from the harness is
@@ -382,6 +390,13 @@ if [ "$WHICH" = "all" ] || [ "$WHICH" = "driver" ]; then
         run_driver_bin slow_cpu "$OBJROOT/obj_dir_driver_pio_cd/simx" \
             "$OBJROOT/run_driver_slow_cpu.log" "+cpu=$SLOW_CPU"
     fi
+    for b in pio_cd dma_cd; do
+        if [ -x "$OBJROOT/obj_dir_driver_$b/simx" ]; then
+            : > "$OBJROOT/run_driver_no_delay_$b.log"
+            run_driver_bin "no_delay_$b" "$OBJROOT/obj_dir_driver_$b/simx" \
+                "$OBJROOT/run_driver_no_delay_$b.log" +cpu=0
+        fi
+    done
 fi
 
 # ---------------------------------------------------------------------------

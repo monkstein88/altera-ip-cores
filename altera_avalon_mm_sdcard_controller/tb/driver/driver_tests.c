@@ -301,6 +301,26 @@ static void test_retries(void)
           r == ALT_SDCARD_OK && memcmp(rbuf, wbuf, BLOCK) == 0 &&
           sdcard.retry_count == retries + 1u);
 
+    /* A corrupt block in a MULTI-block read. The card goes on sending until
+     * CMD12, whatever the host made of the block, so a retry issued without one
+     * found it still sending: the read came back as a timeout, and the card as
+     * unusable for the call after it. */
+    {
+        int r2, ok;
+
+        fill(wbuf, 2, 0x64);
+        (void)alt_sdcard_write_blocks(&sdcard, 330u, wbuf, 2);
+        retries = sdcard.retry_count;
+        memset(rbuf, 0, sizeof rbuf);
+        sim_fault_once(SIM_INJ_BAD_DATA_CRC);
+        r  = alt_sdcard_read_blocks(&sdcard, 330u, rbuf, 2);
+        ok = (memcmp(rbuf, wbuf, 2u * BLOCK) == 0);
+        r2 = alt_sdcard_read_blocks(&sdcard, 330u, rbuf, 1);
+        check("a corrupt block in a multi-block read: stopped, retried, and the card still answers",
+              r == ALT_SDCARD_OK && ok && sdcard.retry_count == retries + 1u &&
+              r2 == ALT_SDCARD_OK);
+    }
+
     /* A written block the card refused on CRC - once, mid-stream. */
     fill(wbuf, 4, 0x62);
     retries = sdcard.retry_count;
@@ -707,7 +727,274 @@ static void test_write_protect(void)
           r == (cd() ? ALT_SDCARD_ERR_PROTECTED : ALT_SDCARD_OK));
 }
 
-/* The FatFs disk I/O functions, as FatFs calls them. */
+/* -------------------------------------------------------------------------- */
+/* Non-blocking transfers.
+ *
+ * Every check runs in every build. With the DMA each one holds the non-blocking
+ * call to what the blocking call does in the same situation; without it, the
+ * start is refused and nothing else changes. */
+
+static int             nb_calls;
+static int             nb_result;
+static void           *nb_context;
+static alt_sdcard_dev *nb_dev;
+
+static void nb_done(alt_sdcard_dev *dev, int result, void *context)
+{
+    nb_calls++;
+    nb_result  = result;
+    nb_context = context;
+    nb_dev     = dev;
+}
+
+/* A chain: the write's callback starts the read of what it wrote, and the
+ * read's callback ends it. `context` is the buffer to read into. */
+static int nb_chain_write, nb_chain_start;
+
+static void nb_chain_write_done(alt_sdcard_dev *dev, int result, void *context)
+{
+    nb_chain_write = result;
+    nb_chain_start = alt_sdcard_read_blocks_start(dev, 820u, context, 2u,
+                                                  nb_done, 0);
+}
+
+/* The application getting on with something else: time passes and no driver
+ * call is made. The harness takes the interrupt between clock ticks, as the
+ * processor would. Returns once the callback has run, or after `cycles`. */
+static void other_work(unsigned long long cycles)
+{
+    unsigned long long end = sim_cycles() + cycles;
+
+    while (nb_calls == 0 && sim_cycles() < end) sim_idle(500);
+}
+
+/* Two blocks written and read back through a chain of callbacks, with the
+ * interrupt connected or with alt_sdcard_transfer_status() polled. Returns 1 if
+ * the read came back OK with what was written - and, polled, if the status call
+ * that ran the write's callback returned the write's result. */
+static int nb_chain(int polled)
+{
+    int irq_saved = sdcard.irq, polls, r, st, handed_over = 99;
+
+    if (polled) sdcard.irq = -1;
+    fill(wbuf, 2u, polled ? 0x71 : 0x17);
+    memset(rbuf, 0, sizeof rbuf);
+    nb_calls = 0;
+    nb_chain_write = nb_chain_start = 99;
+    r = alt_sdcard_write_blocks_start(&sdcard, 820u, wbuf, 2u,
+                                      nb_chain_write_done, rbuf);
+    for (polls = 0; r == ALT_SDCARD_OK && nb_calls == 0 && polls < 2000; polls++) {
+        sim_idle(2000);
+        if (!polled) continue;
+        /* The status call whose callback started the read still reports the
+         * write that ended. */
+        st = alt_sdcard_transfer_status(&sdcard);
+        if (nb_chain_write != 99 && handed_over == 99) handed_over = st;
+    }
+    sdcard.irq = irq_saved;
+    return r == ALT_SDCARD_OK && nb_chain_write == ALT_SDCARD_OK
+        && nb_chain_start == ALT_SDCARD_OK && nb_calls == 1
+        && nb_result == ALT_SDCARD_OK
+        && (!polled || handed_over == ALT_SDCARD_OK)
+        && memcmp(rbuf, wbuf, 2u * BLOCK) == 0;
+}
+
+static void test_nonblocking(void)
+{
+    static int         token;
+    int                dma = sim_cfg_dma();
+    int                r, r2, r3, r4, r5, r6, irq_saved, polls, phase, lost;
+    unsigned long long a0, used, end;
+    alt_u32            cmds, retries, pieces;
+
+    printf("  -- non-blocking transfers --\n");
+    fresh_card(SIM_CARD_HC);
+    sim_budget("non-blocking transfers", 60000000);
+
+    pieces = (MAX_BLOCKS + ALT_SDCARD_MAX_BLOCKS_PER_TRANSFER - 1u)
+           / ALT_SDCARD_MAX_BLOCKS_PER_TRANSFER;
+
+    /* A write with a callback, and nothing but other work until it calls. */
+    fill(wbuf, MAX_BLOCKS, 0x3C);
+    nb_calls = 0;
+    cmds = sdcard.cmd_count;
+    a0   = sim_bus_accesses();
+    r    = alt_sdcard_write_blocks_start(&sdcard, 800u, wbuf, MAX_BLOCKS,
+                                         nb_done, &token);
+    other_work(4000000);
+    used = sim_bus_accesses() - a0;
+    printf("  -- %u blocks in %u piece(s): %llu bus accesses, start to callback --\n",
+           (unsigned)MAX_BLOCKS, (unsigned)pieces, used);
+    check("a non-blocking write returns at once and calls back once with OK, where there is a DMA",
+          dma ? (r == ALT_SDCARD_OK && nb_calls == 1 && nb_result == ALT_SDCARD_OK
+                 && nb_context == &token && nb_dev == &sdcard
+                 && sdcard.cmd_count - cmds == pieces
+                 && on_card(SIM_CARD_HC, 800u, (alt_u8 *)wbuf, MAX_BLOCKS))
+              : (r == ALT_SDCARD_ERR_PARAM && nb_calls == 0));
+
+    /* What the blocking write spends polling STATUS - tens of thousands of
+     * reads for these eight blocks on the harness's default processor - comes
+     * down to the accesses that start each piece and end it, whatever the
+     * transfer's length: 25 for one piece on that processor. The ISR re-reads
+     * STATUS while the last byte leaves the shifter, so a processor with no
+     * delay between accesses spends about twice that. */
+    check("...for a few dozen bus accesses a piece, not a poll loop",
+          !dma || used <= 64u * pieces);
+
+    /* A read with no interrupt connected: transfer_status() alone moves it
+     * along, and must say busy the moment the transfer has started - which a
+     * bare CMD_BUSY read in the next cycle would not. */
+    irq_saved  = sdcard.irq;
+    sdcard.irq = -1;
+    memset(rbuf, 0, sizeof rbuf);
+    nb_calls = 0;
+    r  = alt_sdcard_read_blocks_start(&sdcard, 800u, rbuf, MAX_BLOCKS, 0, 0);
+    r2 = alt_sdcard_transfer_status(&sdcard);
+    r3 = r2;
+    for (polls = 0; r3 == ALT_SDCARD_ERR_BUSY && polls < 1000; polls++) {
+        sim_idle(2000);
+        r3 = alt_sdcard_transfer_status(&sdcard);
+    }
+    sdcard.irq = irq_saved;
+    check("polled with no interrupt, a non-blocking read is busy at once, then OK with the data in place",
+          dma ? (r == ALT_SDCARD_OK && r2 == ALT_SDCARD_ERR_BUSY && r3 == ALT_SDCARD_OK
+                 && memcmp(rbuf, wbuf, MAX_BLOCKS * BLOCK) == 0)
+              : (r == ALT_SDCARD_ERR_PARAM && r2 == ALT_SDCARD_OK && r3 == ALT_SDCARD_OK));
+
+    /* While one runs, everything else that would talk to the card waits its
+     * turn - and works once it is over. */
+    nb_calls = 0;
+    r  = alt_sdcard_read_blocks_start(&sdcard, 800u, rbuf, 1u, nb_done, 0);
+    r2 = alt_sdcard_read_blocks(&sdcard, 800u, rbuf, 1u);
+    r3 = alt_sdcard_read_blocks_start(&sdcard, 800u, rbuf, 1u, nb_done, 0);
+    r4 = alt_sdcard_command(&sdcard, 13, 0, ALT_SDCARD_RESP_AUTO, 0, 0, 0);
+    r6 = alt_sdcard_probe(&sdcard);
+    other_work(1000000);
+    r5 = alt_sdcard_read_blocks(&sdcard, 800u, rbuf, 1u);
+    check("while a non-blocking transfer runs, the other calls get ERR_BUSY, and work once it ends",
+          dma ? (r == ALT_SDCARD_OK && r2 == ALT_SDCARD_ERR_BUSY
+                 && r3 == ALT_SDCARD_ERR_BUSY && r4 == ALT_SDCARD_ERR_BUSY
+                 && r6 == ALT_SDCARD_ERR_BUSY
+                 && nb_calls == 1 && r5 == ALT_SDCARD_OK)
+              : (r == ALT_SDCARD_ERR_PARAM && r2 == ALT_SDCARD_OK
+                 && r3 == ALT_SDCARD_ERR_PARAM && r4 == ALT_SDCARD_OK
+                 && r6 == ALT_SDCARD_OK && r5 == ALT_SDCARD_OK));
+
+    /* A read CRC error, retried from the ISR. */
+    retries = sdcard.retry_count;
+    memset(rbuf, 0, sizeof rbuf);
+    nb_calls = 0;
+    sim_fault_once(SIM_INJ_BAD_DATA_CRC);
+    r = alt_sdcard_read_blocks_start(&sdcard, 800u, rbuf, 2u, nb_done, 0);
+    other_work(2000000);
+    sim_fault(0);
+    check("a non-blocking read's CRC error is retried, and the read succeeds",
+          dma ? (r == ALT_SDCARD_OK && nb_calls == 1 && nb_result == ALT_SDCARD_OK
+                 && sdcard.retry_count == retries + 1u
+                 && memcmp(rbuf, wbuf, 2u * BLOCK) == 0)
+              : r == ALT_SDCARD_ERR_PARAM);
+
+    /* A written block rejected on CRC: stopped with CMD12, retried, landed. */
+    retries = sdcard.retry_count;
+    fill(wbuf, 2u, 0x5D);
+    nb_calls = 0;
+    sim_fault_once(SIM_INJ_WRITE_CRC);
+    r = alt_sdcard_write_blocks_start(&sdcard, 810u, wbuf, 2u, nb_done, 0);
+    other_work(4000000);
+    sim_fault(0);
+    check("a block a non-blocking write had rejected on CRC is recovered with CMD12, retried, and lands",
+          dma ? (r == ALT_SDCARD_OK && nb_calls == 1 && nb_result == ALT_SDCARD_OK
+                 && sdcard.retry_count == retries + 1u
+                 && on_card(SIM_CARD_HC, 810u, (alt_u8 *)wbuf, 2u))
+              : r == ALT_SDCARD_ERR_PARAM);
+
+    /* A callback may start the next transfer, in either context it runs in:
+     * the ISR, or a status call - which returns the result of the transfer
+     * that ended, though the next is already running. */
+    r  = nb_chain(0);
+    r2 = nb_chain(1);
+    check("a completion callback can start the next transfer, from the ISR and from a status call",
+          dma ? (r && r2) : (!r && !r2 && nb_calls == 0));
+
+    /* An event handler installed while a transfer recovers from an error.
+     * Installing one reads IRQ_ENABLE and writes it back; an ISR in between
+     * that adds CMD_DONE for the CMD12 stopping the card must not have that
+     * written over, or the CMD12's end raises nothing and the transfer is never
+     * heard from again. The harness takes an interrupt after any bus access, so
+     * the handler is installed over and over while the transfer runs, from
+     * eight starting phases - more than one bus access's worth of clock cycles
+     * on the processors the DMA builds run on - until the two meet. Only a
+     * socket with a switch has events to enable; without one, installing a
+     * handler makes no bus access, so time would not pass in the loop, and the
+     * transfer is simply left to finish. */
+    alt_sdcard_set_event_handler(&sdcard, on_event);
+    (void)alt_sdcard_probe(&sdcard);
+    lost = 0;
+    for (phase = 0; phase < 8; phase++) {
+        nb_calls = 0;
+        sim_fault_once(SIM_INJ_BAD_DATA_CRC);
+        r = alt_sdcard_read_blocks_start(&sdcard, 800u, rbuf, 2u, nb_done, 0);
+        sim_idle((unsigned)phase);
+        end = sim_cycles() + 2000000u;
+        while (r == ALT_SDCARD_OK && nb_calls == 0 && sim_cycles() < end) {
+            if (cd()) alt_sdcard_set_event_handler(&sdcard, on_event);
+            else      sim_idle(500);
+        }
+        sim_fault(0);
+        if (r != ALT_SDCARD_OK || nb_calls != 1 || nb_result != ALT_SDCARD_OK)
+            lost++;
+        /* Finish one the interrupt lost track of, so one loss stays one. */
+        for (polls = 0; alt_sdcard_transfer_status(&sdcard) == ALT_SDCARD_ERR_BUSY
+                        && polls < 1000; polls++)
+            sim_idle(2000);
+    }
+    alt_sdcard_set_event_handler(&sdcard, 0);
+    check("an event handler installed while a non-blocking transfer recovers loses none of its interrupts",
+          dma ? lost == 0 : lost == 8);
+
+    /* A card that stops answering: reported, and forgotten. */
+    nb_calls = 0;
+    sim_fault(SIM_INJ_NO_RESPONSE);
+    r = alt_sdcard_read_blocks_start(&sdcard, 800u, rbuf, 1u, nb_done, 0);
+    other_work(2000000);
+    sim_fault(0);
+    check("a non-blocking read that times out says so and forgets the card, as the blocking read does",
+          dma ? (r == ALT_SDCARD_OK && nb_calls == 1 && nb_result == ALT_SDCARD_ERR_TIMEOUT
+                 && sdcard.type == ALT_SDCARD_TYPE_NONE)
+              : r == ALT_SDCARD_ERR_PARAM);
+    fresh_card(SIM_CARD_HC);
+
+    r = alt_sdcard_read_blocks_start(&sdcard, 800u, (alt_u8 *)rbuf + 1, 1u, nb_done, 0);
+    check("a misaligned buffer is refused by the non-blocking calls, not bounced",
+          r == ALT_SDCARD_ERR_PARAM);
+
+    /* A card swapped before the start: seen by the switch, where there is one,
+     * or by the new card - still in SD mode - not answering. */
+    swap_to(SIM_CARD_SC);
+    nb_calls = 0;
+    r = alt_sdcard_read_blocks_start(&sdcard, 3u, rbuf, 1u, nb_done, 0);
+    other_work(2000000);
+    check("a card swapped before a non-blocking read is caught, by the switch or by the silence",
+          !dma ? r == ALT_SDCARD_ERR_PARAM
+               : cd() ? (r == ALT_SDCARD_ERR_CHANGED && nb_calls == 0)
+                      : (r == ALT_SDCARD_OK && nb_calls == 1
+                         && nb_result == ALT_SDCARD_ERR_TIMEOUT
+                         && sdcard.type == ALT_SDCARD_TYPE_NONE));
+    fresh_card(SIM_CARD_HC);
+
+    /* A data-path reset part-way through abandons the transfer. */
+    nb_calls = 0;
+    r = alt_sdcard_read_blocks_start(&sdcard, 800u, rbuf, MAX_BLOCKS, nb_done, 0);
+    sim_idle(20000);
+    alt_sdcard_reset_datapath(&sdcard);
+    r2 = alt_sdcard_transfer_status(&sdcard);
+    sim_idle(20000);
+    check("resetting the data path abandons a non-blocking transfer with ERR_TIMEOUT, and no callback",
+          dma ? (r == ALT_SDCARD_OK && r2 == ALT_SDCARD_ERR_TIMEOUT && nb_calls == 0)
+              : (r == ALT_SDCARD_ERR_PARAM && r2 == ALT_SDCARD_OK));
+    fresh_card(SIM_CARD_HC);
+}
+
 static void test_fatfs_glue(void)
 {
     /* Misaligned by one byte: FatFs hands over whatever buffer it has.
@@ -870,6 +1157,7 @@ int driver_tests(void)
     test_interrupts();
     test_write_protect();
     test_fatfs_glue();
+    test_nonblocking();
 
     bad = probe_card(SIM_CARD_SC);
     check("SDSC: probe returns OK", !(bad & PROBE_RETURN));

@@ -42,7 +42,8 @@
 - Bounded waits on every phase, reporting **which** phase failed
 - Split soft resets: reset the data path without losing card identification
 - Nios II HAL driver with `alt_sdcard_*` API: identifies the card on first use,
-  notices card changes, retries CRC errors
+  notices card changes, retries CRC errors, and with the DMA can start a
+  transfer and return, with a callback when it ends
 - FatFs disk I/O layer, for applications that want a filesystem
 
 ## 1.2 What it is for
@@ -66,8 +67,8 @@ nothing about it has been measured on hardware. What it has is:
 | | |
 |---|---|
 | Testbenches | 3 — shifter, FIFO, full core — plus the HAL driver run against the RTL |
-| Checks | 98 in the three testbenches, 99 in the driver harness |
-| Configurations swept | 5 for the full core (`dma`, `pio`, `sdsc`, `tight`, `noburst`); 4 for the driver, plus a processor slower than the card |
+| Checks | 98 in the three testbenches, 112 in the driver harness |
+| Configurations swept | 5 for the full core (`dma`, `pio`, `sdsc`, `tight`, `noburst`); 4 for the driver, plus a processor slower than the card and one with no delay between bus accesses |
 | Bound SVA assertions | 28, plus 6 cover points |
 | Assertion fault injections | 7 — each required to be caught |
 | Platform Designer component checks | 22 |
@@ -277,8 +278,8 @@ processor slower than the card makes the transfer slower, not wrong.
 What software must not do is stop servicing the `DATA` window altogether. The
 data-phase timeout bounds time **without progress**, and after `TIMEOUT` the
 transfer ends with `ERR_DAT_TMO`. A write abandoned in the middle of a block
-leaves the card waiting for the rest of it, which is why the driver issues CMD12
-after any failed write.
+leaves the card waiting for the rest of it, and a failed multi-block read leaves
+it sending, which is why the driver issues CMD12 after any failed transfer.
 
 Both paths are tested rather than assumed — `pio` is one of the five
 configurations the regression sweeps, and the full-core suite also clears
@@ -480,6 +481,8 @@ itself, constructs every instance in `alt_sys_init.c` and calls
 | `alt_sdcard_init` | Bind to the hardware: check `CORE_INFO`, learn the build, register the ISR. Called by the BSP |
 | `alt_sdcard_read_blocks` | Read blocks into memory, identifying the card first if none is |
 | `alt_sdcard_write_blocks` | Write blocks from memory, likewise |
+| `alt_sdcard_read_blocks_start`, `alt_sdcard_write_blocks_start` | The same with the DMA, returning once the transfer is under way — §7.5 |
+| `alt_sdcard_transfer_status` | `ALT_SDCARD_ERR_BUSY`, or the last non-blocking transfer's result; finishes one that has ended |
 | `alt_sdcard_probe` | Identify the card now: 400 kHz sequence, capacity class, CSD and CID, then raise the clock |
 | `alt_sdcard_check` | Has the socket changed? Reads the switch and the latched events; sends nothing |
 | `alt_sdcard_poll` | `alt_sdcard_check`, then CMD13 — is the card still answering? |
@@ -491,9 +494,10 @@ itself, constructs every instance in `alt_sys_init.c` and calls
 | `alt_sdcard_set_event_handler` | A callback from the ISR. Installing one enables the card-detect interrupts |
 | `alt_sdcard_instance` | The n-th controller, for code that is not handed a device |
 
-Every call busy-waits, polling `STATUS` for completion. Under an RTOS that holds
-the calling task for the transfer — about 170 µs a block at 25 MHz — which suits
-a filesystem task and not an interrupt handler.
+Every other call busy-waits, polling `STATUS` for completion. Under an RTOS
+that holds the calling task for the transfer — about 170 µs a block at 25 MHz —
+which suits a filesystem task and not an interrupt handler. The `_start` calls
+are the exception.
 
 ## 7.1 Capacity, and why the CSD parse is separately tested
 
@@ -539,6 +543,13 @@ other reason (`0x0D`) goes straight back to the caller.
 `alt_sdcard_command()` itself never retries, because after CMD55 repeating a
 failed application command would send the ordinary command with the same index.
 
+After any failed transfer, retried or not, the driver resets the data path and
+sends CMD12 before anything else. Resetting the controller does not touch the
+card: a card in a multi-block read goes on sending until CMD12, whatever went
+wrong at the host, and one left part-way through a write waits for the rest.
+Either answers the next command as illegal. A card that had already finished
+answers the CMD12 as illegal instead, and nothing is lost but the command.
+
 ## 7.4 Buffers and PIO
 
 Any buffer works. With the DMA a word-aligned buffer moves in one multi-block
@@ -560,7 +571,64 @@ so it takes every whole word there — or, writing, fills every word of room —
 than the card that is half the bus traffic of reading `STATUS` before every word,
 and so half the transfer time.
 
-## 7.5 FatFs
+## 7.5 Non-blocking transfers
+
+With the DMA, a transfer needs the processor to start it — six register writes —
+and to read its result. The blocking calls spend the time in between reading
+`STATUS` as well. `alt_sdcard_read_blocks_start()` and
+`alt_sdcard_write_blocks_start()` take the same arguments plus a callback and a
+context pointer, and return as soon as the transfer is under way:
+
+```c
+static void sd_done(alt_sdcard_dev *dev, int result, void *context)
+{
+    /* result: what alt_sdcard_read_blocks() would have returned */
+}
+
+r = alt_sdcard_read_blocks_start(&sdcard, block, buf, n, sd_done, ctx);
+/* ... other work ... */
+r = alt_sdcard_transfer_status(&sdcard);   /* ALT_SDCARD_ERR_BUSY until it ends */
+```
+
+- **How the end is noticed.** With the controller's interrupt connected, the
+  driver adds `DATA_DONE` to `IRQ_ENABLE` while the transfer runs, and
+  `CMD_DONE` while it stops the card after a failure, and removes again what it
+  added. Its ISR takes each step and calls the callback. Without one (`irq` is
+  -1 in `system.h`) nothing moves until `alt_sdcard_transfer_status()` is
+  called, which takes the step if the step has ended — so call it from the main
+  loop. The callback runs once, in whichever context noticed the end, and may
+  be 0.
+- **What happens on the way** is what the blocking call does: CRC errors retried
+  `dev->retries` times, CMD12 after a failure, a card that times out forgotten,
+  a transfer longer than `BLK_COUNT` issued in pieces. The callback's result is
+  the one the blocking call would have returned.
+- **What is refused.** `ALT_SDCARD_ERR_PARAM` in a build without the DMA, where
+  the processor moves every word and there is nothing to hand back, and for a
+  buffer that is not word-aligned, which the blocking calls send through a
+  bounce buffer on their stack. Otherwise the start returns what the blocking
+  call returns before its first command: a change of card, no card, write
+  protection, a range past the end of the card. If no card is identified, the
+  start call identifies one first, and that part blocks.
+- **While it runs**, every call that talks to the card — the block calls, a
+  second start, `alt_sdcard_command`, `alt_sdcard_probe`, `alt_sdcard_check`,
+  `alt_sdcard_poll` — returns `ALT_SDCARD_ERR_BUSY`. The buffer must stay valid
+  until it ends. `alt_sdcard_reset_datapath()` abandons it: the status then
+  reads `ALT_SDCARD_ERR_TIMEOUT`, and the callback is not called.
+- **Chaining.** The callback may start the next transfer. Called from
+  `alt_sdcard_transfer_status()`, that call still returns the result of the one
+  that ended. Check `result` before starting another from the ISR: after a
+  timeout the card is forgotten, and the start would identify it there, which
+  takes hundreds of milliseconds.
+- **An event handler** installed with `alt_sdcard_set_event_handler()` sees the
+  `DATA_DONE` and `CMD_DONE` interrupts too, before the driver takes its step.
+  Code of your own that changes `IRQ_ENABLE` while a transfer runs must hold
+  interrupts off from the read to the write, as the driver does: an interrupt
+  in between can add a bit the transfer needs, and the write takes it away.
+
+In the driver harness, eight blocks cost the processor 25 bus accesses from
+start to callback in one `BLK_COUNT`, and 59 split into three.
+
+## 7.6 FatFs
 
 `software/fatfs/diskio_altera_sdcard.c` implements FatFs's disk I/O functions —
 `disk_status`, `disk_initialize`, `disk_read`, `disk_write`, `disk_ioctl` — on
@@ -605,7 +673,8 @@ Not throughput. At SPI rates the memory side is never the bottleneck, and
 `M0_BURST_WIDTH = 1` measures the same as `8`. What the DMA buys is **CPU time**
 and **immunity to interrupt latency**: without it the CPU must service the
 `DATA` window for the whole of every transfer, and the transfer goes no faster
-than the CPU does.
+than the CPU does. The blocking calls spend that time anyway, reading `STATUS`
+until the transfer ends; the calls in §7.5 are the ones that give it back.
 
 ---
 
@@ -671,8 +740,9 @@ unmodified, linked into the Verilator model, with a small C++ harness standing i
 for the processor — each register access is one Avalon-MM transfer, and nothing
 else moves simulated time. Two cards, one of each capacity class, can be swapped
 in the socket between calls or in the middle of one. It runs with and without the
-DMA and a card-detect switch, and on a processor more than twice as slow as the
-card, 99 checks each time, and it calls the FatFs glue the way FatFs does.
+DMA and a card-detect switch, on a processor more than twice as slow as the
+card and on one with no delay between bus accesses, 112 checks each time, and it
+calls the FatFs glue the way FatFs does.
 
 Its first run found two faults every other suite had passed. The driver's
 power-up clocks were timed by a CPU loop rather than by anything the bus can
@@ -693,6 +763,18 @@ has room for it and the DMA is free, and the README's section
 clock cycles per word, and must see blocks held, since the PIO loop reads
 `STATUS` once per batch of words rather than before every word — which a further
 check holds it to.
+
+Adding the non-blocking calls found two faults in the driver. A `STATUS` read in
+the cycle after a `CMD` write finds the core idle — it shows the command as busy
+two cycles later — and every wait in the driver took idle for finished, so on a
+processor with no delay between accesses it could not identify a card; a wait
+now also requires `CMD_DONE` or `DATA_DONE` latched. And a failed multi-block
+read left the card sending, because only a failed write was followed by CMD12,
+so a CRC error's retry was refused and the card was unusable after it. A check
+written for a third found it: installing an event handler while a transfer
+recovered could write over the `CMD_DONE` the interrupt handler had just
+enabled, and the transfer's callback never came. The README's *What the
+non-blocking calls found* has the detail.
 
 ## 9.4 Questa
 
@@ -745,6 +827,8 @@ reasoning.
 - **No CMD12 for multi-block writes** beyond the `0xFD` stop token, which is
   what the specification requires; there is no `AUTO_STOP` equivalent issuing a
   separate command on the write side.
+- **Non-blocking transfers need the DMA** and a word-aligned buffer, and there
+  is one at a time per controller. Without the DMA every call blocks.
 - **`DMA_CTRL` defines only contiguous mode.** The field exists so a descriptor
   mode could be added as a reserved encoding rather than an ABI break.
 - **No erase, no lock/unlock, no SDIO.** The FatFs glue does not implement

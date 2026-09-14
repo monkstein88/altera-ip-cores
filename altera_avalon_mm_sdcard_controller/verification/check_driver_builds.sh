@@ -77,6 +77,10 @@ static inline int alt_ic_isr_register(alt_u32 ic_id, alt_u32 irq,
                                       alt_isr_func isr, void *context,
                                       void *flags)
 { (void)ic_id; (void)irq; (void)isr; (void)context; (void)flags; return 0; }
+/* The real HAL's are inline too, with this context type. */
+typedef int alt_irq_context;
+static inline alt_irq_context alt_irq_disable_all(void) { return 0; }
+static inline void alt_irq_enable_all(alt_irq_context context) { (void)context; }
 #endif
 EOF
 

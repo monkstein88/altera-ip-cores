@@ -49,6 +49,10 @@
 
 static alt_sdcard_dev *instances[ALT_SDCARD_MAX_INSTANCES];
 
+/* The non-blocking engine, which the ISR calls and which lives beside the
+ * transfers it mirrors. */
+static int async_service(alt_sdcard_dev *dev, int in_isr);
+
 /* -------------------------------------------------------------------------
  * Low-level helpers
  * ---------------------------------------------------------------------- */
@@ -145,28 +149,78 @@ static void issue(alt_sdcard_dev *dev, alt_u8 index, alt_u32 arg,
     dev->cmd_count++;
 }
 
+/* Reset the data path. Data path only: the command path and every
+ * configuration register are untouched, so the card stays identified - which
+ * is the entire reason the reset is split into domains. Card events survive
+ * too, for card_changed(). */
+static void datapath_reset(alt_sdcard_dev *dev)
+{
+    ALT_SDCARD_WR_CTRL(dev->base,
+                       ALT_SDCARD_RD_CTRL(dev->base) |
+                       ALT_SDCARD_CTRL_SRST_DAT_MSK);
+    ALT_SDCARD_WR_IRQ_STATUS(dev->base, ~ALT_SDCARD_IRQ_CARD_MSK);
+}
+
+/* What the core has latched about the command running now: IRQ_STATUS, plus
+ * anything an application-enabled interrupt acknowledged first, less the card
+ * events, which belong to card_changed(). issue() cleared both. */
+static alt_u32 latched(alt_sdcard_dev *dev)
+{
+    return (ALT_SDCARD_RD_IRQ_STATUS(dev->base) | dev->isr_status)
+           & ~ALT_SDCARD_IRQ_CARD_MSK;
+}
+
+/* Every command ends with one of these latched, whatever the outcome: CMD_DONE
+ * when one without a data phase succeeds, DATA_DONE when a transfer ends and
+ * whenever anything fails. */
+#define ENDED_MSK (ALT_SDCARD_IRQ_CMD_DONE_MSK | ALT_SDCARD_IRQ_DATA_DONE_MSK)
+
+/* STATUS reads showing neither busy nor an end that mean the command never
+ * started - the core is disabled - rather than that it has not started YET. */
+#define NEVER_STARTED 8u
+
+/* Has the command issued last finished?
+ *
+ * Not "is CMD_BUSY clear". The core takes two clock cycles to show a command
+ * it has just been given as busy, so a processor whose STATUS read lands in
+ * the cycle after its CMD write reads an idle core and would take a command
+ * that has not started for one that has finished. The driver harness runs one:
+ * with no delay between bus accesses, identification failed on every card.
+ * An end is latched as well as busy being clear, or the command has not run.
+ * `quiet` counts the reads that saw neither, so a command a disabled core
+ * ignored is given up on rather than waited for: the gap is one read at most,
+ * and NEVER_STARTED is margin. */
+static int ended(alt_sdcard_dev *dev, alt_u32 st, alt_u32 *quiet)
+{
+    if (st & ALT_SDCARD_STAT_CMD_BUSY_MSK) {
+        *quiet = 0;
+        return 0;
+    }
+    if (latched(dev) & ENDED_MSK) return 1;
+    return ++*quiet >= NEVER_STARTED;
+}
+
 /* Wait for the command to finish and turn the latched status into a result.
  * `st_out`, if given, receives the status bits the result was made from. */
 static int complete(alt_sdcard_dev *dev, alt_u32 *resp0, alt_u32 *resp1,
                     alt_u32 *st_out)
 {
-    alt_u32 st;
+    alt_u32 st, quiet = 0;
 
-    while (ALT_SDCARD_RD_STATUS(dev->base) & ALT_SDCARD_STAT_CMD_BUSY_MSK) {
+    while (!ended(dev, ALT_SDCARD_RD_STATUS(dev->base), &quiet)) {
         /* spin - every wait inside the core is bounded by TIMEOUT, so this
          * cannot hang on a card that has stopped answering */
     }
 
-    /* Plus anything an application-enabled interrupt acknowledged first. */
-    st = ALT_SDCARD_RD_IRQ_STATUS(dev->base) | dev->isr_status;
-    st &= ~ALT_SDCARD_IRQ_CARD_MSK;
+    st = latched(dev);
     account(dev, st);
 
     if (resp0)  *resp0  = ALT_SDCARD_RD_RESP0(dev->base);
     if (resp1)  *resp1  = ALT_SDCARD_RD_RESP1(dev->base);
     if (st_out) *st_out = st;
 
-    return irq_to_result(st);
+    /* No end latched at all: the core never ran it. */
+    return (st & ENDED_MSK) ? irq_to_result(st) : ALT_SDCARD_ERR_NOT_READY;
 }
 
 /* The SPI-mode response format of each command (§7.3.2, table 7-3).
@@ -193,6 +247,7 @@ int alt_sdcard_command(alt_sdcard_dev *dev, alt_u8 index, alt_u32 arg,
                        alt_u32 *resp0, alt_u32 *resp1)
 {
     if (dev == 0 || index > 63u) return ALT_SDCARD_ERR_PARAM;
+    if (dev->async.running) return ALT_SDCARD_ERR_BUSY;
 
     if (resp_type == ALT_SDCARD_RESP_AUTO)
         resp_type = resp_for(index);
@@ -256,8 +311,19 @@ static int app_command(alt_sdcard_dev *dev, alt_u8 index, alt_u32 arg,
  * whole words only: a read never counts a partial word as available, and a
  * write never counts the part of a word still going out as room.
  *
- * Both loops still watch CMD_BUSY, so a transfer that fails part-way ends the
+ * Both loops end early only once the transfer has - ended() below, not a bare
+ * CMD_BUSY, for the reason given there - so one that fails part-way ends the
  * loop instead of leaving it waiting on a buffer that will never fill or drain.
+ *
+ * A write leaves one word of room unused each time it looks. A DATA write
+ * reaches the buffer a cycle after the access, so a STATUS read in the very
+ * next cycle can still count the last word written as room; taking all of it
+ * would then overfill the buffer by one, which the core refuses and reports as
+ * ERR_PIO. The margin costs one STATUS read in 255 words. No test reaches the
+ * case it guards: the harness's run with no delay between accesses passes
+ * without it, because the word the sequencer has taken to send is still
+ * counted in LEVEL, and the overcount only shows in the cycle or two between
+ * one such word being sent and the next being taken.
  *
  * Words are copied with memcpy rather than through an alt_u32 pointer, so the
  * caller's buffer need not be aligned: a misaligned 32-bit load on Nios II is
@@ -271,14 +337,14 @@ static alt_u32 status_level(alt_u32 st)
 
 static int pio_read(alt_sdcard_dev *dev, alt_u8 *dst, alt_u32 words)
 {
-    alt_u32 got = 0;
+    alt_u32 got = 0, quiet = 0;
     alt_u32 st, n, w;
 
     while (got < words) {
         st = ALT_SDCARD_RD_STATUS(dev->base);
         n  = status_level(st) / 4u;            /* whole words waiting */
         if (n == 0u) {
-            if (!(st & ALT_SDCARD_STAT_CMD_BUSY_MSK))
+            if (ended(dev, st, &quiet))
                 break;  /* transfer over and the buffer is drained */
             continue;
         }
@@ -294,15 +360,16 @@ static int pio_read(alt_sdcard_dev *dev, alt_u8 *dst, alt_u32 words)
 
 static int pio_write(alt_sdcard_dev *dev, const alt_u8 *src, alt_u32 words)
 {
-    alt_u32 put = 0;
+    alt_u32 put = 0, quiet = 0;
     alt_u32 st, n, w, level;
 
     while (put < words) {
         st = ALT_SDCARD_RD_STATUS(dev->base);
         level = status_level(st);
         n = (level < dev->fifo_bytes) ? (dev->fifo_bytes - level) / 4u : 0u;
+        if (n > 0u) n--;                       /* the margin, see above */
         if (n == 0u) {
-            if (!(st & ALT_SDCARD_STAT_CMD_BUSY_MSK))
+            if (ended(dev, st, &quiet))
                 break;  /* the transfer gave up before we finished feeding it */
             continue;
         }
@@ -344,7 +411,7 @@ static int read_reg16(alt_sdcard_dev *dev, alt_u8 index, alt_u8 *out16)
         ALT_SDCARD_WR(dev->base, ALT_SDCARD_BLK_SIZE_OFST, 512);
 
         if (r == ALT_SDCARD_OK) break;
-        alt_sdcard_reset_datapath(dev);
+        datapath_reset(dev);
         if (!(st & (ALT_SDCARD_IRQ_ERR_CMD_CRC_MSK | ALT_SDCARD_IRQ_ERR_DAT_CRC_MSK))
                 || attempt >= dev->retries)
             return r;
@@ -445,6 +512,7 @@ static int card_changed(alt_sdcard_dev *dev)
 int alt_sdcard_check(alt_sdcard_dev *dev)
 {
     if (dev == 0) return ALT_SDCARD_ERR_PARAM;
+    if (dev->async.running) return ALT_SDCARD_ERR_BUSY;
 
     if (card_changed(dev) && dev->type != ALT_SDCARD_TYPE_NONE) {
         /* Fail THIS call; the next one identifies whatever is there. The caller
@@ -498,6 +566,10 @@ static void sdcard_isr(void *context)
     dev->isr_status |= st & ~ALT_SDCARD_IRQ_CARD_MSK;
 
     if (dev->on_event) dev->on_event(dev, st);
+
+    /* A non-blocking transfer's step may have ended: take the next one. */
+    if (dev->async.running && async_service(dev, 1) && dev->async.done)
+        dev->async.done(dev, dev->async.result, dev->async.context);
 }
 
 /* -------------------------------------------------------------------------
@@ -537,6 +609,8 @@ int alt_sdcard_init(alt_sdcard_dev *dev)
     dev->isr_card_events  = 0;
     dev->card_events_seen = 0;
     dev->isr_status       = 0;
+
+    memset(&dev->async, 0, sizeof dev->async);
 
     ALT_SDCARD_WR_CTRL(dev->base, 0);
     ALT_SDCARD_WR_IRQ_ENABLE(dev->base, 0);
@@ -699,6 +773,7 @@ int alt_sdcard_probe(alt_sdcard_dev *dev)
     int r;
 
     if (dev == 0) return ALT_SDCARD_ERR_PARAM;
+    if (dev->async.running) return ALT_SDCARD_ERR_BUSY;
 
     /* Whatever happened in the socket before now is superseded by what is
      * about to be identified. */
@@ -740,8 +815,20 @@ static alt_u32 block_to_arg(alt_sdcard_dev *dev, alt_u32 block)
 /* Put things back after a failed transfer.
  *
  * Resetting the data path clears the CONTROLLER, which is all it claims to do
- * and all it can do. It does not touch the card, and a failed write leaves the
- * card in the middle of something:
+ * and all it can do. It does not touch the card, and a failed transfer leaves
+ * the card in the middle of something. A failed read, first:
+ *
+ *   The card goes on sending. A multi-block read runs until CMD12 whatever
+ *   happened at the host - a CRC error the card never learns of, a block the
+ *   core held for room and gave up on, a DMA error - and so does a single
+ *   block the core stopped part-way. Deselecting the card does not end it. A
+ *   card left sending answers the next command as illegal, and this driver used
+ *   to say reads needed nothing: a 2-block read with one corrupt block in the
+ *   driver harness came back as a timeout, and the card as unusable after it.
+ *   CMD12 ends any of these; a card that had already finished answers it as an
+ *   illegal command, which costs one command and changes nothing.
+ *
+ * And a failed write:
  *
  *   Stopped at a block boundary - a multi-block write that failed between
  *   blocks - the card is waiting for the next data token, and §7.3.3.1 says the
@@ -763,30 +850,25 @@ static alt_u32 block_to_arg(alt_sdcard_dev *dev, alt_u32 block)
  * That is bounded, and it is the right trade - the alternative is leaving a
  * recoverable card wedged to save a wait on an unrecoverable one.
  *
- * Reads need none of this. A card streaming a block stops when CS is deasserted
- * and is addressable again immediately.
+ * So every failed transfer, read or write, is followed by CMD12, and its result
+ * is not looked at: whether the card was sending, receiving or finished, the
+ * data path is reset again behind it and the caller gets the original error.
  */
-static void recover(alt_sdcard_dev *dev, int writing)
+static void recover(alt_sdcard_dev *dev)
 {
-    alt_sdcard_reset_datapath(dev);
-
-    if (writing) {
-        (void)alt_sdcard_command(dev, 12, 0, ALT_SDCARD_RESP_R1B, 0, 0, 0);
-        alt_sdcard_reset_datapath(dev);
-    }
+    datapath_reset(dev);
+    (void)alt_sdcard_command(dev, 12, 0, ALT_SDCARD_RESP_R1B, 0, 0, 0);
+    datapath_reset(dev);
 }
 
-/* One attempt at one transfer of at most MAX_BLOCKS_PER_TRANSFER blocks, from
- * or to a word-aligned buffer. `*retry` says whether a failure is one that may
- * safely be tried again. */
-static int transfer_once(alt_sdcard_dev *dev, alt_u32 block, void *buf,
-                         alt_u32 count, int writing, int *retry)
+/* Put one transfer of `count` blocks under way: block size and count, the
+ * buffer the DMA works on, and the read or write command. Both the blocking
+ * and the non-blocking paths go through here, so they send the same thing. */
+static void issue_transfer(alt_sdcard_dev *dev, alt_u32 block, void *buf,
+                           alt_u32 count, int writing)
 {
-    alt_u32 extra, st;
+    alt_u32 extra;
     alt_u8  index;
-    int     r;
-
-    *retry = 0;
 
     wait_not_busy(dev);
 
@@ -809,6 +891,39 @@ static int transfer_once(alt_sdcard_dev *dev, alt_u32 block, void *buf,
     }
 
     issue(dev, index, block_to_arg(dev, block), ALT_SDCARD_RESP_R1, extra);
+}
+
+/* May a transfer that failed with status `st` be tried again?
+ *
+ * A command CRC error, a read whose CRC16 failed, or a written block the card
+ * rejected ON CRC (data response 0bxxx01011). The last has to be told apart
+ * from a genuine write error, which reports through the same status bit, so
+ * this reads the data response - before any reset can clear it. A multi-block
+ * write retried from the start rewrites blocks that did land - with the same
+ * data, at the same address.
+ *
+ * One cause at a time is enough: the sequencer stops at the first error, so a
+ * timeout never arrives alongside a CRC error to be retried by mistake. */
+static int retryable(alt_sdcard_dev *dev, alt_u32 st, int writing)
+{
+    if (st & (ALT_SDCARD_IRQ_ERR_CMD_CRC_MSK | ALT_SDCARD_IRQ_ERR_DAT_CRC_MSK))
+        return 1;
+    return writing && (st & ALT_SDCARD_IRQ_ERR_WRITE_MSK) &&
+           ((ALT_SDCARD_RD_ERR_INFO(dev->base) & 0x1Fu) == 0x0Bu);
+}
+
+/* One attempt at one transfer of at most MAX_BLOCKS_PER_TRANSFER blocks, from
+ * or to a word-aligned buffer. `*retry` says whether a failure is one that may
+ * safely be tried again. */
+static int transfer_once(alt_sdcard_dev *dev, alt_u32 block, void *buf,
+                         alt_u32 count, int writing, int *retry)
+{
+    alt_u32 st;
+    int     r;
+
+    *retry = 0;
+
+    issue_transfer(dev, block, buf, count, writing);
 
     /* Without the DMA nothing else moves the data, so software must, while the
      * transfer runs - the buffer is cleared when the command starts, so it
@@ -827,23 +942,8 @@ static int transfer_once(alt_sdcard_dev *dev, alt_u32 block, void *buf,
     r = complete(dev, 0, 0, &st);
     if (r == ALT_SDCARD_OK) return ALT_SDCARD_OK;
 
-    /* Retryable: a command CRC error, a read whose CRC16 failed, or a written
-     * block the card rejected ON CRC (data response 0bxxx01011). The last has
-     * to be told apart from a genuine write error, which reports through the
-     * same status bit, so the data response is read before the reset below
-     * can clear it. A multi-block write retried from the start rewrites blocks
-     * that did land - with the same data, at the same address.
-     *
-     * One cause at a time is enough: the sequencer stops at the first error, so
-     * a timeout never arrives alongside a CRC error to be retried by mistake. */
-    if (st & (ALT_SDCARD_IRQ_ERR_CMD_CRC_MSK | ALT_SDCARD_IRQ_ERR_DAT_CRC_MSK)) {
-        *retry = 1;
-    } else if (writing && (st & ALT_SDCARD_IRQ_ERR_WRITE_MSK) &&
-               ((ALT_SDCARD_RD_ERR_INFO(dev->base) & 0x1Fu) == 0x0Bu)) {
-        *retry = 1;
-    }
-
-    recover(dev, writing);
+    *retry = retryable(dev, st, writing);
+    recover(dev);
     return r;
 }
 
@@ -893,6 +993,8 @@ static int transfer(alt_sdcard_dev *dev, alt_u32 block, void *buf,
 
     if (dev == 0 || buf == 0 || count == 0) return ALT_SDCARD_ERR_PARAM;
 
+    /* ensure_ready() goes through alt_sdcard_check(), which refuses while a
+     * non-blocking transfer runs - so this does too. */
     r = ensure_ready(dev);
     if (r != ALT_SDCARD_OK) return r;
 
@@ -932,6 +1034,204 @@ int alt_sdcard_write_blocks(alt_sdcard_dev *dev, alt_u32 block,
                             const void *buf, alt_u32 count)
 {
     return transfer(dev, block, (void *)buf, count, 1);
+}
+
+/* -------------------------------------------------------------------------
+ * Non-blocking transfers - see NON-BLOCKING TRANSFERS in the header.
+ *
+ * transfer(), one step at a time. A step issues a command and returns; its end
+ * is noticed by async_service(), from the ISR or from
+ * alt_sdcard_transfer_status(), which takes the next step - the next piece of
+ * a transfer longer than BLK_COUNT, a retry, the CMD12 that stops a failed
+ * write - or delivers the result. No step waits on the card, which is what
+ * makes it fit to run in the ISR, and each makes the same decision the
+ * blocking path makes at the same point.
+ * ---------------------------------------------------------------------- */
+
+/* The interrupt sources the step running now ends on, added to whatever the
+ * application enabled and taken away again afterwards. A data step ends on
+ * DATA_DONE; the CMD12 of a recovery has no data phase and ends on CMD_DONE.
+ * Every failure latches DATA_DONE as well, so no error bit is needed. Without a
+ * connected interrupt nothing is enabled, and transfer_status() does the work.
+ *
+ * It reads IRQ_ENABLE and writes it back, and so does the ISR's step, so it is
+ * only ever called from the ISR or with interrupts held off: an ISR between the
+ * two would have its change written over - the CMD_DONE of a recovery's CMD12
+ * lost, and the transfer never heard from again. */
+static void async_irq(alt_sdcard_dev *dev, alt_u32 bits)
+{
+    alt_u32 en;
+
+    if (dev->irq == -1) return;
+    en  = ALT_SDCARD_RD(dev->base, ALT_SDCARD_IRQ_ENABLE_OFST);
+    en &= ~dev->async.irq_added;
+    dev->async.irq_added = bits & ~en;
+    ALT_SDCARD_WR_IRQ_ENABLE(dev->base, en | bits);
+}
+
+/* The next piece: as many of the blocks left as one BLK_COUNT can carry. */
+static void async_piece(alt_sdcard_dev *dev)
+{
+    alt_u32 n = dev->async.left;
+
+    if (n > MAX_BLOCKS_PER_TRANSFER) n = MAX_BLOCKS_PER_TRANSFER;
+    dev->async.piece    = n;
+    dev->async.stopping = 0;
+    issue_transfer(dev, dev->async.block, dev->async.buf, n, dev->async.writing);
+}
+
+/* Deliver the result. The callback is left to the caller of async_service(),
+ * which may still hold the interrupts off. */
+static int async_end(alt_sdcard_dev *dev, int r)
+{
+    async_irq(dev, 0);
+    dev->async.result  = r;
+    dev->async.running = 0;
+    return 1;
+}
+
+/* If the step running now has ended, take the next one. Returns 1 when that
+ * was the end of the transfer.
+ *
+ * The end is latched about a byte before the core goes idle - the last byte
+ * leaving the shifter, and the DMA's last write - and the next command cannot
+ * go out until it is. The ISR will not be called again for this end, so it
+ * waits that out; a status call reports busy and is simply asked again. */
+static int async_service(alt_sdcard_dev *dev, int in_isr)
+{
+    alt_u32 want, st;
+    int     r;
+
+    if (!dev->async.running) return 0;
+
+    want = dev->async.stopping ? ENDED_MSK : ALT_SDCARD_IRQ_DATA_DONE_MSK;
+    st   = latched(dev);
+    if (!(st & want)) return 0;
+
+    while (ALT_SDCARD_RD_STATUS(dev->base) & ALT_SDCARD_STAT_CMD_BUSY_MSK) {
+        if (!in_isr) return 0;
+    }
+
+    account(dev, st);
+    r = irq_to_result(st);
+
+    if (!dev->async.stopping) {
+        if (r == ALT_SDCARD_OK) {
+            dev->async.block   += dev->async.piece;
+            dev->async.buf     += 512u * dev->async.piece;
+            dev->async.left    -= dev->async.piece;
+            dev->async.attempt  = 0;
+            if (dev->async.left == 0u) return async_end(dev, ALT_SDCARD_OK);
+            async_piece(dev);
+            async_irq(dev, ALT_SDCARD_IRQ_DATA_DONE_MSK);
+            return 0;
+        }
+
+        /* transfer_once(): whether to retry, decided before the reset; then
+         * recover(), with its CMD12 as a step of its own. */
+        dev->async.error    = r;
+        dev->async.retry    = retryable(dev, st, dev->async.writing);
+        dev->async.stopping = 1;
+        datapath_reset(dev);
+        issue(dev, 12, 0, ALT_SDCARD_RESP_R1B, 0);
+        async_irq(dev, ENDED_MSK);
+        return 0;
+    } else {
+        /* The CMD12 has ended, however it went - recover() does not look
+         * either - and the data path is reset again behind it. */
+        datapath_reset(dev);
+    }
+
+    /* transfer_retried(). */
+    if (dev->async.retry && dev->async.attempt < dev->retries) {
+        dev->async.attempt++;
+        dev->retry_count++;
+        async_piece(dev);
+        async_irq(dev, ALT_SDCARD_IRQ_DATA_DONE_MSK);
+        return 0;
+    }
+    if (dev->async.error == ALT_SDCARD_ERR_TIMEOUT) invalidate(dev);
+    return async_end(dev, dev->async.error);
+}
+
+static int transfer_start(alt_sdcard_dev *dev, alt_u32 block, void *buf,
+                          alt_u32 count, int writing,
+                          alt_sdcard_done_fn done, void *context)
+{
+    alt_irq_context ctx;
+    int             r;
+
+    if (dev == 0 || buf == 0 || count == 0) return ALT_SDCARD_ERR_PARAM;
+    if (dev->async.running) return ALT_SDCARD_ERR_BUSY;
+
+    /* Without the DMA the processor moves every word and has nothing to hand
+     * back; a misaligned buffer needs the bounce buffer transfer() keeps on
+     * its stack, which does not outlive this call. */
+    if (!dev->use_dma || (((uintptr_t)buf & 3u) != 0u)) return ALT_SDCARD_ERR_PARAM;
+
+    /* The same checks transfer() makes, identification included. */
+    r = ensure_ready(dev);
+    if (r != ALT_SDCARD_OK) return r;
+    if (block >= dev->blocks || count > dev->blocks - block)
+        return ALT_SDCARD_ERR_PARAM;
+    if (writing && alt_sdcard_write_protected(dev))
+        return ALT_SDCARD_ERR_PROTECTED;
+
+    dev->async.writing = writing;
+    dev->async.block   = block;
+    dev->async.buf     = (alt_u8 *)buf;
+    dev->async.left    = count;
+    dev->async.attempt = 0;
+    dev->async.retry   = 0;
+    dev->async.error   = ALT_SDCARD_OK;
+    dev->async.done    = done;
+    dev->async.context = context;
+
+    /* In this order. issue() clears the previous command's status, including
+     * a DATA_DONE the ISR may have saved; `running` set any earlier would let
+     * an interrupt in between take that for this transfer's end. And the
+     * interrupt is enabled last, so an end latched in the meantime raises it
+     * the moment it is. The issue itself may wait for the core, so only what
+     * follows it holds the interrupts off. */
+    async_piece(dev);
+    ctx = alt_irq_disable_all();
+    dev->async.running = 1;
+    async_irq(dev, ALT_SDCARD_IRQ_DATA_DONE_MSK);
+    alt_irq_enable_all(ctx);
+    return ALT_SDCARD_OK;
+}
+
+int alt_sdcard_read_blocks_start(alt_sdcard_dev *dev, alt_u32 block,
+                                 void *buf, alt_u32 count,
+                                 alt_sdcard_done_fn done, void *context)
+{
+    return transfer_start(dev, block, buf, count, 0, done, context);
+}
+
+int alt_sdcard_write_blocks_start(alt_sdcard_dev *dev, alt_u32 block,
+                                  const void *buf, alt_u32 count,
+                                  alt_sdcard_done_fn done, void *context)
+{
+    return transfer_start(dev, block, (void *)buf, count, 1, done, context);
+}
+
+int alt_sdcard_transfer_status(alt_sdcard_dev *dev)
+{
+    alt_irq_context ctx;
+    int ended_now, r;
+
+    if (dev == 0) return ALT_SDCARD_ERR_PARAM;
+
+    /* Held off so the ISR cannot take a step at the same time as this. The
+     * callback runs after, not inside, the critical section. */
+    ctx = alt_irq_disable_all();
+    ended_now = async_service(dev, 0);
+    r = dev->async.running ? ALT_SDCARD_ERR_BUSY : dev->async.result;
+    alt_irq_enable_all(ctx);
+
+    if (ended_now && dev->async.done)
+        dev->async.done(dev, r, dev->async.context);
+    return r;
 }
 
 /* -------------------------------------------------------------------------
@@ -992,29 +1292,36 @@ alt_u32 alt_sdcard_block_count(alt_sdcard_dev *dev)
 
 void alt_sdcard_reset_datapath(alt_sdcard_dev *dev)
 {
+    alt_irq_context ctx;
+
     if (dev == 0) return;
-    /* Data path only. The command path and every configuration register are
-     * untouched, so the card stays identified - which is the entire reason the
-     * reset is split into domains. Card events survive too, for card_changed().
-     */
-    ALT_SDCARD_WR_CTRL(dev->base,
-                       ALT_SDCARD_RD_CTRL(dev->base) |
-                       ALT_SDCARD_CTRL_SRST_DAT_MSK);
-    ALT_SDCARD_WR_IRQ_STATUS(dev->base, ~ALT_SDCARD_IRQ_CARD_MSK);
+
+    /* A non-blocking transfer running now will never see its end latched once
+     * the data path is reset under it, so it is ended here, with the ISR held
+     * off while that happens. */
+    ctx = alt_irq_disable_all();
+    if (dev->async.running) (void)async_end(dev, ALT_SDCARD_ERR_TIMEOUT);
+    datapath_reset(dev);
+    alt_irq_enable_all(ctx);
 }
 
 void alt_sdcard_set_event_handler(alt_sdcard_dev *dev,
         void (*handler)(alt_sdcard_dev *dev, alt_u32 irq_status))
 {
-    alt_u32 en;
+    alt_irq_context ctx;
+    alt_u32         en;
 
     if (dev == 0) return;
     dev->on_event = handler;
 
+    /* With the interrupts held off, for the reason given at async_irq(): the
+     * ISR may be changing IRQ_ENABLE for a non-blocking transfer. */
     if (dev->has_card_detect && dev->irq != -1) {
-        en = ALT_SDCARD_RD(dev->base, ALT_SDCARD_IRQ_ENABLE_OFST);
+        ctx = alt_irq_disable_all();
+        en  = ALT_SDCARD_RD(dev->base, ALT_SDCARD_IRQ_ENABLE_OFST);
         if (handler) en |=  ALT_SDCARD_IRQ_CARD_MSK;
         else         en &= ~ALT_SDCARD_IRQ_CARD_MSK;
         ALT_SDCARD_WR_IRQ_ENABLE(dev->base, en);
+        alt_irq_enable_all(ctx);
     }
 }

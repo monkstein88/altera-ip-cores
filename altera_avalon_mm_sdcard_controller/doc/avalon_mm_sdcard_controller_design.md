@@ -544,8 +544,13 @@ under a second at 400 kHz.
 
 Then a block API — read and write, multi-block whenever the count is above
 one — that sets `DMA_ADDR`, `BLK_COUNT` and `CMD` and polls for completion.
-Three policies sit in it, all decided in software because each is a judgement
-about cards rather than about the bus:
+With the DMA it also comes as a pair of calls that return once the transfer is
+under way, which is the point of having a bus master: the ISR, or a status call
+where there is no interrupt, takes each step as the last one ends and calls a
+completion callback. They are the blocking path taken a step at a time — the
+same commands, the same decisions at the same points — so neither needs a policy
+of its own. Four policies sit in the block API, all decided in software because
+each is a judgement about cards rather than about the bus:
 
 - **Identification on first use.** The block calls identify the card when none
   is identified, so `probe()` is available rather than required.
@@ -557,6 +562,11 @@ about cards rather than about the bus:
 - **Retries.** CRC errors, and nothing else: a command whose CRC fails was not
   executed, a read can be repeated, and a block rejected on CRC was never
   programmed. A timeout or a card-reported error is the caller's to handle.
+- **Recovery.** CMD12 after every failed transfer. The data-path reset clears
+  the controller and cannot touch the card, which is still sending a
+  multi-block read, or waiting for the rest of a write, until it is told to
+  stop. A card that had finished answers CMD12 as illegal, which costs a
+  command; leaving one that had not answers every later command as illegal.
 
 The FatFs disk I/O layer in `software/fatfs/` adds the one policy a filesystem
 needs on top — a mounted volume is tied to the identification it was mounted
@@ -674,7 +684,11 @@ wait timed by a CPU loop, and a response window the sequencer opened one byte
 early at 25 MHz. Its slow processor was at first faster than the card; run
 genuinely slower, it showed a multi-block read overrunning the buffer and losing
 bytes behind a passing CRC. That, and a DMA start lost to a memory stall, are
-why a read block is now admitted rather than simply received.
+why a read block is now admitted rather than simply received. It also runs on a
+processor with no delay between bus accesses, which showed that a command reads
+as idle in the two cycles before the core shows it busy — every wait in the
+driver took that for finished — and it found a failed multi-block read leaving
+the card sending, since the driver stopped only failed writes with CMD12.
 
 ---
 
@@ -822,9 +836,11 @@ Things deliberately left undecided, to be closed during implementation:
    scratch copy of the driver harness, eight blocks through the DMA took 132 760
    clock cycles with a fast processor and 136 353 with one costing 301 cycles a
    bus access; the mapped buffer, estimated from the same per-access costs,
-   comes to about 137 000 and 446 000. The driver does not yet collect the DMA's
-   saving - it reads `STATUS` for the whole transfer - but that is a change to
-   the driver, not a reason for another data path.
+   comes to about 137 000 and 446 000. The driver did not then collect the DMA's
+   saving - it read `STATUS` for the whole transfer - but that was a change to
+   the driver, not a reason for another data path, and it has been made:
+   `alt_sdcard_read_blocks_start()` takes the same eight blocks for 25 bus
+   accesses from start to completion callback.
 
    *Against PIO.* The FIFO lets the card and the processor work at the same
    time, where a mapped buffer makes them take turns. Once the PIO loop stopped

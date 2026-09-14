@@ -15,7 +15,7 @@ driver the BSP picks up by itself.
 > behavioural SD card model — with the full-core suite run in five
 > configurations — plus bound SVA assertions proven live by fault injection,
 > 22 checks on the Platform Designer component, and the HAL driver itself run
-> against the RTL: 99 checks, in four builds. None of that is a substitute for
+> against the RTL: 112 checks, in four builds. None of that is a substitute for
 > hardware, and the DE10-Lite this repository's other examples target has no
 > microSD socket — see
 > [Verification status](#verification-status--what-is-and-is-not-proven).
@@ -32,7 +32,7 @@ driver the BSP picks up by itself.
 | **CRC** | CRC7 on every command, CRC16 on every data block, computed during the transfer |
 | **DMA** | Optional Avalon-MM master, bursting, straight into system memory |
 | **Measured throughput** | **98.1% of SPI line rate** — 3.07 MB/s of a possible 3.125 at 25 MHz |
-| **Software** | Nios II HAL driver, found automatically by the BSP: identifies the card on first use, notices card changes, retries CRC errors. FatFs disk I/O layer alongside |
+| **Software** | Nios II HAL driver, found automatically by the BSP: identifies the card on first use, notices card changes, retries CRC errors, and with the DMA starts a transfer and returns. FatFs disk I/O layer alongside |
 
 ### What it is not
 
@@ -305,7 +305,10 @@ failure — at a moment of its own choosing.
 
 | Function | |
 | --- | --- |
+| `alt_sdcard_init` | Bind to the hardware: `CORE_INFO`, the build, the ISR. The BSP calls it |
 | `alt_sdcard_read_blocks`, `alt_sdcard_write_blocks` | Block access, identifying the card first if none is |
+| `alt_sdcard_read_blocks_start`, `alt_sdcard_write_blocks_start` | The same with the DMA, returning once the transfer is under way |
+| `alt_sdcard_transfer_status` | Busy, or the result of the last one; finishes a transfer that has ended |
 | `alt_sdcard_probe` | Identify the card now |
 | `alt_sdcard_check` | Has the socket changed? Reads the switch and the latched events; sends nothing |
 | `alt_sdcard_poll` | `alt_sdcard_check`, then CMD13: is the card still answering? |
@@ -345,6 +348,12 @@ inside the call, `retries` times — 2 by default. Nothing else is: a timeout, a
 error the card reported, or a write it refused for any other reason goes back to
 the caller at once.
 
+Whatever failed, the card is stopped with CMD12 before anything else is sent. A
+card sending a multi-block read carries on until it is told to stop, whatever
+went wrong at the host, and one left waiting for the rest of a write does the
+same; either way it answers the next command as illegal. A card that had
+already finished answers the CMD12 as illegal instead, which costs one command.
+
 ### Buffers
 
 Any buffer works. With the DMA, a word-aligned one moves in a single multi-block
@@ -353,6 +362,43 @@ through a bounce buffer on the stack — correct, and slower. A transfer longer
 than `BLK_COUNT`'s 16 bits is issued in pieces, and an address past the end of
 the card is refused rather than sent, since on a standard-capacity card the byte
 address would otherwise wrap to near block 0.
+
+### Transfers that return at once
+
+A block call returns when its transfer is over, reading `STATUS` until it is.
+With the DMA that holds the processor for the whole transfer — about 170 µs a
+block at 25 MHz — although the hardware needs six register writes to start one
+and a read for its result. So a DMA build has a second pair of calls, which
+start the transfer and return:
+
+```c
+static alt_u32 blocks[8 * 128];    /* eight blocks, word-aligned */
+
+static void sd_done(alt_sdcard_dev *dev, int result, void *context)
+{
+    /* from the ISR, or from alt_sdcard_transfer_status(): result is
+       what alt_sdcard_read_blocks() would have returned */
+}
+
+int r = alt_sdcard_read_blocks_start(&sdcard, 0, blocks, 8, sd_done, 0);
+```
+
+The end is noticed by whichever comes first: the controller's interrupt, when it
+is connected, or `alt_sdcard_transfer_status()`, which returns
+`ALT_SDCARD_ERR_BUSY` until then. Either one finishes the transfer — retries it
+on a CRC error, stops the card after a failure, starts its next piece — and
+calls the callback, which may be 0. The result is the one the blocking call
+would have returned. In the driver harness, eight blocks cost 25 bus accesses
+from start to callback; the blocking call reads `STATUS` for as long as the
+transfer takes.
+
+While one runs, every other call that talks to the card returns
+`ALT_SDCARD_ERR_BUSY`, and `alt_sdcard_reset_datapath()` abandons it. Two
+things are refused with `ALT_SDCARD_ERR_PARAM` rather than done slowly: a build
+without the DMA, where the processor moves every word and there is nothing to
+hand back, and a buffer that is not word-aligned, which needs the bounce buffer
+the blocking calls keep on their stack. If no card is identified the start call
+identifies one first, and that part does not return early.
 
 ### FatFs
 
@@ -417,12 +463,12 @@ full Quartus toolchain tries to build a project.
 | `phy` | 18 | Exactly 8.00 SPI clocks per byte at every divisor; bit-exact loopback; the `SAMPLE_DLY` bound; every received byte paired with the byte sent alongside it |
 | `fifo` | 5 | Byte↔word round trip both directions, little-endian order, partial-word flush |
 | `core` | 75 | Identification, single and multi-block both directions, CSD/CID, every card-reported failure, `ERR_INFO` contents, every per-state timeout escape, soft reset from inside a transfer, the response window at five clock settings, a multi-block read drained slower than the card, stalled by the memory and never drained at all, read throughput floor, the multi-block write saving, Avalon conformance |
-| `driver` | 99 | The HAL driver itself against the RTL, in four builds and on a processor more than twice as slow as the card: identification on first use, both capacity classes, CRC retries, card removal and swaps with and without a switch, interrupts, misaligned buffers, transfer splitting, the PIO loop's cost per word, the FatFs glue |
+| `driver` | 112 | The HAL driver itself against the RTL, in four builds, on a processor more than twice as slow as the card and on one with no delay between bus accesses: identification on first use, both capacity classes, CRC retries, the card stopped after a failed read or write, card removal and swaps with and without a switch, interrupts, non-blocking transfers, misaligned buffers, transfer splitting, the PIO loop's cost per word, the FatFs glue |
 | `check_hw_tcl.tcl` | 22 | The component executes; parameters and ports exist; validation rejects exactly the bad configurations |
 | `check_driver_builds.sh` | 4 | The driver compiles clean under `-Wall -Wextra`; CSD capacity arithmetic for both structure versions; the FatFs glue compiles clean with 32- and 64-bit sector numbers; the register header stands alone |
 | `check_assertions_fire.sh` | 7 faults | Each injected into a scratch copy and required to be caught by the assertion meant to catch it |
 | `check_figures.sh` | 19 files | The 9 figures and their generator inputs, each re-rendered and compared byte for byte, because a stale picture is worse than a missing one. Needs `graphviz` for the block diagrams, a recorded `wave.vcd` for the timing figures, and Node with the WaveDrom module to render their SVGs — without the renderer it still compares their JSON; short of those it reports **INCOMPLETE** with a count, rather than passing on what it could not look at, and never FAIL for a tool that is missing |
-| `check_facts.py` | 293 | Every register offset, parameter default, line count and measured figure in these documents, re-derived from the RTL |
+| `check_facts.py` | 305 | Every register offset, parameter default, line count and measured figure in these documents, re-derived from the RTL |
 | `check_synthesis.sh` | 5 configs | The RTL through Quartus for the DE10-Lite part in the default, `tight`, `big`, `nodma` and `noburst` configurations: each synthesises, fits and meets a 100 MHz clock, holds area and Fmax to a budget, and puts **exactly** `FIFO_DEPTH_BYTES` × 8 bits in a memory block — so a buffer that slips back into registers fails by name rather than by growing |
 | `check_qsys.sh` | 7 | The component in **real** Platform Designer: it loads, its interfaces are the expected six, `USE_DMA=0` genuinely removes `m0`, and a system containing it generates |
 | lint | 10 configs | `-Wall` clean across every parameter that changes what is built |
@@ -484,8 +530,9 @@ swapped between calls or in the middle of one; with the DMA, the master reads
 and writes the driver's own buffers. It runs under Verilator only.
 
 It runs in four builds — with and without the DMA, with and without a
-card-detect switch — and again with a processor slower than the card. Its first
-run found two faults that every suite above had passed:
+card-detect switch — again with a processor slower than the card, and twice more
+with one that leaves no clock cycle between one bus access and the next. Its
+first run found two faults that every suite above had passed:
 
 - **The driver's power-up wait was a CPU loop.** 200 000 empty iterations: a few
   milliseconds on a Nios II/f, which is ample at 400 kHz, but a count of loop
@@ -586,8 +633,8 @@ each `DATA` read or write. While the card is the slower side that costs nothing
 anyone can see; where the processor is slower, it is the whole transfer time,
 and it halved the speed of every such read. The loop now reads `STATUS` once,
 takes every whole word `LEVEL` says is waiting — or fills every word of room —
-and only then looks again. On the slow run a word costs 313 clock cycles read
-and 310 written, against 301 per access, and a harness check fails any run where
+and only then looks again. On the slow run a word costs 314 clock cycles read
+and 312 written, against 301 per access, and a harness check fails any run where
 the processor limits a transfer and a word costs more than one and a half
 accesses in either direction: the old loops measure two.
 
@@ -599,6 +646,76 @@ first file. That run found a hole in the glue's first version — on a socket
 without a switch it waited for a transfer to fail, and FatFs answered a
 directory lookup from its cache about a card it had never read. That run is not
 repeatable from this repository.
+
+### What the non-blocking calls found
+
+The calls in [Transfers that return at once](#transfers-that-return-at-once)
+take a transfer a step at a time: issue a command, return, and take the next
+step when the end of that one is noticed, making at each step the decision the
+blocking path makes there. The harness checks them for the blocking calls'
+outcomes — eight blocks written and read back, with a callback and with the
+interrupt disconnected; a callback starting the next transfer, from the
+interrupt handler and from a status call; a CRC error on a read and on a write,
+each retried; a card that stops answering, forgotten; a card swapped before the
+start; a second start, a blocking call, a command and a probe refused while one
+runs; an event handler installed while one recovers from an error; a reset
+abandoning one — and holds the processor to 64 bus accesses a piece from start
+to callback. Eight blocks take 25 in one piece, 59 in three, and 49 with no
+delay between accesses, where the interrupt handler reads `STATUS` more often
+while the core sends its last byte.
+
+Writing them found two faults in the driver that every earlier run had passed:
+
+- **A command could look finished before it had started.** The core shows a
+  command as busy two clock cycles after the `CMD` write that issues it, so a
+  `STATUS` read in the very next cycle finds it idle, and every wait in the
+  driver took idle for done. The harness's quickest processor had spent four
+  cycles on an access, which hid it. At one, the driver could not identify a
+  card. A wait now ends only once an end is latched as well — `CMD_DONE` or
+  `DATA_DONE`, one of which every command sets however it goes — and eight
+  reads that see neither busy nor an end mean a core that never started the
+  command, so the call fails instead of hanging. The PIO and DMA builds run that
+  way every time, and with the old wait put back they fail 71 and 83 of their
+  112 checks.
+
+  A `DATA` write lags the same way: it reaches the buffer a cycle after the
+  access. So the PIO write loop leaves one word of room unused each time it
+  reads `LEVEL`. No run reaches the case that guards against — the word the
+  sequencer is sending is still counted in `LEVEL` — and the source says so.
+- **A failed multi-block read left the card sending.** The driver stopped the
+  card with CMD12 after a failed write and did nothing after a failed read, on
+  the understanding that a card stops sending when it is deselected. It does
+  not: a multi-block read runs until CMD12 whatever happened at the host — a
+  block whose CRC failed, a block the core held for room and gave up on, a DMA
+  error. The retry after a CRC error went to a card still streaming, which
+  refused it: a 2-block read with one corrupt block came back as
+  `ALT_SDCARD_ERR_TIMEOUT`, and the next read as `ALT_SDCARD_ERR_UNUSABLE`.
+  Both paths now send CMD12 after any failed transfer. A new check reads two
+  blocks with one corrupted, then requires a read after it to succeed. Without
+  that CMD12, 7 checks fail in every build; without the non-blocking path's, 4
+  fail in the DMA builds.
+
+Each part was then taken out on its own, as the earlier sweep did. The latched
+end, the interrupt handler waiting out the core's last byte, CMD12 after a
+failed read in either path, the refusal in `alt_sdcard_probe()` while a transfer
+runs, forgetting a card that times out part-way through one, a status call
+reporting the transfer that ended when its callback starts another, and holding
+interrupts off while `alt_sdcard_set_event_handler()` changes `IRQ_ENABLE`: each,
+removed, fails a check or the run. The unused word of room does not, as above.
+
+That last one is a race the check was written to find. Installing a handler
+reads `IRQ_ENABLE` and writes it back. An interrupt in between that stops a
+failed transfer's card adds `CMD_DONE`, which the CMD12's end is the only thing
+to raise; the write takes it away, and a transfer waiting on its callback waits
+for ever. The harness takes an interrupt after any bus access, so the check
+installs a handler over and over while a transfer recovers from a CRC error,
+from eight starting phases. Without the hold it loses callbacks in both runs
+with a switch and the DMA. With it, the check first failed too: the harness took
+an interrupt held off only at the next bus access, and a loop making every
+access with interrupts held off never reached one. It now takes it the moment
+they are enabled again, as the processor does. The start call holds interrupts
+off around the same kind of update, where no test can reach the window: nothing
+it starts can end two accesses later.
 
 ### Measured throughput
 
@@ -681,7 +798,8 @@ card model, including every failure the card can report; the Avalon-MM agent and
 host against a memory model with wait states and read latency; the register map;
 the interrupt behaviour; the throughput; the component description; the HAL
 driver running against the RTL, with and without the DMA and a card-detect
-switch, through card removals and swaps; reads that software or the memory
+switch, through card removals and swaps, and with transfers it starts and does
+not wait for; reads that software or the memory
 cannot keep up with; and the FatFs glue as FatFs calls it.
 
 **Proven in Quartus**, on the `10M50DAF484C7G` the DE10-Lite carries, with

@@ -75,6 +75,35 @@
  * alt_sdcard_probe() and alt_sdcard_poll(). Nothing else is. A timeout, a
  * card-reported error or a write the card refused for any other reason is
  * returned to the caller at once, and alt_sdcard_command() retries nothing.
+ *
+ * ---------------------------------------------------------------------------
+ * NON-BLOCKING TRANSFERS
+ * ---------------------------------------------------------------------------
+ * The block calls return when the transfer is over, polling STATUS until it
+ * is. With the DMA that costs the processor the whole transfer, although the
+ * hardware needs six register writes to start one and a read for its result.
+ * alt_sdcard_read_blocks_start() and alt_sdcard_write_blocks_start() return as
+ * soon as the transfer is under way, and the end is noticed by whichever comes
+ * first:
+ *
+ *   - the interrupt, when it is connected: the driver's ISR finishes the
+ *     transfer - retrying it, recovering the card, starting its next piece -
+ *     and calls the completion callback, if one was given;
+ *   - alt_sdcard_transfer_status(), which does the same when the transfer has
+ *     ended and otherwise returns ALT_SDCARD_ERR_BUSY at once.
+ *
+ * The result is exactly what the blocking call would have returned: CRC errors
+ * retried, a failed write stopped with CMD12, a card that times out forgotten,
+ * a transfer longer than BLK_COUNT issued in pieces. The callback runs in the
+ * context that noticed the end - the ISR, or the caller of
+ * alt_sdcard_transfer_status() - and may start the next transfer.
+ *
+ * Only with the DMA: without it the processor moves every word, and there is
+ * nothing to hand back. Only word-aligned buffers: a misaligned one would need
+ * the bounce buffer the blocking calls keep on their stack. If no card is
+ * identified the start call identifies one first, as the blocking calls do,
+ * and that part blocks. While a transfer runs, every other call that talks to
+ * the card returns ALT_SDCARD_ERR_BUSY; alt_sdcard_reset_datapath() abandons it.
  * ===========================================================================*/
 
 #ifndef __ALTERA_AVALON_MM_SDCARD_CONTROLLER_H__
@@ -104,8 +133,9 @@ typedef enum
     ALT_SDCARD_ERR_VERSION   = -8,  /* CORE_INFO is not a version we know     */
     ALT_SDCARD_ERR_PROTECTED = -9,  /* write-protect switch is set            */
     ALT_SDCARD_ERR_PIO       = -10, /* a DATA access the buffer could not serve*/
-    ALT_SDCARD_ERR_CHANGED   = -11  /* the card was removed or replaced since
+    ALT_SDCARD_ERR_CHANGED   = -11, /* the card was removed or replaced since
                                        it was identified; call again          */
+    ALT_SDCARD_ERR_BUSY      = -12  /* a non-blocking transfer has not ended  */
 } alt_sdcard_result;
 
 /* Instances alt_sdcard_instance() can find. */
@@ -123,6 +153,13 @@ typedef enum
     ALT_SDCARD_TYPE_SDSC,     /* v1.x or v2 standard capacity: BYTE addressed */
     ALT_SDCARD_TYPE_SDHC      /* v2 high capacity:            BLOCK addressed */
 } alt_sdcard_type;
+
+struct alt_sdcard_dev_s;
+
+/* The completion callback of a non-blocking transfer: the device, the result,
+ * and the context pointer given when it was started. */
+typedef void (*alt_sdcard_done_fn)(struct alt_sdcard_dev_s *dev, int result,
+                                   void *context);
 
 typedef struct alt_sdcard_dev_s
 {
@@ -170,6 +207,25 @@ typedef struct alt_sdcard_dev_s
     volatile alt_u32 isr_card_events;     /* card-detect edges the ISR took     */
     alt_u32          card_events_seen;    /* ...of which already acted upon     */
     volatile alt_u32 isr_status;          /* other bits the ISR acknowledged    */
+
+    /* ---- a transfer started with alt_sdcard_*_blocks_start(). Appended, and
+     *      zero-initialised by _INSTANCE; the driver's to read and write ---- */
+    struct {
+        volatile int       running;       /* 1 from start until the result     */
+        int                result;        /* of the last one; OK before any    */
+        int                writing;
+        int                stopping;      /* this step is a failed write's CMD12 */
+        int                retry;         /* the failed attempt may be repeated */
+        int                error;         /* ...and what it returned            */
+        alt_u32            block;         /* next block to send                 */
+        alt_u8            *buf;           /* ...and where it is                 */
+        alt_u32            left;          /* blocks not yet transferred         */
+        alt_u32            piece;         /* blocks in the command now running  */
+        alt_u32            attempt;
+        alt_u32            irq_added;     /* IRQ_ENABLE bits it set, to undo    */
+        alt_sdcard_done_fn done;
+        void              *context;
+    } async;
 } alt_sdcard_dev;
 
 /* -----------------------------------------------------------------------
@@ -198,7 +254,8 @@ typedef struct alt_sdcard_dev_s
         (void (*)(struct alt_sdcard_dev_s *, alt_u32))0,                      \
         0u,                                                                   \
         2u,            /* retries */                                          \
-        0u, 0u, 0u, 0u                                                        \
+        0u, 0u, 0u, 0u,                                                       \
+        {0}                                                                   \
     }
 
 #define ALTERA_AVALON_MM_SDCARD_CONTROLLER_INIT(name, dev)                    \
@@ -229,6 +286,25 @@ int alt_sdcard_read_blocks (alt_sdcard_dev *dev, alt_u32 block,
                             void *buf, alt_u32 count);
 int alt_sdcard_write_blocks(alt_sdcard_dev *dev, alt_u32 block,
                             const void *buf, alt_u32 count);
+
+/* The same transfers, returning as soon as they are under way - see
+ * NON-BLOCKING TRANSFERS above. Returns ALT_SDCARD_OK once started, or what
+ * stopped it starting: ALT_SDCARD_ERR_PARAM for a core or configuration
+ * without the DMA or a misaligned buffer, ALT_SDCARD_ERR_BUSY if one is still
+ * running, and otherwise what the blocking call would return before its first
+ * command. `done` may be 0; `context` is handed back to it. */
+int alt_sdcard_read_blocks_start (alt_sdcard_dev *dev, alt_u32 block,
+                                  void *buf, alt_u32 count,
+                                  alt_sdcard_done_fn done, void *context);
+int alt_sdcard_write_blocks_start(alt_sdcard_dev *dev, alt_u32 block,
+                                  const void *buf, alt_u32 count,
+                                  alt_sdcard_done_fn done, void *context);
+
+/* ALT_SDCARD_ERR_BUSY while a non-blocking transfer runs; otherwise the result
+ * of the last one, or ALT_SDCARD_OK if none was started. Finishes a transfer
+ * that has ended and not yet been noticed - so without a connected interrupt
+ * it is what moves one along, and the callback may run inside it. */
+int alt_sdcard_transfer_status(alt_sdcard_dev *dev);
 
 /* Has anything changed that the driver can see without asking the card?
  *
@@ -282,7 +358,9 @@ int alt_sdcard_write_protected(alt_sdcard_dev *dev);
 /* Capacity in 512-byte blocks, 0 if the card has not been probed. */
 alt_u32 alt_sdcard_block_count(alt_sdcard_dev *dev);
 
-/* Clear a wedged data path without losing the card's initialised state. */
+/* Clear a wedged data path without losing the card's initialised state. A
+ * non-blocking transfer in progress is abandoned: it ends with
+ * ALT_SDCARD_ERR_TIMEOUT, and its callback is not called. */
 void alt_sdcard_reset_datapath(alt_sdcard_dev *dev);
 
 /* Install a callback invoked from the ISR with the bits that raised it.

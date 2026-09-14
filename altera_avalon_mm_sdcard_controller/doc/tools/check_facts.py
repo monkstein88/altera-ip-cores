@@ -718,7 +718,63 @@ for label, text in (("README", README), ("user guide", UG), ("design record", DE
                     r"(?:those |the )?(?:data-phase )?(?:stall timeouts|shifter can be starved)",
                     text) is None and "ONLY in the PIO" not in text)
 
-# --- 9.13 this script's own total, as the README's verification table quotes it ---
+# --- 9.13 the driver's API, and the non-blocking calls ---
+#
+# The function tables in the README and the user guide are the API as most
+# readers meet it. The non-blocking calls went into the header, the source and
+# the harness first; nothing but this compares the tables with what the header
+# declares, in either direction.
+public = set(re.findall(r"^(?:int|void|alt_u32|alt_sdcard_dev\s*\*)\s*\**\s*(alt_sdcard_\w+)\s*\(",
+                        HALH, re.M))
+check("the driver header's public functions are readable", len(public) >= 17,
+      f"found {len(public)}")
+
+
+def api_table(doc, header):
+    """The backticked function names in the rows of the table under `header`."""
+    i = doc.find(header)
+    if i < 0:
+        return set()
+    names = set()
+    for line in doc[i:].splitlines()[2:]:
+        if not line.startswith("|"):
+            break
+        names |= set(re.findall(r"`(alt_sdcard_\w+)`", line.split("|")[1]))
+    return names
+
+
+for label, doc, header in (("README", README, "| Function | |"),
+                           ("user guide", UG, "| Function | Purpose |")):
+    names = api_table(doc, header)
+    check(f"the {label}'s function table names every function the header declares",
+          public and public <= names, f"missing {sorted(public - names)}")
+    check(f"the {label}'s function table names nothing the header does not declare",
+          names <= public, f"extra {sorted(names - public)}")
+
+# The harness's budget for a non-blocking transfer, quoted in the README.
+m_t = re.search(r"used <= (\d+)u \* pieces", DRV_TESTS)
+m_r = re.search(r"holds the processor to (\d+) bus accesses a\s+piece", README)
+check("README quotes the harness's bus-access budget for a non-blocking transfer",
+      m_t is not None and m_r is not None and m_t.group(1) == m_r.group(1),
+      f"harness {m_t.group(1) if m_t else '?'}, README {m_r.group(1) if m_r else '?'}")
+
+# The runs that reach what the non-blocking calls depend on: a processor with no
+# delay between accesses, on a PIO build and a DMA build, and a DMA build that
+# splits transfers so the calls take their pieces too.
+for build in ("pio_cd", "dma_cd"):
+    check(f"the Verilator runner runs the {build} driver build with no delay between accesses",
+          re.search(r"for b in ([\w ]+); do", RUNSIM) is not None
+          and build in re.search(r"for b in ([\w ]+); do", RUNSIM).group(1).split()
+          and '"no_delay_$b"' in RUNSIM and "+cpu=0" in RUNSIM)
+check("a DMA driver build splits transfers, so non-blocking transfers run in pieces",
+      re.search(r'"dma_\w+:1:\d:[^"]*-DALT_SDCARD_MAX_BLOCKS_PER_TRANSFER=\d+u', RUNSIM) is not None)
+check("the README records the two faults the non-blocking calls found",
+      "A command could look finished before it had started" in README
+      and "A failed multi-block read left the card sending" in README)
+check("the driver harness still reads a multi-block read with a corrupt block, then reads again",
+      "a corrupt block in a multi-block read" in DRV_TESTS)
+
+# --- 9.14 this script's own total, as the README's verification table quotes it ---
 #
 # Last, so the count is final: it includes this check. The table said 203 for
 # three commits while the script grew past 240, because the one number about
