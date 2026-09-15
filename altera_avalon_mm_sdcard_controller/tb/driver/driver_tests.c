@@ -843,7 +843,8 @@ static void test_nonblocking(void)
 
     /* A read with no interrupt connected: transfer_status() alone moves it
      * along, and must say busy the moment the transfer has started - which a
-     * bare CMD_BUSY read in the next cycle would not. */
+     * bare CMD_BUSY read in the next cycle did not, before the core counted a
+     * command it had accepted and not yet started. */
     irq_saved  = sdcard.irq;
     sdcard.irq = -1;
     memset(rbuf, 0, sizeof rbuf);

@@ -774,7 +774,43 @@ check("the README records the two faults the non-blocking calls found",
 check("the driver harness still reads a multi-block read with a corrupt block, then reads again",
       "a corrupt block in a multi-block read" in DRV_TESTS)
 
-# --- 9.14 this script's own total, as the README's verification table quotes it ---
+# --- 9.14 STATUS in the cycle after a write ---
+#
+# The user guide's STATUS table left out FIFO_EMPTY and FIFO_FULL for as long as
+# nothing compared it with the package, and the RTL told a master reading in
+# the cycle after a write about the core before that write. Both are pinned:
+# the table names every bit the package declares, at its position, and the
+# register block reports busy and occupancy through the terms that count a
+# write it has accepted.
+stat = dict(re.findall(r"localparam int STAT_(\w+)\s*=\s*(\d+);", PKG))
+check("the package's STATUS bits are readable", len(stat) >= 10, f"found {len(stat)}")
+for name, bit in stat.items():
+    if name.startswith("LEVEL_"):
+        continue
+    check(f"the user guide's STATUS table lists {name} at bit {bit}",
+          re.search(rf"^\|\s*{bit}\s*\|\s*`{name}`\s*\|", UG, re.M) is not None)
+if "LEVEL_MSB" in stat and "LEVEL_LSB" in stat:
+    check("the user guide's STATUS table gives LEVEL's field",
+          re.search(rf"^\|\s*{stat['LEVEL_MSB']}:{stat['LEVEL_LSB']}\s*\|\s*`LEVEL`\s*\|",
+                    UG, re.M) is not None)
+
+REGS_SV = rd("rtl/avalon_mm_sdcard_controller_regs.sv")
+check("the register block's busy counts a start the sequencer has not reached",
+      "always_comb cmd_busy = seq_busy || (cmd_start && cfg_enable);" in REGS_SV)
+check("STATUS.CMD_BUSY and CMD's busy bit both report it",
+      "status_w[STAT_CMD_BUSY]   = cmd_busy;" in REGS_SV
+      and "csr_readdata <= {cmd_busy, cmd_q[30:0]};" in REGS_SV)
+check("CMD and CLKDIV writes are both refused on it, and nothing tests the late busy",
+      len(re.findall(r"if \(!cmd_busy\)", REGS_SV)) == 2
+      and re.search(r"if \(!seq_busy\)", REGS_SV) is None)
+check("LEVEL and FIFO_FULL count a DATA word pushed in the same cycle",
+      "fifo_level_bytes + (pio_push ? 16'd4 : 16'd0);" in REGS_SV
+      and "(pio_push && (fifo_w_space_words == 16'd1))" in REGS_SV)
+check("the core testbench still reads in the cycle after a write",
+      len(re.findall(r"^\s+csr_wr_rd\(", TBSRC, re.M)) >= 3
+      and len(re.findall(r"^\s+csr_wr_wr\(", TBSRC, re.M)) >= 2)
+
+# --- 9.15 this script's own total, as the README's verification table quotes it ---
 #
 # Last, so the count is final: it includes this check. The table said 203 for
 # three commits while the script grew past 240, because the one number about

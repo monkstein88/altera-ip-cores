@@ -233,6 +233,7 @@ module avalon_mm_sdcard_controller
         .dma_busy (dma_busy), .dma_done (dma_done),
         .fifo_level_bytes (fifo_level_bytes),
         .fifo_w_empty (fifo_w_empty), .fifo_w_full (fifo_w_full),
+        .fifo_w_space_words (16'(fifo_space_words)),
         .card_present (USE_CARD_DETECT ? ~sd_cd_n : 1'b1),
         .card_wp      (USE_CARD_DETECT ? ~sd_wp_n : 1'b0),
 

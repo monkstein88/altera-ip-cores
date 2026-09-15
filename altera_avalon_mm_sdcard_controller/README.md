@@ -11,7 +11,7 @@ driver the BSP picks up by itself.
 
 > **Status: simulation only. This core has never been on a board.**
 >
-> It passes 98 self-checking assertions across three testbenches against a
+> It passes 104 self-checking assertions across three testbenches against a
 > behavioural SD card model — with the full-core suite run in five
 > configurations — plus bound SVA assertions proven live by fault injection,
 > 22 checks on the Platform Designer component, and the HAL driver itself run
@@ -139,7 +139,7 @@ except a cycle count catches it, which is why the count is an assertion.
          sd_clk / mosi / miso / cs_n
 ```
 
-Nine RTL files, 3558 lines, one per box plus the package and the top level.
+Nine RTL files, 3596 lines, one per box plus the package and the top level.
 Single clock domain throughout — no PLL, no CDC, nothing that behaves
 differently in simulation than on hardware.
 
@@ -190,6 +190,14 @@ a second command must not corrupt a transfer in flight — but it means software
 that writes without checking loses the command silently. Polling afterwards does
 not catch it either: busy is already clear, so the poll returns immediately for
 a command that never happened. The HAL driver waits for idle before every write.
+
+**`STATUS` counts every write the core has accepted, from the next cycle.** A
+`CMD` write shows as `CMD_BUSY` — and in `CMD`'s own busy bit — in the first cycle
+a read can follow it, and a second `CMD` or `CLKDIV` write in that cycle is
+ignored like any other while busy. A `DATA` word written the cycle before is
+already in `LEVEL` and `FIFO_FULL`. See
+[STATUS in the cycle after a write](#status-in-the-cycle-after-a-write) for
+what that cycle used to do.
 
 **A `DATA` access the buffer cannot serve is now reported.** A write with the
 buffer full, or a read with it empty, is refused — which is the only correct
@@ -462,13 +470,13 @@ full Quartus toolchain tries to build a project.
 | --- | --- | --- |
 | `phy` | 18 | Exactly 8.00 SPI clocks per byte at every divisor; bit-exact loopback; the `SAMPLE_DLY` bound; every received byte paired with the byte sent alongside it |
 | `fifo` | 5 | Byte↔word round trip both directions, little-endian order, partial-word flush |
-| `core` | 75 | Identification, single and multi-block both directions, CSD/CID, every card-reported failure, `ERR_INFO` contents, every per-state timeout escape, soft reset from inside a transfer, the response window at five clock settings, a multi-block read drained slower than the card, stalled by the memory and never drained at all, read throughput floor, the multi-block write saving, Avalon conformance |
+| `core` | 81 | Identification, single and multi-block both directions, CSD/CID, every card-reported failure, `ERR_INFO` contents, every per-state timeout escape, soft reset from inside a transfer, the response window at five clock settings, a multi-block read drained slower than the card, stalled by the memory and never drained at all, read throughput floor, the multi-block write saving, `STATUS` in the cycle after a write, Avalon conformance |
 | `driver` | 112 | The HAL driver itself against the RTL, in four builds, on a processor more than twice as slow as the card and on one with no delay between bus accesses: identification on first use, both capacity classes, CRC retries, the card stopped after a failed read or write, card removal and swaps with and without a switch, interrupts, non-blocking transfers, misaligned buffers, transfer splitting, the PIO loop's cost per word, the FatFs glue |
 | `check_hw_tcl.tcl` | 22 | The component executes; parameters and ports exist; validation rejects exactly the bad configurations |
 | `check_driver_builds.sh` | 4 | The driver compiles clean under `-Wall -Wextra`; CSD capacity arithmetic for both structure versions; the FatFs glue compiles clean with 32- and 64-bit sector numbers; the register header stands alone |
 | `check_assertions_fire.sh` | 7 faults | Each injected into a scratch copy and required to be caught by the assertion meant to catch it |
 | `check_figures.sh` | 19 files | The 9 figures and their generator inputs, each re-rendered and compared byte for byte, because a stale picture is worse than a missing one. Needs `graphviz` for the block diagrams, a recorded `wave.vcd` for the timing figures, and Node with the WaveDrom module to render their SVGs — without the renderer it still compares their JSON; short of those it reports **INCOMPLETE** with a count, rather than passing on what it could not look at, and never FAIL for a tool that is missing |
-| `check_facts.py` | 305 | Every register offset, parameter default, line count and measured figure in these documents, re-derived from the RTL |
+| `check_facts.py` | 323 | Every register offset, parameter default, line count and measured figure in these documents, re-derived from the RTL |
 | `check_synthesis.sh` | 5 configs | The RTL through Quartus for the DE10-Lite part in the default, `tight`, `big`, `nodma` and `noburst` configurations: each synthesises, fits and meets a 100 MHz clock, holds area and Fmax to a budget, and puts **exactly** `FIFO_DEPTH_BYTES` × 8 bits in a memory block — so a buffer that slips back into registers fails by name rather than by growing |
 | `check_qsys.sh` | 7 | The component in **real** Platform Designer: it loads, its interfaces are the expected six, `USE_DMA=0` genuinely removes `m0`, and a system containing it generates |
 | lint | 10 configs | `-Wall` clean across every parameter that changes what is built |
@@ -666,9 +674,9 @@ while the core sends its last byte.
 
 Writing them found two faults in the driver that every earlier run had passed:
 
-- **A command could look finished before it had started.** The core shows a
-  command as busy two clock cycles after the `CMD` write that issues it, so a
-  `STATUS` read in the very next cycle finds it idle, and every wait in the
+- **A command could look finished before it had started.** The core showed a
+  command as busy two clock cycles after the `CMD` write that issued it, so a
+  `STATUS` read in the very next cycle found it idle, and every wait in the
   driver took idle for done. The harness's quickest processor had spent four
   cycles on an access, which hid it. At one, the driver could not identify a
   card. A wait now ends only once an end is latched as well — `CMD_DONE` or
@@ -676,12 +684,16 @@ Writing them found two faults in the driver that every earlier run had passed:
   reads that see neither busy nor an end mean a core that never started the
   command, so the call fails instead of hanging. The PIO and DMA builds run that
   way every time, and with the old wait put back they fail 71 and 83 of their
-  112 checks.
+  112 checks on the RTL of the time.
 
-  A `DATA` write lags the same way: it reaches the buffer a cycle after the
+  A `DATA` write lagged the same way: it reached the buffer a cycle after the
   access. So the PIO write loop leaves one word of room unused each time it
   reads `LEVEL`. No run reaches the case that guards against — the word the
   sequencer is sending is still counted in `LEVEL` — and the source says so.
+
+  Both gaps were then closed in the core, below, so no other driver has to know
+  about them. This one keeps its guards: they cost next to nothing, and
+  `CORE_INFO` cannot tell it whether a core was built before the fix.
 - **A failed multi-block read left the card sending.** The driver stopped the
   card with CMD12 after a failed write and did nothing after a failed read, on
   the understanding that a card stops sending when it is deselected. It does
@@ -716,6 +728,49 @@ access with interrupts held off never reached one. It now takes it the moment
 they are enabled again, as the processor does. The start call holds interrupts
 off around the same kind of update, where no test can reach the window: nothing
 it starts can end two accesses later.
+
+### STATUS in the cycle after a write
+
+The driver's first fault above was the core's too. Every CSR write is registered
+before anything acts on it, so for the one cycle after a write `STATUS`
+described the core as it was before it:
+
+```
+ cycle 0   CPU writes CMD          cmd_start = 0     sequencer idle
+ cycle 1   cmd_start = 1           CMD_BUSY read 0   ◄─ a fast master reads here
+ cycle 2   sequencer leaves idle   CMD_BUSY read 1
+```
+
+- **`CMD_BUSY` read idle** for a command that had not started, and so did the
+  busy bit `CMD` reads back.
+- **A second `CMD` write in that cycle was accepted,** where every `CMD` write
+  while busy is meant to be ignored. The sequencer never ran it, but `CMD` then
+  read back a command that never happened. A `CLKDIV` write there was accepted
+  too.
+- **A `DATA` word written the cycle before was missing from `LEVEL`,** and from
+  `FIFO_FULL` when it was the word that filled the buffer. A write loop trusting
+  that read counts a word more room than there is.
+
+The register block now has one busy signal — the sequencer's, or a start it has
+accepted and the sequencer has not reached — and `STATUS`, `CMD`'s read-back
+and both write guards use it. `LEVEL` adds a `DATA` word pushed in the same
+cycle, which is exact, because a word the sequencer moves into its byte staging
+register is still counted. `FIFO_FULL` adds it when that word takes the last
+place, and can read full a cycle early if the sequencer frees one in the same
+cycle, which errs the safe way for a writer.
+
+No suite could see any of it. The core testbench's bus tasks leave an idle cycle
+between accesses, so none of its checks ever read in the cycle after a write. It
+gained a write-then-read with no gap and six checks, run in all five
+configurations: `CMD_BUSY` and `CMD`'s busy bit in that cycle, a second `CMD`
+write and a `CLKDIV` write in it ignored, and `LEVEL` and `FIFO_FULL` after each
+`DATA` write until the buffer is full, agreeing with a read a cycle later. On the
+previous RTL all six fail in every configuration and nothing else does. Each of
+the six changes removed on its own fails exactly its own check.
+
+The driver harness shows the same from the other side. The driver whose wait
+was a bare `CMD_BUSY` — 71 and 83 failures in the no-delay runs on the old RTL —
+passes all 112 checks in all seven runs on this one.
 
 ### Measured throughput
 
@@ -808,11 +863,11 @@ with:
 
 | | |
 | --- | --- |
-| Logic cells | 1774 / 49 760 — **3.6%** |
+| Logic cells | 1769 / 49 760 — **3.6%** |
 | Registers | 899 |
 | Memory | one M9K, 8192 bits |
-| Fmax | **109.51 MHz**, slow 85 °C corner |
-| Slack at 100 MHz | **+0.868 ns** — it meets the clock |
+| Fmax | **115.9 MHz**, slow 85 °C corner |
+| Slack at 100 MHz | **+1.372 ns** — it meets the clock |
 
 `verification/check_synthesis.sh` runs Analysis & Synthesis, the Fitter and the
 Timing Analyzer across five configurations and holds each to a budget, so a
@@ -821,11 +876,11 @@ whenever somebody next looks:
 
 | Configuration | Logic cells | Memory bits | Fmax |
 | --- | --- | --- | --- |
-| default, 1 KB buffer | 1774 | 8 192 | 109.51 MHz |
-| `FIFO_DEPTH_BYTES=512` | 1753 | 4 096 | 117.76 MHz |
-| `FIFO_DEPTH_BYTES=8192` | 1788 | 65 536 | 107.35 MHz |
-| `USE_DMA=0` | 1571 | 8 192 | 116.86 MHz |
-| `M0_BURST_WIDTH=1` | 1729 | 8 192 | 113.66 MHz |
+| default, 1 KB buffer | 1769 | 8 192 | 115.9 MHz |
+| `FIFO_DEPTH_BYTES=512` | 1764 | 4 096 | 112.36 MHz |
+| `FIFO_DEPTH_BYTES=8192` | 1817 | 65 536 | 111.07 MHz |
+| `USE_DMA=0` | 1596 | 8 192 | 106.56 MHz |
+| `M0_BURST_WIDTH=1` | 1765 | 8 192 | 113.21 MHz |
 
 Admitting read blocks, described under
 [A read the host cannot keep up with](#a-read-the-host-cannot-keep-up-with),
@@ -835,15 +890,21 @@ the five builds it added 29 to 59 cells, and Fmax moved by between −4 and
 +4 MHz, in both directions. That is the fitter's placement rather than the
 logic, and it is why the check holds a floor rather than a figure.
 
+Counting accepted writes in `STATUS`, under
+[STATUS in the cycle after a write](#status-in-the-cycle-after-a-write), shows
+the same. It adds a 16-bit adder and a comparison, and the default build came
+out 5 cells smaller and 6.4 MHz faster; across the five builds it moved by −5 to
++36 cells, and Fmax by −10.3 to +5.4 MHz.
+
 The 8 KB row is worth a second look. `FIFO_DEPTH_BYTES` has always been
 documented as accepting 512 to 8192, and until the buffer was moved into a memory
 block the top of that range **did not fit on the part** — the fitter needed
-66 430 registers against 49 760 available. It is now 14 logic cells more than the
+66 430 registers against 49 760 available. It is now 48 logic cells more than the
 default. `verification/check_qsys.sh` loads the component into real Platform
 Designer, checks the elaboration callback genuinely removes `m0`, and generates
 a system from it.
 
-**`CLKDIV = 1` is settled.** With Fmax at 109.51 MHz the core meets a 100 MHz
+**`CLKDIV = 1` is settled.** With Fmax at 115.9 MHz the core meets a 100 MHz
 system clock, so clk/2 — 50 MHz SPI — is reachable on this part. The design
 record's fallback of restricting `CLKDIV >= 2` is not needed.
 
@@ -877,7 +938,7 @@ record's fallback of restricting `CLKDIV >= 2` is not needed.
 ## Layout
 
 ```
-rtl/          nine SystemVerilog files, 3558 lines
+rtl/          nine SystemVerilog files, 3596 lines
 tb/           card model, memory model, three testbenches, bound SVA,
               and driver/: the HAL driver run against the RTL
 simulation/verilator/run_sim.sh

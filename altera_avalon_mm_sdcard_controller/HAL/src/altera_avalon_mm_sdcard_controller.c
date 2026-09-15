@@ -181,12 +181,15 @@ static alt_u32 latched(alt_sdcard_dev *dev)
 
 /* Has the command issued last finished?
  *
- * Not "is CMD_BUSY clear". The core takes two clock cycles to show a command
- * it has just been given as busy, so a processor whose STATUS read lands in
- * the cycle after its CMD write reads an idle core and would take a command
- * that has not started for one that has finished. The driver harness runs one:
+ * Not "is CMD_BUSY clear". The core used to take two clock cycles to show a
+ * command it had just been given as busy, so a processor whose STATUS read
+ * landed in the cycle after its CMD write read an idle core and took a command
+ * that had not started for one that had finished. The driver harness runs one:
  * with no delay between bus accesses, identification failed on every card.
- * An end is latched as well as busy being clear, or the command has not run.
+ * The core now counts the command from that cycle, but CORE_INFO cannot say
+ * whether this driver is bound to a core built before that, and the check
+ * costs nothing: an end is latched as well as busy being clear, or the command
+ * has not run.
  * `quiet` counts the reads that saw neither, so a command a disabled core
  * ignored is given up on rather than waited for: the gap is one read at most,
  * and NEVER_STARTED is margin. */
@@ -316,14 +319,16 @@ static int app_command(alt_sdcard_dev *dev, alt_u8 index, alt_u32 arg,
  * loop instead of leaving it waiting on a buffer that will never fill or drain.
  *
  * A write leaves one word of room unused each time it looks. A DATA write
- * reaches the buffer a cycle after the access, so a STATUS read in the very
- * next cycle can still count the last word written as room; taking all of it
- * would then overfill the buffer by one, which the core refuses and reports as
- * ERR_PIO. The margin costs one STATUS read in 255 words. No test reaches the
- * case it guards: the harness's run with no delay between accesses passes
- * without it, because the word the sequencer has taken to send is still
- * counted in LEVEL, and the overcount only shows in the cycle or two between
- * one such word being sent and the next being taken.
+ * reaches the buffer a cycle after the access, and a core built before LEVEL
+ * counted it lets a STATUS read in the very next cycle count the last word
+ * written as room; taking all of it would then overfill the buffer by one,
+ * which the core refuses and reports as ERR_PIO. The current core counts the
+ * word, but as with ended(), CORE_INFO cannot say which this is. The margin
+ * costs one STATUS read in 255 words. No test reaches the case it guards: the
+ * harness's run with no delay between accesses passes without it, because the
+ * word the sequencer has taken to send is still counted in LEVEL, and the
+ * overcount only shows in the cycle or two between one such word being sent
+ * and the next being taken.
  *
  * Words are copied with memcpy rather than through an alt_u32 pointer, so the
  * caller's buffer need not be aligned: a misaligned 32-bit load on Nios II is

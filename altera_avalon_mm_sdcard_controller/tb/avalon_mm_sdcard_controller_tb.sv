@@ -251,6 +251,39 @@ localparam bit TRACE_CMD = 1'b0;
         end
     endtask
 
+    // A write followed by a read, or by a second write, in the very next cycle.
+    // csr_wr and csr_rd each wait for a negedge before they start, so back to
+    // back they always leave a cycle between accesses - and no check in this
+    // suite could see what STATUS says in the cycle straight after a write,
+    // which is the one a fast master reads in.
+    task automatic csr_wr_rd(input int unsigned wa, input logic [31:0] wd,
+                             input int unsigned ra, output logic [31:0] d);
+        begin
+            @(negedge clk);
+            csr_address = CSR_AW'(wa); csr_writedata = wd;
+            csr_byteenable = 4'hF;     csr_write = 1'b1;
+            @(negedge clk);
+            csr_write = 1'b0;
+            csr_address = CSR_AW'(ra); csr_read = 1'b1;
+            @(negedge clk);
+            csr_read = 1'b0;
+            d = csr_readdata;
+        end
+    endtask
+
+    task automatic csr_wr_wr(input int unsigned a1, input logic [31:0] d1,
+                             input int unsigned a2, input logic [31:0] d2);
+        begin
+            @(negedge clk);
+            csr_address = CSR_AW'(a1); csr_writedata = d1;
+            csr_byteenable = 4'hF;     csr_write = 1'b1;
+            @(negedge clk);
+            csr_address = CSR_AW'(a2); csr_writedata = d2;
+            @(negedge clk);
+            csr_write = 1'b0;
+        end
+    endtask
+
     // -------------------------------------------------------------------------
     // Commands, split into issue and wait.
     //
@@ -531,6 +564,9 @@ localparam bit TRACE_CMD = 1'b0;
         int unsigned clks_single, clks_multi;
         real wr_gain;
         realtime t0, t_single, t_multi;
+        logic [31:0] cw, cw2, st_now, st_later;
+        int unsigned cmds_before, lvl_before;
+        bit lvl_agree, lvl_steps, full_agree, full_seen;
 
         $display("");
         $display("=== avalon_mm_sdcard_controller: full-core regression ===");
@@ -1344,6 +1380,96 @@ localparam bit TRACE_CMD = 1'b0;
         csr_wr(REG_CTRL, CTRL_RUNNING);
         csr_wr(REG_TIMEOUT, 32'd200000);
         u_card.resync();
+
+        // ---- STATUS in the cycle after a write ------------------------------
+        //
+        // A master can read STATUS in the cycle after it writes, and the core
+        // registers every write before acting on it. CMD becomes cmd_start, and
+        // the sequencer leaves S_IDLE a cycle later; a DATA word reaches the
+        // buffer a cycle after the access. So in that cycle STATUS used to
+        // describe the core before the write: CMD_BUSY read idle for a command
+        // that had not started - the HAL driver, run with no delay between
+        // accesses, could not identify a card - a second CMD write was accepted
+        // instead of ignored, and LEVEL counted a word of room too many.
+        $display("  -- STATUS in the cycle after a write --");
+
+        // DATA first, while the buffer still faces host -> card: the last
+        // command was the CMD24 above, and the direction is the last command's.
+        // Nothing is sending, so nothing drains the buffer, and a STATUS read a
+        // cycle later - when the word has certainly landed - is the reference.
+        csr_wr(REG_CTRL, (CTRL_RUNNING & ~(32'b1 << CTRL_DMA_EN)) | (32'b1 << CTRL_SRST_DAT));
+        csr_wr(REG_CTRL, CTRL_RUNNING & ~(32'b1 << CTRL_DMA_EN));
+        csr_wr(REG_IRQ_STATUS, 32'hFFFF_FFFF);
+        csr_rd(REG_STATUS, st_later);
+        lvl_agree = 1'b1; lvl_steps = 1'b1; full_agree = 1'b1; full_seen = 1'b0;
+        for (i = 0; (i < (TB_FIFO_B/4) + 8) && !full_seen; i++) begin
+            lvl_before = 32'(st_later[STAT_LEVEL_MSB:STAT_LEVEL_LSB]);
+            csr_wr_rd(REG_DATA, 32'h5A5A_0000 | i, REG_STATUS, st_now);
+            csr_rd(REG_STATUS, st_later);
+            if (st_now[STAT_LEVEL_MSB:STAT_LEVEL_LSB] !== st_later[STAT_LEVEL_MSB:STAT_LEVEL_LSB])
+                lvl_agree = 1'b0;
+            if (32'(st_later[STAT_LEVEL_MSB:STAT_LEVEL_LSB]) != lvl_before + 4)
+                lvl_steps = 1'b0;
+            if (st_now[STAT_FIFO_FULL] !== st_later[STAT_FIFO_FULL])
+                full_agree = 1'b0;
+            full_seen = st_later[STAT_FIFO_FULL];
+        end
+        csr_rd(REG_IRQ_STATUS, st);
+        check("LEVEL counts a DATA word in the cycle after its write, four bytes a word until the buffer is full",
+              lvl_agree && lvl_steps && full_seen);
+        check("...FIFO_FULL is set in the cycle after the write that fills it, and no word was refused",
+              full_agree && !st[IRQ_ERR_PIO]);
+        csr_wr(REG_CTRL, CTRL_RUNNING | (32'b1 << CTRL_SRST_DAT));
+        csr_wr(REG_CTRL, CTRL_RUNNING);
+
+        // CMD. CMD58 answers in any state and changes nothing.
+        cw = '0;
+        cw[CMD_INDEX_LSB +: 6] = 6'd58;
+        cw[CMD_RESP_LSB  +: 2] = RESP_R3R7;
+        cw[CMD_START]          = 1'b1;
+        csr_wr(REG_CMD_ARG, 32'h0);
+
+        csr_wr(REG_IRQ_STATUS, 32'hFFFF_FFFF);
+        csr_wr_rd(REG_CMD, cw, REG_STATUS, st_now);
+        cmd_wait(6'd58, st);
+        check("STATUS.CMD_BUSY is set in the first cycle a read can follow the CMD write",
+              st_now[STAT_CMD_BUSY] && st[IRQ_CMD_DONE]);
+
+        csr_wr(REG_IRQ_STATUS, 32'hFFFF_FFFF);
+        csr_wr_rd(REG_CMD, cw, REG_CMD, rd);
+        cmd_wait(6'd58, st);
+        check("...and CMD reads back busy in that cycle too", rd[CMD_START] && st[IRQ_CMD_DONE]);
+
+        // A second CMD write in the next cycle: busy by then, so ignored. Its
+        // index and response type differ, so CMD reading it back - or the card
+        // seeing it - gives it away.
+        cw2 = '0;
+        cw2[CMD_INDEX_LSB +: 6] = 6'd13;
+        cw2[CMD_RESP_LSB  +: 2] = RESP_R2;
+        cw2[CMD_START]          = 1'b1;
+        csr_wr(REG_IRQ_STATUS, 32'hFFFF_FFFF);
+        cmds_before = card_cmds;
+        csr_wr_wr(REG_CMD, cw, REG_CMD, cw2);
+        cmd_wait(6'd58, st);
+        repeat (2000) @(negedge clk);
+        csr_rd(REG_STATUS, st_later);
+        csr_rd(REG_CMD, rd);
+        check("a CMD write in the cycle after another is ignored: the first command runs alone, and CMD still reads it back",
+              st[IRQ_CMD_DONE] && (card_cmds == cmds_before + 1)
+              && (rd[CMD_INDEX_LSB +: 6] == 6'd58) && !st_later[STAT_CMD_BUSY]);
+
+        // CLKDIV is refused while busy too, because the divider and the sample
+        // delay must not move under a running shifter - and so it is in the
+        // cycle after a CMD write. One more on the divider is harmless if it
+        // does land.
+        csr_rd(REG_CLKDIV, st_now);
+        csr_wr(REG_IRQ_STATUS, 32'hFFFF_FFFF);
+        csr_wr_wr(REG_CMD, cw, REG_CLKDIV, st_now + 32'd1);
+        cmd_wait(6'd58, st);
+        csr_rd(REG_CLKDIV, rd);
+        check("...and so is a CLKDIV write in that cycle", (rd == st_now) && st[IRQ_CMD_DONE]);
+        csr_wr(REG_CLKDIV, st_now);
+        csr_wr(REG_IRQ_STATUS, 32'hFFFF_FFFF);
 
         // ---- a card event is not an error -----------------------------------
         //

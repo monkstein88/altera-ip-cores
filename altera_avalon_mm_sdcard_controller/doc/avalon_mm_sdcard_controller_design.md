@@ -685,10 +685,13 @@ early at 25 MHz. Its slow processor was at first faster than the card; run
 genuinely slower, it showed a multi-block read overrunning the buffer and losing
 bytes behind a passing CRC. That, and a DMA start lost to a memory stall, are
 why a read block is now admitted rather than simply received. It also runs on a
-processor with no delay between bus accesses, which showed that a command reads
-as idle in the two cycles before the core shows it busy — every wait in the
-driver took that for finished — and it found a failed multi-block read leaving
-the card sending, since the driver stopped only failed writes with CMD12.
+processor with no delay between bus accesses, which showed that a command read
+as idle in the cycle after its `CMD` write — every wait in the driver took that
+for finished — and it found a failed multi-block read leaving the card sending,
+since the driver stopped only failed writes with CMD12. The first was the core's
+to fix as well: `STATUS` now counts a command the register block has accepted
+and the sequencer has not yet reached, and a `DATA` word pushed in the same
+cycle, so a read in the cycle after any write reflects it.
 
 ---
 
@@ -775,7 +778,7 @@ Things deliberately left undecided, to be closed during implementation:
    clock settings.
 3. ~~**`CLKDIV = 1`: functionally settled, timing still open.**~~ **Closed.**
    Synthesised, fitted and timed for the DE10-Lite's `10M50DAF484C7G`:
-   **Fmax 109.51 MHz** in Quartus 18.1 at the slow 85 °C corner, **+0.868 ns** of slack against
+   **Fmax 115.9 MHz** in Quartus 18.1 at the slow 85 °C corner, **+1.372 ns** of slack against
    a 100 MHz system clock. clk/2 is therefore reachable and the fallback of
    restricting `CLKDIV >= 2` is not needed. `verification/check_synthesis.sh`
    holds that as a floor.

@@ -280,11 +280,12 @@ fi
 #              slower in which no read block was held, and one in which a word
 #              costs more than about one bus access.
 #   no_delay   pio_cd's and dma_cd's builds again with no clock cycles between
-#              one bus access and the next. The core shows a command as busy two
-#              cycles after its CMD write, and a DATA write reaches the buffer a
-#              cycle after the access, so a driver that trusts a STATUS read made
-#              straight after either goes wrong: the first version of this driver
-#              could not identify a card here.
+#              one bus access and the next. The core used to show a command as
+#              busy two cycles after its CMD write, and LEVEL to miss a DATA word
+#              for a cycle, so a driver trusting a STATUS read made straight after
+#              either went wrong: the first version of this driver could not
+#              identify a card here. STATUS now counts both from that cycle; the
+#              runs stay, since nothing else reads that fast.
 #
 # The FatFs disk I/O glue in software/fatfs is linked into every build, compiled
 # against stand-ins for FatFs's two headers (tb/driver/fatfs_stub), and called

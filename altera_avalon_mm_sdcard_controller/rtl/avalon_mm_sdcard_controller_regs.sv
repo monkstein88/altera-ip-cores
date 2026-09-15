@@ -105,6 +105,7 @@ module avalon_mm_sdcard_controller_regs
     input  logic [15:0]                   fifo_level_bytes,
     input  logic                          fifo_w_empty,
     input  logic                          fifo_w_full,
+    input  logic [15:0]                   fifo_w_space_words,
 
     input  logic                          card_present,
     input  logic                          card_wp,
@@ -132,6 +133,21 @@ module avalon_mm_sdcard_controller_regs
     // actually take it. Software is free to access DATA at any time, so these
     // are the only place an impossible access is visible.
     logic pio_wr_req, pio_rd_req;
+
+    // Busy as software must see it: the sequencer's own flag, or a command
+    // accepted in the last cycle that the sequencer has not reached yet.
+    //
+    // A CMD write is registered here as cmd_start and the sequencer leaves
+    // S_IDLE on it a cycle later, so seq_busy alone reads "idle" for the one
+    // cycle in between. A STATUS read landing in it took a command that had not
+    // started for one that had finished - the HAL driver, run with no delay
+    // between bus accesses, could not identify a card - and a second CMD write
+    // landing in it was accepted, when every CMD write while busy is supposed
+    // to be ignored. Everything that reports or depends on busy uses this.
+    // cfg_enable, because the top level only passes cmd_start on to the
+    // sequencer while the core is enabled: a start a disabled core ignores
+    // never makes it busy.
+    logic cmd_busy;
 
     logic [31:0] ctrl_q, irq_en_q, irq_st_q, clkdiv_q, timeout_q;
     logic [31:0] arg_q, cmd_q, blksize_q, blkcnt_q, dmaaddr_q, dmactrl_q;
@@ -202,7 +218,7 @@ module avalon_mm_sdcard_controller_regs
                     // shifter is running: changing the capture point mid-byte
                     // misaligns the bit count for the rest of the transfer.
                     CSR_ADDR_WIDTH'(REG_CLKDIV):
-                        if (!seq_busy)
+                        if (!cmd_busy)
                             clkdiv_q <= bewr(clkdiv_q, csr_writedata, csr_byteenable);
 
                     CSR_ADDR_WIDTH'(REG_TIMEOUT):
@@ -218,12 +234,13 @@ module avalon_mm_sdcard_controller_regs
                     CSR_ADDR_WIDTH'(REG_DMA_CTRL):
                         dmactrl_q <= bewr(dmactrl_q, csr_writedata, csr_byteenable);
 
-                    // Writing CMD launches it. Ignored while the sequencer is
-                    // busy, so a second write cannot corrupt a transfer in
-                    // flight - software polls STATUS.CMD_BUSY or waits for the
-                    // interrupt.
+                    // Writing CMD launches it. Ignored while busy, so a second
+                    // write cannot corrupt a transfer in flight - software polls
+                    // STATUS.CMD_BUSY or waits for the interrupt. cmd_busy, not
+                    // seq_busy: a write in the cycle after another used to be
+                    // accepted, and CMD then read back a command that never ran.
                     CSR_ADDR_WIDTH'(REG_CMD): begin
-                        if (!seq_busy) begin
+                        if (!cmd_busy) begin
                             cmd_q     <= bewr(cmd_q, csr_writedata, csr_byteenable);
                             cmd_start <= csr_writedata[CMD_START];
                         end
@@ -327,15 +344,35 @@ module avalon_mm_sdcard_controller_regs
 
     logic [31:0] status_w, errinfo_w, coreinfo_w;
 
+    always_comb cmd_busy = seq_busy || (cmd_start && cfg_enable);
+
+    // A DATA word accepted this cycle, reaching the store at the clock edge that
+    // ends it. STATUS counts it already, for the same reason as cmd_busy: a
+    // STATUS read landing in this cycle otherwise reports one word more room than
+    // there is, and a write loop that trusts it pushes a word into a full buffer.
+    // That word is refused and ERR_PIO set, and every word written after it
+    // arrives one position early.
+    //
+    // Not while the DMA owns the buffer, which then ignores DATA writes.
+    //
+    // FIFO_FULL can read full a cycle early, when the sequencer happens to take
+    // a word into its byte staging register in the same cycle and so makes room.
+    // That errs the safe way for a writer; LEVEL is exact, since a word moved
+    // into staging is still counted.
+    logic pio_push;
+    always_comb pio_push = pio_wr && !cfg_dma_en;
+
     always_comb begin
         status_w = '0;
-        status_w[STAT_CMD_BUSY]   = seq_busy;
+        status_w[STAT_CMD_BUSY]   = cmd_busy;
         status_w[STAT_DAT_BUSY]   = seq_dat_busy;
         status_w[STAT_DMA_BUSY]   = dma_busy;
         status_w[STAT_CARD_BUSY]  = seq_card_busy;
         status_w[STAT_FIFO_EMPTY] = fifo_w_empty;
-        status_w[STAT_FIFO_FULL]  = fifo_w_full;
-        status_w[STAT_LEVEL_MSB:STAT_LEVEL_LSB] = fifo_level_bytes;
+        status_w[STAT_FIFO_FULL]  = fifo_w_full ||
+                                    (pio_push && (fifo_w_space_words == 16'd1));
+        status_w[STAT_LEVEL_MSB:STAT_LEVEL_LSB] =
+            fifo_level_bytes + (pio_push ? 16'd4 : 16'd0);
         status_w[STAT_CARD_PRES]  = USE_CARD_DETECT ? card_present_q : 1'b1;
         status_w[STAT_CARD_WP]    = USE_CARD_DETECT ? card_wp_q      : 1'b0;
         status_w[STAT_ERROR]      = |(irq_st_q & IRQ_ERR_MASK);
@@ -373,7 +410,7 @@ module avalon_mm_sdcard_controller_regs
                 CSR_ADDR_WIDTH'(REG_CLKDIV):     csr_readdata <= clkdiv_q;
                 CSR_ADDR_WIDTH'(REG_TIMEOUT):    csr_readdata <= timeout_q;
                 CSR_ADDR_WIDTH'(REG_CMD_ARG):    csr_readdata <= arg_q;
-                CSR_ADDR_WIDTH'(REG_CMD):        csr_readdata <= {seq_busy, cmd_q[30:0]};
+                CSR_ADDR_WIDTH'(REG_CMD):        csr_readdata <= {cmd_busy, cmd_q[30:0]};
                 CSR_ADDR_WIDTH'(REG_RESP0):      csr_readdata <= seq_resp0;
                 CSR_ADDR_WIDTH'(REG_RESP1):      csr_readdata <= seq_resp1;
                 CSR_ADDR_WIDTH'(REG_BLK_SIZE):   csr_readdata <= blksize_q;

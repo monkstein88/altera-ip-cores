@@ -67,7 +67,7 @@ nothing about it has been measured on hardware. What it has is:
 | | |
 |---|---|
 | Testbenches | 3 — shifter, FIFO, full core — plus the HAL driver run against the RTL |
-| Checks | 98 in the three testbenches, 112 in the driver harness |
+| Checks | 104 in the three testbenches, 112 in the driver harness |
 | Configurations swept | 5 for the full core (`dma`, `pio`, `sdsc`, `tight`, `noburst`); 4 for the driver, plus a processor slower than the card and one with no delay between bus accesses |
 | Bound SVA assertions | 28, plus 6 cover points |
 | Assertion fault injections | 7 — each required to be caught |
@@ -334,14 +334,28 @@ that directly rather than the sequencer inventing a pseudo-command for it.
 
 | Bit | Name | Meaning |
 |---|---|---|
-| 0 | `CMD_BUSY` | A command is in flight |
+| 0 | `CMD_BUSY` | A command is in flight, from the first cycle a read can follow the `CMD` write |
 | 1 | `DAT_BUSY` | A data phase is in flight |
 | 2 | `DMA_BUSY` | `m0` has a transfer outstanding |
 | 3 | `CARD_BUSY` | The card is holding `MISO` low |
-| 23:8 | `LEVEL` | FIFO occupancy in bytes |
+| 4 | `FIFO_EMPTY` | A `DATA` read would find no word. Always set while the buffer faces host→card |
+| 5 | `FIFO_FULL` | A `DATA` write would find no room. Always set while the buffer faces card→host |
+| 23:8 | `LEVEL` | FIFO occupancy in bytes, counting a `DATA` word written the cycle before |
 | 24 | `CARD_PRES` | From `sd_cd_n`, if `USE_CARD_DETECT` |
 | 25 | `CARD_WP` | From `sd_wp_n`, if `USE_CARD_DETECT` |
 | 31 | `ERROR` | Sticky OR of the error bits in `IRQ_STATUS` |
+
+**`STATUS` counts every write the core has accepted, from the next cycle.** The
+core registers a write before acting on it: a `CMD` write reaches the sequencer a
+cycle later, and a `DATA` word reaches the buffer a cycle later. `CMD_BUSY`,
+`LEVEL` and `FIFO_FULL` include what is on its way, so a read in the cycle after
+a write already reflects it. They used to describe the core as it was before the
+write, for that one cycle. A driver polling `CMD_BUSY` straight after issuing a
+command took it for finished, and a write loop could count a word more room than
+there was. `FIFO_FULL` can read full one cycle early, when the sequencer takes a
+word to send in the same cycle — the safe direction for a writer. The byte the
+sequencer takes each cycle still shows in `LEVEL` a cycle later, as it always
+has.
 
 ## 5.3 `IRQ_STATUS` (0x0C) and `IRQ_ENABLE` (0x08)
 
@@ -397,7 +411,9 @@ command must not corrupt a transfer in flight — but it means a driver that
 writes without checking loses the command silently, and polling afterwards does
 not catch it: busy is already clear, so the poll returns immediately for a
 command that never happened. Check `STATUS.CMD_BUSY` before writing, and confirm
-it goes high afterwards.
+it goes high afterwards. It does from the first cycle a read can follow the
+write, and a second `CMD` write in that cycle is ignored like any other. So is a
+`CLKDIV` write, which is also refused while busy.
 
 ## 5.5 `ERR_INFO` (0x3C)
 
@@ -765,10 +781,12 @@ clock cycles per word, and must see blocks held, since the PIO loop reads
 check holds it to.
 
 Adding the non-blocking calls found two faults in the driver. A `STATUS` read in
-the cycle after a `CMD` write finds the core idle — it shows the command as busy
-two cycles later — and every wait in the driver took idle for finished, so on a
+the cycle after a `CMD` write found the core idle — it showed the command as busy
+a cycle later — and every wait in the driver took idle for finished, so on a
 processor with no delay between accesses it could not identify a card; a wait
-now also requires `CMD_DONE` or `DATA_DONE` latched. And a failed multi-block
+now also requires `CMD_DONE` or `DATA_DONE` latched. The core was then fixed
+too, so no driver has to know: `STATUS` counts a command, and a `DATA` word, from
+the cycle after its write. And a failed multi-block
 read left the card sending, because only a failed write was followed by CMD12,
 so a CRC error's retry was refused and the card was unusable after it. A check
 written for a third found it: installing an event handler while a transfer
@@ -814,7 +832,7 @@ reasoning.
 
   Timing closure is no longer part of it. The core synthesises, fits and meets a
   100 MHz clock on the DE10-Lite's `10M50DAF484C7G` in Quartus Prime 18.1 — Fmax
-  109.51 MHz at the slow 85 °C corner, +0.868 ns of slack, 1774 logic cells and
+  115.9 MHz at the slow 85 °C corner, +1.372 ns of slack, 1769 logic cells and
   one M9K. That is checked
   by `verification/check_synthesis.sh` on every run, and the component itself is
   loaded into real Platform Designer by `verification/check_qsys.sh`. What remains
